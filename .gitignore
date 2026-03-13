@@ -42,3 +42,4 @@ tests/
 data/
 *.log
 config.json
+docs/
