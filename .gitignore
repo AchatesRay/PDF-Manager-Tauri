@@ -43,3 +43,4 @@ data/
 *.log
 config.json
 docs/
+!docs/superpowers/
