@@ -1,6 +1,7 @@
 """应用程序主入口模块"""
 
 import sys
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,8 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt, QTimer
 
 from src.utils.config import Config
+from src.utils.logger import setup_logger, get_logger
+from src.utils.path_utils import get_data_path, get_log_path
 from src.models.database import Database
 from src.services.pdf_service import PDFService
 from src.services.ocr_service import OCRService
@@ -91,18 +94,7 @@ class ApplicationContext:
         Returns:
             配置文件路径
         """
-        # 使用用户主目录下的应用数据目录
-        if sys.platform == "win32":
-            # Windows: %APPDATA%/PdfOCR/config.json
-            base_path = Path.home() / "AppData" / "Roaming" / "PdfOCR"
-        elif sys.platform == "darwin":
-            # macOS: ~/Library/Application Support/PdfOCR/config.json
-            base_path = Path.home() / "Library" / "Application Support" / "PdfOCR"
-        else:
-            # Linux: ~/.config/PdfOCR/config.json
-            base_path = Path.home() / ".config" / "PdfOCR"
-
-        return str(base_path / "config.json")
+        return str(get_data_path() / "config.json")
 
     def cleanup(self) -> None:
         """清理资源
@@ -141,24 +133,29 @@ def main() -> int:
     Returns:
         应用程序退出码
     """
+    # 初始化日志
+    log_dir = get_log_path()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "pdf_manager.log"
+    logger = setup_logger("pdf_manager", logging.DEBUG, log_file)
+    logger.info("程序启动")
+
     # 打包后设置全局异常处理器
     if getattr(sys, 'frozen', False):
         def exception_handler(exc_type, exc_value, exc_tb):
             """全局异常处理器，打包后显示错误对话框"""
             import traceback
             error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
-            print(f"Unhandled exception:\n{error_msg}")
+            logger.error(f"未处理异常: {error_msg}")
             QMessageBox.critical(
                 None,
                 "程序错误",
-                f"程序发生错误：\n{exc_value}\n\n详细信息：\n{error_msg}"
+                f"程序发生错误：\n{exc_value}\n\n详细信息已记录到日志文件。"
             )
         sys.excepthook = exception_handler
 
     # 设置高DPI支持
     # PyQt6 默认启用高DPI缩放，无需手动设置
-    # QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)  # PyQt5 方式
-    # QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)  # PyQt5 方式
 
     # 创建QApplication实例
     app = QApplication(sys.argv)
@@ -169,23 +166,30 @@ def main() -> int:
     # 创建应用上下文
     try:
         app_context = ApplicationContext()
+        logger.info("应用上下文初始化完成")
     except Exception as e:
-        print(f"Failed to initialize application: {e}")
+        logger.error(f"应用初始化失败: {e}")
+        QMessageBox.critical(None, "初始化错误", f"程序初始化失败:\n{e}")
         return 1
 
     # 创建主窗口
     main_window = MainWindow(app_context)
     main_window.setWindowTitle("PDF Manager")
+    logger.info("主窗口创建完成")
 
     # 显示窗口
     main_window.show()
+    logger.info("主窗口显示")
 
     # 延迟检查 OCR 状态
     def check_ocr():
         """检查 OCR 模型状态"""
         if not app_context.check_ocr_available():
+            logger.info("OCR 模型未安装，显示设置对话框")
             dialog = OCRSetupDialog(main_window)
             dialog.exec()
+        else:
+            logger.info("OCR 模型已安装")
 
     QTimer.singleShot(500, check_ocr)
 
@@ -193,6 +197,7 @@ def main() -> int:
     result = app.exec()
 
     # 清理资源
+    logger.info("程序退出，清理资源")
     app_context.cleanup()
 
     return result

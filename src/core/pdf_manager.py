@@ -3,6 +3,7 @@
 import os
 import shutil
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -11,11 +12,14 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 
 from src.models.database import Database
 from src.models.schemas import PDF, PDFPage, PDFStatus, PDFType, OCRStatus
+from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from src.services.pdf_service import PDFService
     from src.services.ocr_service import OCRService
     from src.services.index_service import IndexService
+
+logger = get_logger("pdf_manager")
 
 
 class ImportResult(Enum):
@@ -144,6 +148,7 @@ class PDFManager:
         """
         # 验证文件存在
         if not os.path.exists(source_path):
+            logger.warning(f"导入失败：文件不存在 - {source_path}")
             return ImportStatus(
                 result=ImportResult.INVALID,
                 pdf_id=None,
@@ -152,6 +157,7 @@ class PDFManager:
 
         # 验证PDF有效性
         if not self._pdf_service.validate_pdf(source_path):
+            logger.warning(f"导入失败：无效的PDF文件 - {source_path}")
             return ImportStatus(
                 result=ImportResult.INVALID,
                 pdf_id=None,
@@ -161,6 +167,7 @@ class PDFManager:
         # 检查重复
         duplicate = self._check_duplicate(source_path)
         if duplicate:
+            logger.info(f"导入跳过：重复文件 - {duplicate.filename} (ID: {duplicate.id})")
             return ImportStatus(
                 result=ImportResult.DUPLICATE,
                 pdf_id=duplicate.id,
@@ -172,6 +179,7 @@ class PDFManager:
             storage_filename = self._get_storage_filename(source_path)
             storage_file_path = self._storage_path / storage_filename
             shutil.copy2(source_path, storage_file_path)
+            logger.debug(f"文件复制完成: {source_path} -> {storage_file_path}")
 
             # 获取PDF信息
             page_count = self._pdf_service.get_page_count(str(storage_file_path))
@@ -190,6 +198,7 @@ class PDFManager:
             )
             pdf_id = self._db.create_pdf(pdf)
             pdf.id = pdf_id
+            logger.info(f"创建PDF记录: ID={pdf_id}, 文件名={pdf.filename}, 页数={page_count}")
 
             # 更新状态为处理中
             self._db.update_pdf_status(pdf_id, PDFStatus.PROCESSING)
@@ -205,10 +214,12 @@ class PDFManager:
 
             # OCR处理
             if process_ocr:
+                logger.info(f"开始OCR处理: PDF ID={pdf_id}")
                 self._process_ocr(pdf, progress_callback)
 
             # 更新状态为完成
             self._db.update_pdf_status(pdf_id, PDFStatus.DONE)
+            logger.info(f"PDF导入完成: ID={pdf_id}, 文件名={pdf.filename}")
 
             return ImportStatus(
                 result=ImportResult.SUCCESS,
@@ -217,6 +228,7 @@ class PDFManager:
             )
 
         except Exception as e:
+            logger.error(f"PDF导入失败: {source_path} - {str(e)}")
             # 清理可能已创建的文件
             if 'storage_file_path' in locals() and storage_file_path.exists():
                 storage_file_path.unlink()
@@ -244,6 +256,7 @@ class PDFManager:
         """
         pages = self._db.get_pages_by_pdf(pdf.id)
         total_pages = len(pages)
+        logger.debug(f"开始OCR处理: PDF ID={pdf.id}, 总页数={total_pages}")
 
         for i, page in enumerate(pages):
             if progress_callback:
@@ -275,8 +288,9 @@ class PDFManager:
                     content=text
                 )
 
-            except Exception:
+            except Exception as e:
                 # OCR处理失败，标记为错误但继续处理其他页面
+                logger.warning(f"OCR处理失败: PDF ID={pdf.id}, 页码={page.page_number} - {str(e)}")
                 self._db.update_page_ocr(page.id, "", OCRStatus.ERROR)
 
     def delete_pdf(self, pdf_id: int) -> bool:
@@ -296,9 +310,12 @@ class PDFManager:
         """
         pdf = self._db.get_pdf(pdf_id)
         if pdf is None:
+            logger.warning(f"删除失败：PDF不存在 - ID={pdf_id}")
             return False
 
         try:
+            logger.info(f"开始删除PDF: ID={pdf_id}, 文件名={pdf.filename}")
+
             # 删除索引
             self._index_service.delete_pdf(pdf_id)
 
@@ -315,9 +332,11 @@ class PDFManager:
             # 删除数据库记录（页面会通过CASCADE自动删除）
             self._db.delete_pdf(pdf_id)
 
+            logger.info(f"PDF删除完成: ID={pdf_id}")
             return True
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"PDF删除失败: ID={pdf_id} - {str(e)}")
             return False
 
     def get_pdf(self, pdf_id: int) -> Optional[PDF]:
