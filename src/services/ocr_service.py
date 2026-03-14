@@ -1,12 +1,27 @@
 """OCR处理服务"""
 
 import os
-from typing import Optional, TYPE_CHECKING
+import tarfile
+import tempfile
+from pathlib import Path
+from typing import Optional, Dict, List, Any, TYPE_CHECKING
 
 from PIL import Image
 
+from src.utils.path_utils import get_ocr_models_path
+
 if TYPE_CHECKING:
     from src.services.pdf_service import PDFService
+
+
+# 中文模型的模型名称和下载URL
+MODEL_NAMES = {
+    "det": "ch_ppocr_mobile_v2.0_det_infer",
+    "cls": "ch_ppocr_mobile_v2.0_cls_infer",
+    "rec": "ch_ppocr_mobile_v2.0_rec_infer",
+}
+
+MODEL_DOWNLOAD_URL = "https://paddleocr.bj.bcebos.com/dygraph_v2.0/ch/{model_name}.tar"
 
 
 class OCRService:
@@ -165,3 +180,126 @@ class OCRService:
             return ""
 
         return self.recognize_image(image)
+
+    def check_model_status(self) -> Dict[str, Any]:
+        """
+        检查 OCR 模型是否已安装
+
+        Returns:
+            dict: 包含以下键:
+                - installed: bool, 模型是否已完整安装
+                - model_path: str|None, 模型目录路径
+                - missing_models: list, 缺失的模型名称列表
+                - installed_models: list, 已安装的模型名称列表
+        """
+        model_dir = get_ocr_models_path()
+        missing_models = []
+        installed_models = []
+
+        # 检查每个模型是否存在
+        for model_type, model_name in MODEL_NAMES.items():
+            model_path = model_dir / model_name
+            if model_path.exists():
+                installed_models.append(model_name)
+            else:
+                missing_models.append(model_name)
+
+        return {
+            "installed": len(missing_models) == 0,
+            "model_path": str(model_dir) if model_dir.exists() else None,
+            "missing_models": missing_models,
+            "installed_models": installed_models,
+        }
+
+    def get_manual_download_info(self) -> Dict[str, Any]:
+        """
+        获取模型手动下载信息
+
+        Returns:
+            dict: 包含以下键:
+                - models: list, 模型信息列表 (包含 name 和 url)
+                - model_dir: str, 模型应放置的目录
+        """
+        model_dir = get_ocr_models_path()
+        models = []
+
+        for model_type, model_name in MODEL_NAMES.items():
+            models.append({
+                "name": model_name,
+                "url": MODEL_DOWNLOAD_URL.format(model_name=model_name),
+                "type": model_type,
+            })
+
+        return {
+            "models": models,
+            "model_dir": str(model_dir),
+        }
+
+    def download_models(self) -> Dict[str, Any]:
+        """
+        自动下载 OCR 模型
+
+        Returns:
+            dict: 包含以下键:
+                - success: bool, 是否成功
+                - error: str|None, 错误信息 (如果失败)
+                - downloaded: list, 已下载的模型名称列表
+        """
+        import requests
+
+        model_dir = get_ocr_models_path()
+        downloaded = []
+
+        try:
+            # 确保模型目录存在
+            model_dir.mkdir(parents=True, exist_ok=True)
+
+            for model_type, model_name in MODEL_NAMES.items():
+                model_path = model_dir / model_name
+
+                # 如果模型已存在，跳过
+                if model_path.exists():
+                    downloaded.append(model_name)
+                    continue
+
+                # 下载模型
+                url = MODEL_DOWNLOAD_URL.format(model_name=model_name)
+
+                try:
+                    response = requests.get(url, timeout=300)
+                    response.raise_for_status()
+
+                    # 保存并解压 tar 文件
+                    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp_file:
+                        tmp_file.write(response.content)
+                        tmp_file_path = tmp_file.name
+
+                    try:
+                        # 解压到模型目录
+                        with tarfile.open(tmp_file_path, "r:*") as tar:
+                            tar.extractall(path=str(model_dir))
+                        downloaded.append(model_name)
+                    finally:
+                        # 删除临时文件
+                        if os.path.exists(tmp_file_path):
+                            os.unlink(tmp_file_path)
+
+                except requests.RequestException as e:
+                    return {
+                        "success": False,
+                        "error": f"下载模型 {model_name} 失败: {str(e)}",
+                        "downloaded": downloaded,
+                    }
+
+            return {
+                "success": True,
+                "error": None,
+                "downloaded": downloaded,
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"下载模型时发生错误: {str(e)}",
+                "downloaded": downloaded,
+            }
