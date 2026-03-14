@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import Qt, QTimer
 
 from src.utils.config import Config
 from src.models.database import Database
@@ -16,6 +16,7 @@ from src.core.folder_manager import FolderManager
 from src.core.pdf_manager import PDFManager
 from src.core.search_service import SearchService
 from src.ui.main_window import MainWindow
+from src.ui.dialogs import OCRSetupDialog
 
 
 class ApplicationContext:
@@ -121,6 +122,15 @@ class ApplicationContext:
         except Exception:
             pass
 
+    def check_ocr_available(self) -> bool:
+        """检查 OCR 模型是否可用
+
+        Returns:
+            True 如果 OCR 模型已安装并可用，否则 False
+        """
+        status = self.ocr_service.check_model_status()
+        return status.get("installed", False)
+
 
 def main() -> int:
     """应用程序主入口函数
@@ -131,6 +141,20 @@ def main() -> int:
     Returns:
         应用程序退出码
     """
+    # 打包后设置全局异常处理器
+    if getattr(sys, 'frozen', False):
+        def exception_handler(exc_type, exc_value, exc_tb):
+            """全局异常处理器，打包后显示错误对话框"""
+            import traceback
+            error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
+            print(f"Unhandled exception:\n{error_msg}")
+            QMessageBox.critical(
+                None,
+                "程序错误",
+                f"程序发生错误：\n{exc_value}\n\n详细信息：\n{error_msg}"
+            )
+        sys.excepthook = exception_handler
+
     # 设置高DPI支持
     # PyQt6 默认启用高DPI缩放，无需手动设置
     # QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)  # PyQt5 方式
@@ -155,6 +179,15 @@ def main() -> int:
 
     # 显示窗口
     main_window.show()
+
+    # 延迟检查 OCR 状态
+    def check_ocr():
+        """检查 OCR 模型状态"""
+        if not app_context.check_ocr_available():
+            dialog = OCRSetupDialog(main_window)
+            dialog.exec()
+
+    QTimer.singleShot(500, check_ocr)
 
     # 运行应用程序
     result = app.exec()

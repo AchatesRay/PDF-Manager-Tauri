@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.utils.path_utils import get_data_path
+
 
 DEFAULT_CONFIG = {
     "storage_path": "./data",
@@ -17,7 +19,11 @@ class Config:
     """配置管理类"""
 
     def __init__(self, config_path: str | Path | None = None):
-        self._config_path = Path(config_path) if config_path else None
+        if config_path is None:
+            # 使用 get_data_path() 获取默认配置路径
+            self._config_path = get_data_path() / "config.json"
+        else:
+            self._config_path = Path(config_path)
         self._config: dict[str, Any] = DEFAULT_CONFIG.copy()
         if self._config_path and self._config_path.exists():
             self.load()
@@ -47,7 +53,11 @@ class Config:
     @property
     def storage_path(self) -> Path:
         """数据存储路径"""
-        return Path(self._config["storage_path"])
+        configured_path = self._config["storage_path"]
+        # 如果配置的路径是 "./data"，使用 get_data_path() 获取正确的路径
+        if configured_path == "./data":
+            return get_data_path()
+        return Path(configured_path)
 
     @storage_path.setter
     def storage_path(self, path: str | Path) -> None:
