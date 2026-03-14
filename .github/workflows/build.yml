@@ -32,63 +32,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pyinstaller `
-            --name "PDF Manager" `
-            --noconsole `
-            --onefile `
-            --clean `
-            --hidden-import paddle `
-            --hidden-import paddleocr `
-            --hidden-import paddle.dataset.image `
-            --hidden-import paddle.fluid `
-            --hidden-import paddle.framework `
-            --hidden-import fitz `
-            --hidden-import pymupdf `
-            --hidden-import whoosh `
-            --hidden-import whoosh.fields `
-            --hidden-import whoosh.index `
-            --hidden-import whoosh.qparser `
-            --hidden-import whoosh.analysis `
-            --hidden-import whoosh.lang `
-            --hidden-import jieba `
-            --hidden-import jieba.analyse `
-            --hidden-import PIL `
-            --hidden-import PIL.Image `
-            --hidden-import numpy `
-            --hidden-import PyQt6 `
-            --hidden-import PyQt6.QtCore `
-            --hidden-import PyQt6.QtGui `
-            --hidden-import PyQt6.QtWidgets `
-            --hidden-import PyQt6.sip `
-            --hidden-import src `
-            --hidden-import src.utils `
-            --hidden-import src.utils.config `
-            --hidden-import src.utils.logger `
-            --hidden-import src.models `
-            --hidden-import src.models.schemas `
-            --hidden-import src.models.database `
-            --hidden-import src.services `
-            --hidden-import src.services.pdf_service `
-            --hidden-import src.services.ocr_service `
-            --hidden-import src.services.index_service `
-            --hidden-import src.core `
-            --hidden-import src.core.folder_manager `
-            --hidden-import src.core.pdf_manager `
-            --hidden-import src.core.search_service `
-            --hidden-import src.ui `
-            --hidden-import src.ui.main_window `
-            --hidden-import src.ui.widgets `
-            --hidden-import src.ui.widgets.folder_tree `
-            --hidden-import src.ui.widgets.pdf_list `
-            --hidden-import src.ui.widgets.pdf_viewer `
-            --hidden-import src.ui.dialogs `
-            --hidden-import src.ui.dialogs.settings_dialog `
-            --hidden-import src.ui.dialogs.import_dialog `
-            --exclude-module tkinter `
-            --exclude-module matplotlib `
-            --exclude-module scipy `
-            --exclude-module pandas `
-            src/main.py
+          pyinstaller pdf_manager.spec --clean
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
