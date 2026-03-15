@@ -100,9 +100,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,  # 单目录模式：不将二进制文件打包进exe
     name='PDF Manager',
     debug=False,
     bootloader_ignore_signals=False,
@@ -114,4 +113,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+# 单目录模式：收集所有文件到一个文件夹
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='PDF Manager',
 )

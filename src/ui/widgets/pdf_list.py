@@ -129,10 +129,11 @@ class PDFListWidget(QWidget):
 
     显示PDF列表，支持：
     - 显示PDF列表（文件名、页数、状态、大小）
-    - 搜索过滤
     - 选择PDF
     - 双击打开
-    - 添加/删除PDF
+    - 删除PDF
+
+    注意：搜索过滤功能通过 setSearchFilter 方法提供，由外部搜索框调用。
     """
 
     # 信号：选中PDF变化
@@ -158,25 +159,6 @@ class PDFListWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-
-        # 工具栏
-        toolbar = QWidget()
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        toolbar_layout.setSpacing(4)
-
-        # 搜索框
-        self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("搜索PDF...")
-        toolbar_layout.addWidget(self._search_input)
-
-        # 添加按钮
-        self._add_button = QPushButton("+")
-        self._add_button.setFixedSize(28, 28)
-        self._add_button.setToolTip("添加PDF")
-        toolbar_layout.addWidget(self._add_button)
-
-        layout.addWidget(toolbar)
 
         # 表格视图
         self._table_view = QTableView()
@@ -218,8 +200,6 @@ class PDFListWidget(QWidget):
         """连接信号"""
         self._table_view.clicked.connect(self._on_selection_changed)
         self._table_view.doubleClicked.connect(self._on_double_click)
-        self._search_input.textChanged.connect(self._on_search_changed)
-        self._add_button.clicked.connect(self._on_add_pdf)
         self._table_view.customContextMenuRequested.connect(self._show_context_menu)
 
     def set_pdf_manager(self, pdf_manager: "PDFManager") -> None:
@@ -248,6 +228,10 @@ class PDFListWidget(QWidget):
         """获取当前选中的PDF ID"""
         return self._current_pdf_id
 
+    def setSearchFilter(self, filter_text: str) -> None:
+        """设置搜索过滤（供外部调用）"""
+        self._model.setSearchFilter(filter_text)
+
     def _on_selection_changed(self, index: QModelIndex) -> None:
         """选择变化处理"""
         pdf_id = self._model.getPdfId(index.row())
@@ -260,14 +244,6 @@ class PDFListWidget(QWidget):
         pdf_id = self._model.getPdfId(index.row())
         if pdf_id is not None:
             self.pdf_double_clicked.emit(pdf_id)
-
-    def _on_search_changed(self, text: str) -> None:
-        """搜索文本变化"""
-        self._model.setSearchFilter(text)
-
-    def _on_add_pdf(self) -> None:
-        """添加PDF按钮点击"""
-        self.add_pdf_clicked.emit()
 
     def _on_open_pdf(self) -> None:
         """打开PDF"""

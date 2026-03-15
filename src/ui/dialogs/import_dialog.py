@@ -23,6 +23,7 @@ class ImportWorker(QThread):
     """导入工作线程"""
 
     progress = pyqtSignal(int, int, str)  # current, total, message
+    file_progress = pyqtSignal(int, int, str)  # current_file, total_files, filename
     finished = pyqtSignal(list)  # list of (pdf_id, success, message)
 
     def __init__(
@@ -39,10 +40,11 @@ class ImportWorker(QThread):
     def run(self) -> None:
         """执行导入"""
         results = []
-        total = len(self._file_paths)
+        total_files = len(self._file_paths)
 
         for i, file_path in enumerate(self._file_paths):
-            self.progress.emit(i + 1, total, f"正在导入: {file_path}")
+            # 发送文件进度
+            self.file_progress.emit(i + 1, total_files, file_path)
 
             try:
                 status = self._pdf_manager.import_pdf(
@@ -76,6 +78,7 @@ class ImportDialog(QDialog):
         self._pdf_manager = pdf_manager
         self._worker: Optional[ImportWorker] = None
         self._import_results: List = []
+        self._total_files: int = 0
 
         self.setWindowTitle("导入PDF")
         self.setMinimumSize(500, 400)
@@ -88,16 +91,27 @@ class ImportDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        # 状态标签
-        self._status_label = QLabel("准备导入...")
-        layout.addWidget(self._status_label)
+        # 文件进度标签
+        self._file_progress_label = QLabel("准备导入...")
+        layout.addWidget(self._file_progress_label)
 
-        # 进度条
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setMinimum(0)
-        self._progress_bar.setMaximum(100)
-        self._progress_bar.setValue(0)
-        layout.addWidget(self._progress_bar)
+        # 文件进度条
+        self._file_progress_bar = QProgressBar()
+        self._file_progress_bar.setMinimum(0)
+        self._file_progress_bar.setMaximum(100)
+        self._file_progress_bar.setValue(0)
+        layout.addWidget(self._file_progress_bar)
+
+        # OCR进度标签
+        self._ocr_progress_label = QLabel("")
+        layout.addWidget(self._ocr_progress_label)
+
+        # OCR进度条
+        self._ocr_progress_bar = QProgressBar()
+        self._ocr_progress_bar.setMinimum(0)
+        self._ocr_progress_bar.setMaximum(100)
+        self._ocr_progress_bar.setValue(0)
+        layout.addWidget(self._ocr_progress_bar)
 
         # 文件列表
         self._file_list = QListWidget()
@@ -125,31 +139,46 @@ class ImportDialog(QDialog):
     def start_import(self, file_paths: List[str], folder_id: Optional[int] = None) -> None:
         """开始导入"""
         if self._pdf_manager is None:
-            self._status_label.setText("错误: PDF管理器未设置")
+            self._file_progress_label.setText("错误: PDF管理器未设置")
             return
 
         # 清空列表
         self._file_list.clear()
         self._import_results = []
+        self._total_files = len(file_paths)
 
         # 添加文件到列表
         for file_path in file_paths:
             self._file_list.addItem(file_path)
 
-        self._progress_bar.setMaximum(len(file_paths))
-        self._progress_bar.setValue(0)
-        self._status_label.setText(f"准备导入 {len(file_paths)} 个文件...")
+        # 设置进度条
+        self._file_progress_bar.setMaximum(len(file_paths))
+        self._file_progress_bar.setValue(0)
+        self._ocr_progress_bar.setValue(0)
+        self._ocr_progress_label.setText("")
+
+        self._file_progress_label.setText(f"准备导入 {len(file_paths)} 个文件...")
 
         # 创建并启动工作线程
         self._worker = ImportWorker(self._pdf_manager, file_paths, folder_id)
-        self._worker.progress.connect(self._on_progress)
+        self._worker.file_progress.connect(self._on_file_progress)
+        self._worker.progress.connect(self._on_ocr_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
 
-    def _on_progress(self, current: int, total: int, message: str) -> None:
-        """进度更新"""
-        self._progress_bar.setValue(current)
-        self._status_label.setText(message)
+    def _on_file_progress(self, current: int, total: int, filename: str) -> None:
+        """文件进度更新"""
+        self._file_progress_bar.setValue(current)
+        self._file_progress_label.setText(f"正在处理 ({current}/{total}): {filename}")
+        # 重置OCR进度条
+        self._ocr_progress_bar.setValue(0)
+        self._ocr_progress_label.setText("准备OCR处理...")
+
+    def _on_ocr_progress(self, current: int, total: int, message: str) -> None:
+        """OCR进度更新"""
+        self._ocr_progress_bar.setMaximum(total)
+        self._ocr_progress_bar.setValue(current)
+        self._ocr_progress_label.setText(message)
 
     def _on_finished(self, results: List) -> None:
         """导入完成"""
@@ -159,7 +188,8 @@ class ImportDialog(QDialog):
         success_count = sum(1 for r in results if r[1])
         error_count = len(results) - success_count
 
-        self._status_label.setText("导入完成")
+        self._file_progress_label.setText("导入完成")
+        self._ocr_progress_label.setText("")
         self._stats_label.setText(f"成功: {success_count} | 失败: {error_count}")
 
         # 更新列表显示结果

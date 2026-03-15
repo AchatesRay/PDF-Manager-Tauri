@@ -30,10 +30,19 @@ if TYPE_CHECKING:
 
 
 class SearchBarWidget(QWidget):
-    """搜索栏组件"""
+    """搜索栏组件
 
-    # 信号：搜索请求
-    search_requested = pyqtSignal(str)  # query
+    包含两行：
+    - 第一行：内容搜索框
+    - 第二行：文件名搜索框（仅在选择文件夹时显示）
+    """
+
+    # 信号：内容搜索请求
+    content_search_requested = pyqtSignal(str)  # query
+    # 信号：内容搜索清空
+    content_search_cleared = pyqtSignal()
+    # 信号：文件名搜索变化
+    filename_search_changed = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -41,17 +50,41 @@ class SearchBarWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("搜索PDF内容...")
-        self._search_input.returnPressed.connect(self._on_search)
+        # 内容搜索框
+        self._content_search_input = QLineEdit()
+        self._content_search_input.setPlaceholderText("搜索PDF内容...")
+        self._content_search_input.returnPressed.connect(self._on_content_search)
+        self._content_search_input.textChanged.connect(self._on_content_text_changed)
+        layout.addWidget(self._content_search_input)
 
-        layout.addWidget(self._search_input)
+        # 文件名搜索框
+        self._filename_search_input = QLineEdit()
+        self._filename_search_input.setPlaceholderText("搜索文件名...")
+        self._filename_search_input.textChanged.connect(self._on_filename_search)
+        layout.addWidget(self._filename_search_input)
 
-    def _on_search(self) -> None:
-        """搜索触发"""
-        query = self._search_input.text().strip()
+    def _on_content_search(self) -> None:
+        """内容搜索触发"""
+        query = self._content_search_input.text().strip()
         if query:
-            self.search_requested.emit(query)
+            self.content_search_requested.emit(query)
+
+    def _on_content_text_changed(self, text: str) -> None:
+        """内容搜索文本变化"""
+        if not text.strip():
+            self.content_search_cleared.emit()
+
+    def _on_filename_search(self, text: str) -> None:
+        """文件名搜索变化"""
+        self.filename_search_changed.emit(text)
+
+    def clear_content_search(self) -> None:
+        """清空内容搜索框"""
+        self._content_search_input.clear()
+
+    def set_filename_search_visible(self, visible: bool) -> None:
+        """设置文件名搜索框可见性"""
+        self._filename_search_input.setVisible(visible)
 
 
 class MainWindow(QMainWindow):
@@ -275,8 +308,12 @@ class MainWindow(QMainWindow):
         # PDF删除
         self._pdf_list.delete_pdf_clicked.connect(self._on_delete_pdf_from_list)
 
-        # 搜索
-        self._search_bar.search_requested.connect(self._on_search)
+        # 内容搜索
+        self._search_bar.content_search_requested.connect(self._on_content_search)
+        self._search_bar.content_search_cleared.connect(self._on_content_search_cleared)
+
+        # 文件名搜索
+        self._search_bar.filename_search_changed.connect(self._on_filename_search)
 
         # 搜索结果点击
         self._search_results.result_clicked.connect(self._on_search_result_clicked)
@@ -319,14 +356,9 @@ class MainWindow(QMainWindow):
         # TODO: 打开PDF详情或在新窗口中打开
         self._status_label.setText(f"双击PDF: {pdf_id}")
 
-    def _on_search(self, query: str) -> None:
-        """搜索处理"""
+    def _on_content_search(self, query: str) -> None:
+        """内容搜索处理"""
         self._status_label.setText(f"搜索: {query}")
-
-        if not query:
-            # 清空搜索，恢复正常模式
-            self._show_pdf_list()
-            return
 
         # 执行内容搜索
         try:
@@ -346,6 +378,15 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self._status_label.setText(f"搜索错误: {str(e)}")
+
+    def _on_content_search_cleared(self) -> None:
+        """内容搜索清空，返回PDF列表"""
+        self._show_pdf_list()
+        self._status_label.setText("就绪")
+
+    def _on_filename_search(self, text: str) -> None:
+        """文件名搜索处理"""
+        self._pdf_list.setSearchFilter(text)
 
     def _show_pdf_list(self) -> None:
         """显示PDF列表（正常模式）"""
