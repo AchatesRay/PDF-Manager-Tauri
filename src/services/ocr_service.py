@@ -36,12 +36,15 @@ class OCRService:
 
         Args:
             lang: OCR语言，默认为中文("ch")
-            use_gpu: 是否使用GPU加速
+            use_gpu: 是否使用GPU加速（注意：PaddleOCR新版本通过环境变量控制设备）
         """
         self._lang = lang
         self._use_gpu = use_gpu
         self._ocr_engine = None
         self._available = None
+
+        if use_gpu:
+            logger.warning("PaddleOCR新版本不再支持use_gpu参数，请通过环境变量CUDA_VISIBLE_DEVICES控制GPU使用")
 
     @property
     def ocr(self):
@@ -72,13 +75,19 @@ class OCRService:
 
                 logger.info("正在初始化PaddleOCR引擎...")
 
-                self._ocr_engine = PaddleOCR(
-                    use_angle_cls=True,
-                    lang=self._lang,
-                    use_gpu=self._use_gpu,
-                    show_log=False,
-                    model_dir=str(model_dir) if model_dir.exists() else None
-                )
+                # PaddleOCR 新版本初始化参数
+                # 注意：新版本不再支持 use_gpu 参数，设备选择通过环境变量控制
+                init_params = {
+                    'use_angle_cls': True,
+                    'lang': self._lang,
+                    'show_log': False,
+                }
+
+                # 如果模型目录存在，传入模型路径
+                if model_dir.exists():
+                    init_params['model_dir'] = str(model_dir)
+
+                self._ocr_engine = PaddleOCR(**init_params)
 
                 self._available = True
                 logger.info("PaddleOCR引擎初始化成功")
