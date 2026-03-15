@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QDesktopServices
 
-from src.ui.widgets import FolderTreeWidget, PDFListWidget, PDFViewerWidget
+from src.ui.widgets import FolderTreeWidget, PDFListWidget, PDFViewerWidget, SearchResultsWidget
 from src.ui.dialogs import SettingsDialog, ImportDialog
 
 if TYPE_CHECKING:
@@ -59,16 +59,14 @@ class MainWindow(QMainWindow):
 
     应用程序的主界面，整合所有UI组件。
 
-    布局结构:
-    +------------------+------------------------+
-    |                  |      搜索栏             |
-    |    文件夹树      +------------------------+
-    |                  |      PDF列表           |
-    |                  +------------------------+
-    |                  |      PDF预览           |
-    +------------------+------------------------+
-    |                  状态栏                   |
-    +------------------+------------------------+
+    布局结构（三栏布局）:
+    +------------------+------------------------+------------------+
+    |                  |      搜索栏（内容）     |                  |
+    |    文件夹树      +------------------------+    PDF预览       |
+    |                  |   PDF列表/搜索结果     |                  |
+    +------------------+------------------------+------------------+
+    |                           状态栏                             |
+    +------------------+------------------------+------------------+
     """
 
     def __init__(self, app_context: ApplicationContext, parent: Optional[QWidget] = None):
@@ -84,6 +82,7 @@ class MainWindow(QMainWindow):
         # 当前状态
         self._current_folder_id: Optional[int] = None
         self._current_pdf_id: Optional[int] = None
+        self._is_search_mode: bool = False  # 是否处于内容搜索模式
 
         # 设置窗口
         self.setWindowTitle("PDF Manager")
@@ -98,17 +97,17 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
     def _setup_ui(self) -> None:
-        """设置UI布局"""
+        """设置UI布局 - 三栏布局"""
         # 创建中央组件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        # 主布局
+        # 主布局 - 水平分割器
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(4)
 
-        # 创建分割器
+        # 创建主分割器（水平）
         splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(splitter)
 
@@ -118,30 +117,45 @@ class MainWindow(QMainWindow):
         )
         splitter.addWidget(self._folder_tree)
 
-        # 右侧：垂直分割器（搜索栏、PDF列表、预览）
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(right_splitter)
+        # 中间：搜索栏 + PDF列表/搜索结果
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(4)
 
-        # 右侧上方：搜索栏
+        # 搜索栏
         self._search_bar = SearchBarWidget()
-        right_splitter.addWidget(self._search_bar)
+        center_layout.addWidget(self._search_bar)
 
-        # 右侧中间：PDF列表
+        # 内容区域（PDF列表和搜索结果切换）
+        self._content_stack = QWidget()
+        self._content_layout = QVBoxLayout(self._content_stack)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+
+        # PDF列表（带文件名搜索）
         self._pdf_list = PDFListWidget(
             pdf_manager=self._app_context.pdf_manager
         )
-        right_splitter.addWidget(self._pdf_list)
+        self._content_layout.addWidget(self._pdf_list)
 
-        # 右侧下方：PDF预览
+        # 搜索结果列表
+        self._search_results = SearchResultsWidget()
+        self._search_results.setVisible(False)
+        self._content_layout.addWidget(self._search_results)
+
+        center_layout.addWidget(self._content_stack)
+        splitter.addWidget(center_widget)
+
+        # 右侧：PDF预览
         self._pdf_viewer = PDFViewerWidget(
             pdf_manager=self._app_context.pdf_manager,
             pdf_service=self._app_context.pdf_service
         )
-        right_splitter.addWidget(self._pdf_viewer)
+        splitter.addWidget(self._pdf_viewer)
 
-        # 设置分割器比例
-        splitter.setSizes([250, 750])  # 左侧宽度 : 右侧宽度
-        right_splitter.setSizes([50, 400, 300])  # 搜索栏 : PDF列表 : 预览
+        # 设置分割器比例（左:中:右 = 200:400:400）
+        splitter.setSizes([200, 400, 400])
 
     def _setup_menu(self) -> None:
         """设置菜单栏"""
@@ -264,6 +278,9 @@ class MainWindow(QMainWindow):
         # 搜索
         self._search_bar.search_requested.connect(self._on_search)
 
+        # 搜索结果点击
+        self._search_results.result_clicked.connect(self._on_search_result_clicked)
+
         # PDF预览外部打开
         self._pdf_viewer.open_external_clicked.connect(self._on_open_pdf_external)
         self._pdf_viewer.show_in_folder_clicked.connect(self._on_show_in_folder)
@@ -305,7 +322,55 @@ class MainWindow(QMainWindow):
     def _on_search(self, query: str) -> None:
         """搜索处理"""
         self._status_label.setText(f"搜索: {query}")
-        # TODO: 执行搜索并更新PDF列表
+
+        if not query:
+            # 清空搜索，恢复正常模式
+            self._show_pdf_list()
+            return
+
+        # 执行内容搜索
+        try:
+            results = self._app_context.search_service.search(
+                query,
+                folder_id=self._current_folder_id,
+                limit=50
+            )
+
+            if results:
+                self._show_search_results(results)
+                self._status_label.setText(f"找到 {len(results)} 个结果")
+            else:
+                self._status_label.setText("未找到匹配结果")
+                # 仍然显示搜索结果组件，但显示空状态
+                self._show_search_results([])
+
+        except Exception as e:
+            self._status_label.setText(f"搜索错误: {str(e)}")
+
+    def _show_pdf_list(self) -> None:
+        """显示PDF列表（正常模式）"""
+        self._is_search_mode = False
+        self._pdf_list.setVisible(True)
+        self._search_results.setVisible(False)
+        self._search_results.clear_results()
+
+    def _show_search_results(self, results) -> None:
+        """显示搜索结果"""
+        self._is_search_mode = True
+        self._pdf_list.setVisible(False)
+        self._search_results.setVisible(True)
+        self._search_results.set_results(results)
+
+    def _on_search_result_clicked(self, pdf_id: int, page_number: int) -> None:
+        """点击搜索结果处理"""
+        # 加载PDF到预览
+        self._current_pdf_id = pdf_id
+        self._pdf_viewer.load_pdf(pdf_id)
+
+        # 跳转到指定页面
+        self._pdf_viewer.go_to_page(page_number - 1)  # 页码从0开始
+
+        self._status_label.setText(f"已打开PDF，跳转到第{page_number}页")
 
     def _on_add_pdf(self) -> None:
         """添加PDF处理"""

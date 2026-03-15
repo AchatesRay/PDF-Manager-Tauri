@@ -246,6 +246,21 @@ class PDFViewerWidget(QWidget):
             self._update_navigation_buttons()
             self._render_current_page()
 
+    def go_to_page(self, page_number: int) -> None:
+        """跳转到指定页面
+
+        Args:
+            page_number: 页码（从0开始）
+        """
+        if self._current_pdf is None:
+            return
+
+        if 0 <= page_number < self._total_pages:
+            self._current_page = page_number
+            self._update_page_label()
+            self._update_navigation_buttons()
+            self._render_current_page()
+
     def _on_open_external(self) -> None:
         """外部打开"""
         if self._current_pdf is not None:
