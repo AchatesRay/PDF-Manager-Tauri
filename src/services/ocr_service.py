@@ -76,11 +76,10 @@ class OCRService:
                 logger.info("正在初始化PaddleOCR引擎...")
 
                 # PaddleOCR 新版本初始化参数
-                # 注意：新版本不再支持 use_gpu 参数，设备选择通过环境变量控制
+                # 注意：新版本API有变化，不再支持 use_gpu, show_log 等参数
                 init_params = {
                     'use_angle_cls': True,
                     'lang': self._lang,
-                    'show_log': False,
                 }
 
                 # 如果模型目录存在，传入模型路径
