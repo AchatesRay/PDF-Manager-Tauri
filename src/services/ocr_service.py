@@ -52,11 +52,15 @@ class OCRService:
             try:
                 from paddleocr import PaddleOCR
 
+                # 获取模型路径
+                model_dir = get_ocr_models_path()
+
                 self._ocr_engine = PaddleOCR(
                     use_angle_cls=True,
                     lang=self._lang,
                     use_gpu=self._use_gpu,
-                    show_log=False
+                    show_log=False,
+                    model_dir=str(model_dir) if model_dir.exists() else None
                 )
                 self._available = True
             except ImportError:

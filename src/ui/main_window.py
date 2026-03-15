@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QFileDialog,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QDesktopServices
 
 from src.ui.widgets import FolderTreeWidget, PDFListWidget, PDFViewerWidget
 from src.ui.dialogs import SettingsDialog, ImportDialog
@@ -258,8 +258,15 @@ class MainWindow(QMainWindow):
         # PDF双击
         self._pdf_list.pdf_double_clicked.connect(self._on_pdf_double_clicked)
 
+        # PDF删除
+        self._pdf_list.delete_pdf_clicked.connect(self._on_delete_pdf_from_list)
+
         # 搜索
         self._search_bar.search_requested.connect(self._on_search)
+
+        # PDF预览外部打开
+        self._pdf_viewer.open_external_clicked.connect(self._on_open_pdf_external)
+        self._pdf_viewer.show_in_folder_clicked.connect(self._on_show_in_folder)
 
     def _load_initial_data(self) -> None:
         """加载初始数据"""
@@ -325,8 +332,8 @@ class MainWindow(QMainWindow):
 
     def _on_add_folder(self) -> None:
         """添加文件夹处理"""
-        # TODO: 显示创建文件夹对话框
-        self._status_label.setText("添加文件夹")
+        # 触发文件夹树创建根文件夹
+        self._folder_tree._on_create_root_folder()
 
     def _on_delete(self) -> None:
         """删除处理"""
@@ -392,6 +399,40 @@ class MainWindow(QMainWindow):
             "- OCR文字识别\n"
             "- 全文搜索\n",
         )
+
+    def _on_open_pdf_external(self, file_path: str) -> None:
+        """使用外部程序打开PDF"""
+        from PyQt6.QtCore import QUrl
+        url = QUrl.fromLocalFile(file_path)
+        QDesktopServices.openUrl(url)
+
+    def _on_show_in_folder(self, file_path: str) -> None:
+        """在文件夹中显示PDF"""
+        from PyQt6.QtCore import QUrl
+        import os
+        # 使用 file:// URL 并指定 select 参数
+        # QDesktopServices 会自动打开文件管理器并选中文件
+        url = QUrl.fromLocalFile(os.path.dirname(file_path))
+        QDesktopServices.openUrl(url)
+
+    def _on_delete_pdf_from_list(self, pdf_id: int) -> None:
+        """从PDF列表删除"""
+        pdf = self._app_context.pdf_manager.get_pdf(pdf_id)
+        if pdf:
+            reply = QMessageBox.question(
+                self,
+                "确认删除",
+                f"确定要删除PDF \"{pdf.filename}\" 吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._app_context.pdf_manager.delete_pdf(pdf_id)
+                self._current_pdf_id = None
+                self._pdf_viewer.clear()
+                self._pdf_list.refresh()
+                self._update_status()
+                self._status_label.setText("已删除PDF")
 
     def _on_refresh(self) -> None:
         """刷新处理"""
