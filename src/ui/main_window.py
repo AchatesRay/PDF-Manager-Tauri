@@ -309,6 +309,15 @@ class MainWindow(QMainWindow):
 
     def _on_add_pdf(self) -> None:
         """添加PDF处理"""
+        # 检查是否选择了文件夹
+        if self._current_folder_id is None:
+            QMessageBox.warning(
+                self,
+                "提示",
+                "请先创建并选择一个文件夹，然后再添加PDF文件。"
+            )
+            return
+
         file_dialog = QFileDialog(self)
         file_dialog.setWindowTitle("选择PDF文件")
         file_dialog.setNameFilter("PDF文件 (*.pdf)")

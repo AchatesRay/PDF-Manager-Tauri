@@ -1,9 +1,15 @@
 """文件夹管理服务"""
 
+import os
+from pathlib import Path
 from typing import List, Optional
 
 from src.models.database import Database
 from src.models.schemas import Folder
+from src.utils.path_utils import get_data_path
+from src.utils.logger import get_logger
+
+logger = get_logger("folder_manager")
 
 
 class FolderManager:
@@ -12,13 +18,17 @@ class FolderManager:
     提供文件夹的CRUD操作、嵌套管理、循环引用检测等功能。
     """
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, storage_path: Optional[Path] = None):
         """初始化文件夹管理器
 
         Args:
             database: 数据库实例
+            storage_path: 存储路径，如果为None则使用默认data路径
         """
         self._db = database
+        self._storage_path = storage_path or get_data_path() / "pdfs"
+        # 确保存储目录存在
+        self._storage_path.mkdir(parents=True, exist_ok=True)
 
     def create_folder(self, name: str, parent_id: Optional[int] = None) -> Folder:
         """创建文件夹
@@ -38,11 +48,49 @@ class FolderManager:
             parent = self._db.get_folder(parent_id)
             if parent is None:
                 raise ValueError(f"Parent folder with id {parent_id} does not exist")
+            logger.info(f"创建子文件夹: 名称='{name}', 父文件夹='{parent.name}' (ID={parent_id})")
+        else:
+            logger.info(f"创建根文件夹: 名称='{name}'")
 
         folder = Folder(name=name, parent_id=parent_id)
         folder_id = self._db.create_folder(folder)
         folder.id = folder_id
+
+        # 验证创建结果
+        created = self._db.get_folder(folder_id)
+        if created:
+            logger.info(f"文件夹创建成功: ID={folder_id}, 名称='{created.name}', parent_id={created.parent_id}")
+
+        # 同步创建物理目录
+        try:
+            folder_path = self._get_folder_physical_path(folder_id)
+            folder_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"创建物理目录: {folder_path}")
+        except Exception as e:
+            logger.warning(f"创建物理目录失败: {e}")
+
         return folder
+
+    def _get_folder_physical_path(self, folder_id: int) -> Path:
+        """获取文件夹的物理存储路径
+
+        Args:
+            folder_id: 文件夹ID
+
+        Returns:
+            物理路径
+        """
+        parts = []
+        current_id = folder_id
+
+        while current_id is not None:
+            folder = self._db.get_folder(current_id)
+            if folder is None:
+                break
+            parts.insert(0, folder.name)
+            current_id = folder.parent_id
+
+        return self._storage_path / "/".join(parts)
 
     def get_folder(self, folder_id: int) -> Optional[Folder]:
         """获取文件夹

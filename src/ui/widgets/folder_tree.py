@@ -260,18 +260,29 @@ class FolderTreeWidget(QWidget):
 
     def _on_create_folder(self) -> None:
         """创建子文件夹"""
-        parent_id = self._current_folder_id
-        self._create_folder_internal(parent_id)
+        # 使用当前选中的文件夹作为父文件夹
+        # _show_context_menu 已经在显示菜单前更新了 _current_folder_id
+        if self._current_folder_id is None:
+            QMessageBox.warning(self, "提示", "请先选择一个父文件夹")
+            return
+        self._create_folder_internal(self._current_folder_id)
 
     def _create_folder_internal(self, parent_id: Optional[int]) -> None:
         """内部创建文件夹方法"""
         if self._folder_manager is None:
             return
 
+        # 获取父文件夹名称用于提示
+        parent_name = "根目录"
+        if parent_id is not None:
+            parent_folder = self._folder_manager.get_folder(parent_id)
+            if parent_folder:
+                parent_name = parent_folder.name
+
         name, ok = QInputDialog.getText(
             self,
             "新建文件夹",
-            "文件夹名称:",
+            f"在 '{parent_name}' 下创建文件夹，名称:",
             QLineEdit.EchoMode.Normal,
             ""
         )
@@ -336,6 +347,12 @@ class FolderTreeWidget(QWidget):
         """显示右键菜单"""
         index = self._tree_view.indexAt(pos)
         if index.isValid():
-            self._tree_view.setCurrentIndex(index)
-            self._on_selection_changed(index)
-            self._context_menu.exec(self._tree_view.viewport().mapToGlobal(pos))
+            # 获取右键点击位置的文件夹ID
+            folder_id = self._model.getFolderId(index)
+            if folder_id > 0:
+                # 更新当前选中的文件夹
+                self._tree_view.setCurrentIndex(index)
+                self._current_folder_id = folder_id
+                self.folder_selected.emit(folder_id)
+                # 显示菜单
+                self._context_menu.exec(self._tree_view.viewport().mapToGlobal(pos))

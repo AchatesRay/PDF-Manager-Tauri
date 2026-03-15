@@ -126,6 +126,27 @@ class PDFManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"{timestamp}_{original_name}"
 
+    def _get_folder_path_parts(self, folder_id: int) -> List[str]:
+        """获取文件夹路径部分（从根到当前文件夹的名称列表）
+
+        Args:
+            folder_id: 文件夹ID
+
+        Returns:
+            文件夹名称列表，从根文件夹开始
+        """
+        parts = []
+        current_id = folder_id
+
+        while current_id is not None:
+            folder = self._db.get_folder(current_id)
+            if folder is None:
+                break
+            parts.insert(0, folder.name)
+            current_id = folder.parent_id
+
+        return parts
+
     def import_pdf(
         self,
         source_path: str,
@@ -175,9 +196,27 @@ class PDFManager:
             )
 
         try:
+            # 确定存储路径：按文件夹结构保存
+            target_folder_path = self._storage_path
+            if folder_id is not None:
+                # 获取文件夹路径
+                folder = self._db.get_folder(folder_id)
+                if folder:
+                    # 构建文件夹路径
+                    folder_path_parts = self._get_folder_path_parts(folder_id)
+                    if folder_path_parts:
+                        target_folder_path = self._storage_path / "pdfs" / "/".join(folder_path_parts)
+                        target_folder_path.mkdir(parents=True, exist_ok=True)
+                        logger.debug(f"创建文件夹路径: {target_folder_path}")
+            else:
+                target_folder_path = self._storage_path / "pdfs"
+
+            # 确保存储目录存在
+            target_folder_path.mkdir(parents=True, exist_ok=True)
+
             # 复制文件到存储目录
             storage_filename = self._get_storage_filename(source_path)
-            storage_file_path = self._storage_path / storage_filename
+            storage_file_path = target_folder_path / storage_filename
             shutil.copy2(source_path, storage_file_path)
             logger.debug(f"文件复制完成: {source_path} -> {storage_file_path}")
 
@@ -256,17 +295,21 @@ class PDFManager:
         """
         pages = self._db.get_pages_by_pdf(pdf.id)
         total_pages = len(pages)
-        logger.debug(f"开始OCR处理: PDF ID={pdf.id}, 总页数={total_pages}")
+        logger.info(f"开始OCR处理: PDF ID={pdf.id}, 文件名={pdf.filename}, 总页数={total_pages}")
+
+        processed_pages = 0
+        failed_pages = 0
 
         for i, page in enumerate(pages):
             if progress_callback:
-                progress_callback(i + 1, total_pages, f"Processing page {i + 1}/{total_pages}")
+                progress_callback(i + 1, total_pages, f"OCR处理中: 第 {i + 1}/{total_pages} 页")
 
             try:
                 # 根据PDF类型选择处理方式
                 if pdf.pdf_type == PDFType.TEXT:
                     # 文字型PDF直接提取文本
                     text = self._pdf_service.extract_text_from_page(pdf.file_path, page.page_number)
+                    logger.debug(f"页面 {page.page_number}: 直接提取文本，长度={len(text)}")
                 else:
                     # 扫描型或混合型使用OCR
                     text = self._ocr_service.recognize_pdf_page(
@@ -274,6 +317,7 @@ class PDFManager:
                         pdf.file_path,
                         page.page_number
                     )
+                    logger.debug(f"页面 {page.page_number}: OCR识别完成，文本长度={len(text)}")
 
                 # 更新页面OCR结果
                 self._db.update_page_ocr(page.id, text, OCRStatus.DONE)
@@ -288,10 +332,15 @@ class PDFManager:
                     content=text
                 )
 
+                processed_pages += 1
+
             except Exception as e:
                 # OCR处理失败，标记为错误但继续处理其他页面
+                failed_pages += 1
                 logger.warning(f"OCR处理失败: PDF ID={pdf.id}, 页码={page.page_number} - {str(e)}")
                 self._db.update_page_ocr(page.id, "", OCRStatus.ERROR)
+
+        logger.info(f"OCR处理完成: PDF ID={pdf.id}, 成功={processed_pages}, 失败={failed_pages}")
 
     def delete_pdf(self, pdf_id: int) -> bool:
         """删除PDF及所有相关数据

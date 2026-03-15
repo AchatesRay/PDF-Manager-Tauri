@@ -1,6 +1,7 @@
 """PDF预览组件"""
 
 import os
+import numpy as np
 from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import (
@@ -181,10 +182,26 @@ class PDFViewerWidget(QWidget):
             )
 
             if img is not None:
+                # 确保图像是RGB模式
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
                 # 转换PIL Image为QPixmap
-                data = img.tobytes("rgb", "raw")
-                qimage = QImage(data, img.width, img.height, 3 * img.width, QImage.Format.Format_RGB888)
-                pixmap = QPixmap.fromImage(qimage)
+                # 使用正确的方法转换图像数据
+                import numpy as np
+                img_array = np.array(img)
+
+                height, width, channel = img_array.shape
+                bytes_per_line = 3 * width
+
+                qimage = QImage(
+                    img_array.data,
+                    width,
+                    height,
+                    bytes_per_line,
+                    QImage.Format.Format_RGB888
+                )
+                pixmap = QPixmap.fromImage(qimage.copy())  # 使用copy()确保数据有效
 
                 # 缩放以适应预览区域
                 scaled_pixmap = pixmap.scaled(

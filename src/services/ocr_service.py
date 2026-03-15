@@ -9,9 +9,12 @@ from typing import Optional, Dict, List, Any, TYPE_CHECKING
 from PIL import Image
 
 from src.utils.path_utils import get_ocr_models_path
+from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from src.services.pdf_service import PDFService
+
+logger = get_logger("ocr_service")
 
 
 # 中文模型的模型名称和下载URL
@@ -54,6 +57,20 @@ class OCRService:
 
                 # 获取模型路径
                 model_dir = get_ocr_models_path()
+                logger.info(f"OCR模型路径: {model_dir}, 存在: {model_dir.exists()}")
+
+                # 检查模型是否存在
+                if model_dir.exists():
+                    # 检查必要的模型文件
+                    det_model = model_dir / MODEL_NAMES["det"]
+                    rec_model = model_dir / MODEL_NAMES["rec"]
+                    cls_model = model_dir / MODEL_NAMES["cls"]
+
+                    logger.info(f"检测模型存在: {det_model.exists()}")
+                    logger.info(f"识别模型存在: {rec_model.exists()}")
+                    logger.info(f"分类模型存在: {cls_model.exists()}")
+
+                logger.info("正在初始化PaddleOCR引擎...")
 
                 self._ocr_engine = PaddleOCR(
                     use_angle_cls=True,
@@ -62,11 +79,16 @@ class OCRService:
                     show_log=False,
                     model_dir=str(model_dir) if model_dir.exists() else None
                 )
+
                 self._available = True
-            except ImportError:
+                logger.info("PaddleOCR引擎初始化成功")
+
+            except ImportError as e:
+                logger.error(f"PaddleOCR未安装: {e}")
                 self._available = False
                 return None
-            except Exception:
+            except Exception as e:
+                logger.error(f"PaddleOCR初始化失败: {e}")
                 self._available = False
                 return None
 
@@ -95,22 +117,27 @@ class OCRService:
             str: 识别出的文字，失败返回空字符串
         """
         if image is None:
+            logger.warning("recognize_image: 图像为空")
             return ""
 
         try:
             ocr_engine = self.ocr
             if ocr_engine is None:
+                logger.warning("recognize_image: OCR引擎不可用")
                 return ""
 
             # 将PIL Image转换为numpy数组
             import numpy as np
             img_array = np.array(image)
 
+            logger.debug(f"开始OCR识别，图像尺寸: {img_array.shape}")
+
             # 执行OCR识别
             result = ocr_engine.ocr(img_array, cls=True)
 
             # 解析结果
             if result is None or len(result) == 0:
+                logger.debug("OCR识别结果为空")
                 return ""
 
             # 提取所有识别的文字
@@ -122,9 +149,12 @@ class OCRService:
                             text = item[1][0]  # 获取识别的文字
                             texts.append(text)
 
-            return "\n".join(texts)
+            result_text = "\n".join(texts)
+            logger.debug(f"OCR识别完成，文本长度: {len(result_text)}")
+            return result_text
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"OCR识别失败: {e}")
             return ""
 
     def recognize_image_file(self, image_path: str) -> str:
@@ -175,14 +205,19 @@ class OCRService:
             str: 识别出的文字，失败返回空字符串
         """
         if pdf_service is None:
+            logger.warning("recognize_pdf_page: PDF服务为空")
             return ""
+
+        logger.debug(f"渲染PDF页面: {pdf_path}, 页码: {page_number}, DPI: {dpi}")
 
         # 使用PDF服务渲染页面为图像
         image = pdf_service.render_page_to_image(pdf_path, page_number, dpi=dpi)
 
         if image is None:
+            logger.warning(f"PDF页面渲染失败: {pdf_path}, 页码: {page_number}")
             return ""
 
+        logger.debug(f"PDF页面渲染成功，尺寸: {image.size}")
         return self.recognize_image(image)
 
     def check_model_status(self) -> Dict[str, Any]:

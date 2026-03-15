@@ -73,7 +73,10 @@ class ApplicationContext:
         )
 
         # 初始化管理器
-        self.folder_manager = FolderManager(database=self.database)
+        self.folder_manager = FolderManager(
+            database=self.database,
+            storage_path=self.config.pdfs_path
+        )
 
         self.pdf_manager = PDFManager(
             database=self.database,
