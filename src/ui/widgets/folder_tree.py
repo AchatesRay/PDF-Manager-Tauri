@@ -198,6 +198,26 @@ class FolderTreeWidget(QWidget):
         self._tree_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._tree_view.setMouseTracking(True)  # 启用鼠标追踪以支持悬浮效果
+
+        # 设置样式：选中绿色背景，悬浮黄色背景
+        self._tree_view.setStyleSheet("""
+            QTreeView::item {
+                background-color: transparent;
+                padding: 4px;
+                border: none;
+            }
+            QTreeView::item:selected {
+                background-color: #90EE90;
+                color: black;
+            }
+            QTreeView::item:hover {
+                background-color: #FFFFE0;
+            }
+            QTreeView::item:selected:hover {
+                background-color: #7CCD7C;
+            }
+        """)
 
         # 设置模型
         self._model = FolderTreeModel(self)
