@@ -1,30 +1,17 @@
 """OCR处理服务"""
 
 import os
-import tarfile
-import tempfile
 from pathlib import Path
 from typing import Optional, Dict, List, Any, TYPE_CHECKING
 
 from PIL import Image
 
-from src.utils.path_utils import get_ocr_models_path
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from src.services.pdf_service import PDFService
 
 logger = get_logger("ocr_service")
-
-
-# 中文模型的模型名称和下载URL
-MODEL_NAMES = {
-    "det": "ch_ppocr_mobile_v2.0_det_infer",
-    "cls": "ch_ppocr_mobile_v2.0_cls_infer",
-    "rec": "ch_ppocr_mobile_v2.0_rec_infer",
-}
-
-MODEL_DOWNLOAD_URL = "https://paddleocr.bj.bcebos.com/dygraph_v2.0/ch/{model_name}.tar"
 
 
 class OCRService:
@@ -58,35 +45,15 @@ class OCRService:
             try:
                 from paddleocr import PaddleOCR
 
-                # 获取模型路径
-                model_dir = get_ocr_models_path()
-                logger.info(f"OCR模型路径: {model_dir}, 存在: {model_dir.exists()}")
-
-                # 检查模型是否存在
-                if model_dir.exists():
-                    # 检查必要的模型文件
-                    det_model = model_dir / MODEL_NAMES["det"]
-                    rec_model = model_dir / MODEL_NAMES["rec"]
-                    cls_model = model_dir / MODEL_NAMES["cls"]
-
-                    logger.info(f"检测模型存在: {det_model.exists()}")
-                    logger.info(f"识别模型存在: {rec_model.exists()}")
-                    logger.info(f"分类模型存在: {cls_model.exists()}")
-
                 logger.info("正在初始化PaddleOCR引擎...")
 
                 # PaddleOCR 新版本初始化参数
-                # 注意：新版本API有变化，不再支持 use_gpu, show_log 等参数
-                init_params = {
-                    'use_angle_cls': True,
-                    'lang': self._lang,
-                }
-
-                # 如果模型目录存在，传入模型路径
-                if model_dir.exists():
-                    init_params['model_dir'] = str(model_dir)
-
-                self._ocr_engine = PaddleOCR(**init_params)
+                # 新版本不支持 model_dir, use_gpu, show_log 等参数
+                # 模型会自动下载到用户目录
+                self._ocr_engine = PaddleOCR(
+                    use_angle_cls=True,
+                    lang=self._lang,
+                )
 
                 self._available = True
                 logger.info("PaddleOCR引擎初始化成功")
@@ -239,23 +206,25 @@ class OCRService:
                 - missing_models: list, 缺失的模型名称列表
                 - installed_models: list, 已安装的模型名称列表
         """
-        model_dir = get_ocr_models_path()
-        missing_models = []
-        installed_models = []
-
-        # 检查每个模型是否存在
-        for model_type, model_name in MODEL_NAMES.items():
-            model_path = model_dir / model_name
-            if model_path.exists():
-                installed_models.append(model_name)
-            else:
-                missing_models.append(model_name)
+        # 新版本 PaddleOCR 自动管理模型，只需检查包是否安装
+        try:
+            import importlib.util
+            spec = importlib.util.find_spec("paddleocr")
+            if spec is not None:
+                return {
+                    "installed": True,
+                    "model_path": "自动管理",
+                    "missing_models": [],
+                    "installed_models": ["PaddleOCR"],
+                }
+        except Exception:
+            pass
 
         return {
-            "installed": len(missing_models) == 0,
-            "model_path": str(model_dir) if model_dir.exists() else None,
-            "missing_models": missing_models,
-            "installed_models": installed_models,
+            "installed": False,
+            "model_path": None,
+            "missing_models": ["paddleocr"],
+            "installed_models": [],
         }
 
     def get_manual_download_info(self) -> Dict[str, Any]:
@@ -267,24 +236,18 @@ class OCRService:
                 - models: list, 模型信息列表 (包含 name 和 url)
                 - model_dir: str, 模型应放置的目录
         """
-        model_dir = get_ocr_models_path()
-        models = []
-
-        for model_type, model_name in MODEL_NAMES.items():
-            models.append({
-                "name": model_name,
-                "url": MODEL_DOWNLOAD_URL.format(model_name=model_name),
-                "type": model_type,
-            })
-
         return {
-            "models": models,
-            "model_dir": str(model_dir),
+            "models": [{
+                "name": "PaddleOCR",
+                "url": "pip install paddlepaddle paddleocr",
+                "type": "pip package",
+            }],
+            "model_dir": "PaddleOCR 会自动下载模型到用户目录",
         }
 
     def download_models(self) -> Dict[str, Any]:
         """
-        自动下载 OCR 模型
+        自动安装 PaddleOCR
 
         Returns:
             dict: 包含以下键:
@@ -292,61 +255,45 @@ class OCRService:
                 - error: str|None, 错误信息 (如果失败)
                 - downloaded: list, 已下载的模型名称列表
         """
-        import requests
-
-        model_dir = get_ocr_models_path()
-        downloaded = []
+        import subprocess
+        import sys
 
         try:
-            # 确保模型目录存在
-            model_dir.mkdir(parents=True, exist_ok=True)
+            # 使用百度镜像安装 paddlepaddle 和 paddleocr
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "pip", "install",
+                    "paddlepaddle", "paddleocr",
+                    "-i", "https://mirror.baidu.com/pypi/simple",
+                    "--trusted-host", "mirror.baidu.com",
+                    "-q"
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
 
-            for model_type, model_name in MODEL_NAMES.items():
-                model_path = model_dir / model_name
-
-                # 如果模型已存在，跳过
-                if model_path.exists():
-                    downloaded.append(model_name)
-                    continue
-
-                # 下载模型
-                url = MODEL_DOWNLOAD_URL.format(model_name=model_name)
-
-                try:
-                    response = requests.get(url, timeout=300)
-                    response.raise_for_status()
-
-                    # 保存并解压 tar 文件
-                    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp_file:
-                        tmp_file.write(response.content)
-                        tmp_file_path = tmp_file.name
-
-                    try:
-                        # 解压到模型目录
-                        with tarfile.open(tmp_file_path, "r:*") as tar:
-                            tar.extractall(path=str(model_dir))
-                        downloaded.append(model_name)
-                    finally:
-                        # 删除临时文件
-                        if os.path.exists(tmp_file_path):
-                            os.unlink(tmp_file_path)
-
-                except requests.RequestException as e:
-                    return {
-                        "success": False,
-                        "error": f"下载模型 {model_name} 失败: {str(e)}",
-                        "downloaded": downloaded,
-                    }
-
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "error": None,
+                    "downloaded": ["paddlepaddle", "paddleocr"],
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"安装失败: {result.stderr or '未知错误'}",
+                    "downloaded": [],
+                }
+        except subprocess.TimeoutExpired:
             return {
-                "success": True,
-                "error": None,
-                "downloaded": downloaded,
+                "success": False,
+                "error": "安装超时，请检查网络连接",
+                "downloaded": [],
             }
-
         except Exception as e:
             return {
                 "success": False,
-                "error": f"下载模型时发生错误: {str(e)}",
-                "downloaded": downloaded,
+                "error": f"安装出错: {str(e)}",
+                "downloaded": [],
             }

@@ -23,7 +23,7 @@ from src.services.ocr_service import OCRService
 
 
 class DownloadWorker(QThread):
-    """后台下载模型的工作线程"""
+    """后台安装OCR的工作线程"""
 
     progress = pyqtSignal(int, int, str)  # current, total, message
     finished = pyqtSignal(dict)  # result dict with success, error, downloaded
@@ -33,36 +33,19 @@ class DownloadWorker(QThread):
         self._ocr_service = ocr_service
 
     def run(self) -> None:
-        """执行下载"""
+        """执行安装"""
         try:
             # 发送开始信号
-            self.progress.emit(0, 3, "正在检查模型状态...")
+            self.progress.emit(0, 1, "正在安装 PaddleOCR...")
 
-            # 获取模型状态
-            status = self._ocr_service.check_model_status()
-            missing_count = len(status.get("missing_models", []))
-
-            if missing_count == 0:
-                # 所有模型已存在
-                self.progress.emit(3, 3, "所有模型已存在，无需下载")
-                self.finished.emit({
-                    "success": True,
-                    "error": None,
-                    "downloaded": status.get("installed_models", []),
-                })
-                return
-
-            # 开始下载
-            self.progress.emit(0, missing_count, "正在下载模型...")
-
-            # 调用 OCRService 的下载方法
+            # 调用 OCRService 的安装方法
             result = self._ocr_service.download_models()
 
             # 发送进度更新
             if result.get("success"):
-                self.progress.emit(missing_count, missing_count, "下载完成")
+                self.progress.emit(1, 1, "安装完成")
             else:
-                self.progress.emit(0, missing_count, "下载失败")
+                self.progress.emit(0, 1, "安装失败")
 
             self.finished.emit(result)
 
@@ -128,21 +111,21 @@ class OCRSetupDialog(QDialog):
         # 说明文本
         info_label = QLabel(
             "OCR 模型用于识别 PDF 文档中的文字。"
-            "首次使用需要下载模型文件（约 50MB）。"
+            "首次使用需要安装 PaddleOCR（约 200MB）。"
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
         layout.addStretch()
 
-        # 自动下载按钮（推荐）
-        self._auto_download_button = QPushButton("自动下载（推荐）")
+        # 自动安装按钮（推荐）
+        self._auto_download_button = QPushButton("自动安装（推荐）")
         self._auto_download_button.setDefault(True)
         self._auto_download_button.clicked.connect(self._on_auto_download)
         layout.addWidget(self._auto_download_button)
 
-        # 手动下载按钮
-        self._manual_download_button = QPushButton("手动下载")
+        # 手动安装按钮
+        self._manual_download_button = QPushButton("手动安装")
         self._manual_download_button.clicked.connect(self._on_manual_download)
         layout.addWidget(self._manual_download_button)
 
@@ -237,21 +220,21 @@ class OCRSetupDialog(QDialog):
 
     def _update_ui_for_installed(self) -> None:
         """更新 UI 为已安装状态"""
-        self._auto_download_button.setText("重新下载")
+        self._auto_download_button.setText("重新安装")
         self._manual_download_button.setEnabled(True)
         self._later_button.setText("关闭")
 
     def _update_ui_for_not_installed(self) -> None:
         """更新 UI 为未安装状态"""
-        self._auto_download_button.setText("自动下载（推荐）")
+        self._auto_download_button.setText("自动安装（推荐）")
         self._manual_download_button.setEnabled(True)
         self._later_button.setText("以后再说")
 
     def _on_auto_download(self) -> None:
-        """开始自动下载"""
+        """开始自动安装"""
         # 切换到进度视图
         self._stacked_widget.setCurrentIndex(self.VIEW_PROGRESS)
-        self._progress_label.setText("准备下载...")
+        self._progress_label.setText("准备安装...")
         self._progress_bar.setValue(0)
 
         # 创建并启动工作线程
@@ -261,49 +244,48 @@ class OCRSetupDialog(QDialog):
         self._worker.start()
 
     def _on_download_progress(self, current: int, total: int, message: str) -> None:
-        """下载进度更新"""
+        """安装进度更新"""
         self._progress_label.setText(message)
         if total > 0:
             self._progress_bar.setMaximum(total)
             self._progress_bar.setValue(current)
 
     def _on_download_finished(self, result: dict) -> None:
-        """下载完成"""
+        """安装完成"""
         self._worker = None
 
         if result.get("success"):
-            downloaded = result.get("downloaded", [])
-            self.set_status(f"下载完成！已下载 {len(downloaded)} 个模型。")
+            self.set_status("安装完成！")
             self._update_ui_for_installed()
             self._stacked_widget.setCurrentIndex(self.VIEW_ACTION)
             QMessageBox.information(
                 self,
-                "下载完成",
-                "OCR 模型已成功下载，现在可以正常使用 OCR 功能。"
+                "安装完成",
+                "PaddleOCR 已成功安装，现在可以正常使用 OCR 功能。"
             )
         else:
             error = result.get("error", "未知错误")
-            self.set_status(f"下载失败：{error}")
+            self.set_status(f"安装失败：{error}")
             self._stacked_widget.setCurrentIndex(self.VIEW_ACTION)
             QMessageBox.warning(
                 self,
-                "下载失败",
-                f"下载模型时发生错误：{error}\n\n您可以尝试手动下载或稍后重试。"
+                "安装失败",
+                f"安装失败：{error}\n\n您可以尝试手动安装：\npip install paddlepaddle paddleocr"
             )
 
     def _on_cancel_download(self) -> None:
-        """取消下载"""
+        """取消安装"""
         if self._worker is not None and self._worker.isRunning():
             self._worker.terminate()
             self._worker.wait()
             self._worker = None
 
-        self.set_status("下载已取消")
+        self.set_status("安装已取消")
         self._stacked_widget.setCurrentIndex(self.VIEW_ACTION)
 
     def _on_manual_download(self) -> None:
-        """显示手动下载说明"""
-        # 获取手动下载信息
+        """显示手动安装说明"""
+        # 获取手动安装信息
         try:
             info = self._ocr_service.get_manual_download_info()
             models = info.get("models", [])
@@ -311,24 +293,22 @@ class OCRSetupDialog(QDialog):
 
             # 构建说明文本
             text_parts = [
-                "手动下载 OCR 模型：\n",
-                "请从以下链接下载模型文件：\n"
+                "手动安装 PaddleOCR：\n\n",
+                "在终端中执行以下命令：\n",
             ]
 
             for model in models:
-                name = model.get("name", "未知模型")
                 url = model.get("url", "")
-                text_parts.append(f"\n{name}:")
-                text_parts.append(f"  {url}")
+                text_parts.append(f"\n{url}")
 
-            text_parts.append(f"\n\n下载完成后，请将解压后的文件夹放置到以下目录：")
+            text_parts.append(f"\n\n说明：")
             text_parts.append(f"\n{model_dir}")
-            text_parts.append("\n\n注意：下载的文件为 .tar 格式，需要解压后使用。")
+            text_parts.append("\n\n提示：使用百度镜像源可以加速下载。")
 
             self._manual_text.setText("".join(text_parts))
 
         except Exception as e:
-            self._manual_text.setText(f"获取下载信息失败：{str(e)}")
+            self._manual_text.setText(f"获取安装信息失败：{str(e)}")
 
         # 切换到手动下载视图
         self._stacked_widget.setCurrentIndex(self.VIEW_MANUAL)
