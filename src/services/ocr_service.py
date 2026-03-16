@@ -23,15 +23,12 @@ class OCRService:
 
         Args:
             lang: OCR语言，默认为中文("ch")
-            use_gpu: 是否使用GPU加速（注意：PaddleOCR新版本通过环境变量控制设备）
+            use_gpu: 是否使用GPU加速
         """
         self._lang = lang
         self._use_gpu = use_gpu
         self._ocr_engine = None
         self._available = None
-
-        if use_gpu:
-            logger.warning("PaddleOCR新版本不再支持use_gpu参数，请通过环境变量CUDA_VISIBLE_DEVICES控制GPU使用")
 
     @property
     def ocr(self):
@@ -43,17 +40,45 @@ class OCRService:
         """
         if self._ocr_engine is None:
             try:
+                import paddleocr
                 from paddleocr import PaddleOCR
+
+                # 检查版本
+                version = paddleocr.__version__
+                logger.info(f"PaddleOCR 版本: {version}")
+
+                # 设置环境变量，禁用 oneDNN 以避免某些 CPU 兼容性问题
+                os.environ['FLAGS_enable_onednn_backend'] = '0'
 
                 logger.info("正在初始化PaddleOCR引擎...")
 
-                # PaddleOCR 新版本初始化参数
-                # 新版本不支持 model_dir, use_gpu, show_log 等参数
-                # 模型会自动下载到用户目录
-                self._ocr_engine = PaddleOCR(
-                    use_angle_cls=True,
-                    lang=self._lang,
-                )
+                # 根据版本使用不同的初始化方式
+                major_version = int(version.split('.')[0])
+
+                if major_version >= 2:
+                    # 新版本 (2.x+) 使用 PaddleX 后端
+                    # 需要指定使用轻量级模型
+                    try:
+                        # 尝试使用新版本的参数指定轻量级模型
+                        self._ocr_engine = PaddleOCR(
+                            use_angle_cls=True,
+                            lang=self._lang,
+                            # 指定使用移动端模型（更轻量）
+                            det_algorithm='DB',
+                            rec_algorithm='CRNN',
+                        )
+                    except TypeError:
+                        # 如果参数不支持，使用最简配置
+                        self._ocr_engine = PaddleOCR(
+                            use_angle_cls=True,
+                            lang=self._lang,
+                        )
+                else:
+                    # 旧版本
+                    self._ocr_engine = PaddleOCR(
+                        use_angle_cls=True,
+                        lang=self._lang,
+                    )
 
                 self._available = True
                 logger.info("PaddleOCR引擎初始化成功")
@@ -64,6 +89,8 @@ class OCRService:
                 return None
             except Exception as e:
                 logger.error(f"PaddleOCR初始化失败: {e}")
+                import traceback
+                traceback.print_exc()
                 self._available = False
                 return None
 
