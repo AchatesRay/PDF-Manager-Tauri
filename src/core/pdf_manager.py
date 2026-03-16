@@ -197,6 +197,7 @@ class PDFManager:
 
         try:
             # 确定存储路径：按文件夹结构保存
+            # _storage_path 已经指向 pdfs 目录，不需要额外追加 pdfs
             target_folder_path = self._storage_path
             if folder_id is not None:
                 # 获取文件夹路径
@@ -205,11 +206,9 @@ class PDFManager:
                     # 构建文件夹路径
                     folder_path_parts = self._get_folder_path_parts(folder_id)
                     if folder_path_parts:
-                        target_folder_path = self._storage_path / "pdfs" / "/".join(folder_path_parts)
+                        target_folder_path = self._storage_path / "/".join(folder_path_parts)
                         target_folder_path.mkdir(parents=True, exist_ok=True)
                         logger.debug(f"创建文件夹路径: {target_folder_path}")
-            else:
-                target_folder_path = self._storage_path / "pdfs"
 
             # 确保存储目录存在
             target_folder_path.mkdir(parents=True, exist_ok=True)

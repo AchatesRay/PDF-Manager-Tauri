@@ -42,6 +42,13 @@ class OCRService:
             try:
                 import paddleocr
                 from paddleocr import PaddleOCR
+                from src.utils.path_utils import get_ocr_models_path
+
+                # 设置 OCR 模型存储路径到程序目录
+                ocr_models_path = get_ocr_models_path()
+                ocr_models_path.mkdir(parents=True, exist_ok=True)
+                os.environ['PADDLEOCR_HOME'] = str(ocr_models_path)
+                logger.info(f"OCR模型目录: {ocr_models_path}")
 
                 # 检查版本
                 version = paddleocr.__version__

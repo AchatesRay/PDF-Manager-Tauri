@@ -62,7 +62,6 @@ def get_ocr_models_path() -> Path:
     """获取 OCR 模型存储路径
 
     统一使用程序所在目录下的 ocr_models 目录。
-    开发环境使用默认 PaddleOCR 路径（~/.paddleocr）。
 
     Returns:
         OCR 模型目录路径
@@ -71,8 +70,8 @@ def get_ocr_models_path() -> Path:
         # 打包后使用程序所在目录
         return get_app_dir() / "ocr_models"
     else:
-        # 开发环境使用默认 PaddleOCR 路径
-        return Path.home() / ".paddleocr"
+        # 开发环境也使用程序目录下的 ocr_models
+        return get_app_dir() / "ocr_models"
 
 
 def get_log_path() -> Path:

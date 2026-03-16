@@ -1,6 +1,7 @@
 """文件夹管理服务"""
 
 import os
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -231,6 +232,9 @@ class FolderManager:
         if folder is None:
             return False
 
+        # 先保存物理路径，用于后续删除
+        folder_path = self._get_folder_physical_path(folder_id)
+
         # 检查是否有子文件夹
         children = self._db.get_folders_by_parent(folder_id)
         if children:
@@ -251,11 +255,27 @@ class FolderManager:
                     f"Cannot delete folder {folder_id}: "
                     "folder contains PDF files. Set delete_contents=True to force delete."
                 )
-            # 删除PDF文件
+            # 删除PDF文件（包括物理文件）
             for pdf in pdfs:
+                # 删除PDF物理文件
+                if pdf.file_path and os.path.exists(pdf.file_path):
+                    os.unlink(pdf.file_path)
+                    logger.info(f"删除PDF文件: {pdf.file_path}")
                 self._db.delete_pdf(pdf.id)
 
-        return self._db.delete_folder(folder_id)
+        # 删除数据库记录
+        result = self._db.delete_folder(folder_id)
+
+        # 删除物理目录（如果存在）
+        if result and folder_path.exists():
+            import shutil
+            try:
+                shutil.rmtree(folder_path)
+                logger.info(f"删除物理目录: {folder_path}")
+            except Exception as e:
+                logger.warning(f"删除物理目录失败: {e}")
+
+        return result
 
     def get_folder_path(self, folder_id: int) -> List[Folder]:
         """获取文件夹路径（从根到当前文件夹）

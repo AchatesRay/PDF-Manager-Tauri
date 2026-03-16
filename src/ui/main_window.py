@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QToolBar,
     QMessageBox,
     QFileDialog,
+    QPushButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QDesktopServices
@@ -46,6 +47,11 @@ class SearchBarWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+
+        # 设置固定高度，防止布局变化
+        self.setMinimumHeight(60)
+        self.setMaximumHeight(60)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -53,6 +59,7 @@ class SearchBarWidget(QWidget):
         # 内容搜索框
         self._content_search_input = QLineEdit()
         self._content_search_input.setPlaceholderText("搜索PDF内容...")
+        self._content_search_input.setFixedHeight(26)
         self._content_search_input.returnPressed.connect(self._on_content_search)
         self._content_search_input.textChanged.connect(self._on_content_text_changed)
         layout.addWidget(self._content_search_input)
@@ -60,6 +67,7 @@ class SearchBarWidget(QWidget):
         # 文件名搜索框
         self._filename_search_input = QLineEdit()
         self._filename_search_input.setPlaceholderText("搜索文件名...")
+        self._filename_search_input.setFixedHeight(26)
         self._filename_search_input.textChanged.connect(self._on_filename_search)
         layout.addWidget(self._filename_search_input)
 
@@ -269,6 +277,17 @@ class MainWindow(QMainWindow):
         # PDF数量标签
         self._pdf_count_label = QLabel("PDF: 0")
         statusbar.addPermanentWidget(self._pdf_count_label)
+
+        # OCR状态标签
+        self._ocr_status_label = QLabel("OCR: 检查中...")
+        self._ocr_status_label.setStyleSheet("padding: 0 8px;")
+        statusbar.addPermanentWidget(self._ocr_status_label)
+
+        # OCR更新按钮
+        self._ocr_update_button = QPushButton("OCR设置")
+        self._ocr_update_button.setFixedHeight(24)
+        self._ocr_update_button.clicked.connect(self._on_ocr_settings)
+        statusbar.addPermanentWidget(self._ocr_update_button)
 
     def _setup_toolbar(self) -> None:
         """设置工具栏"""
@@ -561,6 +580,36 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         # 延迟加载初始数据
         self._load_initial_data()
+        # 检查OCR状态
+        self._check_ocr_status()
+
+    def _check_ocr_status(self) -> None:
+        """检查OCR状态"""
+        try:
+            from src.services.ocr_service import OCRService
+            ocr_service = OCRService()
+            status = ocr_service.check_model_status()
+
+            if status.get("installed"):
+                self._ocr_status_label.setText("OCR: 已就绪")
+                self._ocr_status_label.setStyleSheet("color: green; padding: 0 8px;")
+            else:
+                self._ocr_status_label.setText("OCR: 未安装")
+                self._ocr_status_label.setStyleSheet("color: red; padding: 0 8px;")
+        except Exception as e:
+            self._ocr_status_label.setText("OCR: 错误")
+            self._ocr_status_label.setStyleSheet("color: orange; padding: 0 8px;")
+            from src.utils.logger import get_logger
+            logger = get_logger("main_window")
+            logger.warning(f"OCR状态检查失败: {e}")
+
+    def _on_ocr_settings(self) -> None:
+        """打开OCR设置对话框"""
+        from src.ui.dialogs.ocr_setup_dialog import OCRSetupDialog
+        dialog = OCRSetupDialog(self)
+        dialog.exec()
+        # 对话框关闭后重新检查状态
+        self._check_ocr_status()
 
     def closeEvent(self, event) -> None:
         """窗口关闭事件"""
