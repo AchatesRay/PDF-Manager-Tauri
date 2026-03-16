@@ -120,7 +120,7 @@ class OCRService:
             logger.debug(f"开始OCR识别，图像尺寸: {img_array.shape}")
 
             # 执行OCR识别
-            result = ocr_engine.ocr(img_array, cls=True)
+            result = ocr_engine.ocr(img_array)
 
             # 解析结果
             if result is None or len(result) == 0:
