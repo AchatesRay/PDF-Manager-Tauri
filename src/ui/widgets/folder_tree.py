@@ -67,6 +67,9 @@ class FolderTreeModel(QAbstractItemModel):
 
     def setFolders(self, folders: List[Folder]) -> None:
         """设置文件夹数据"""
+        from src.utils.logger import get_logger
+        logger = get_logger("folder_tree")
+
         self.beginResetModel()
         self._root_item = FolderTreeItem()
         self._folder_items = {}
@@ -75,12 +78,14 @@ class FolderTreeModel(QAbstractItemModel):
         for folder in folders:
             item = FolderTreeItem(folder)
             self._folder_items[folder.id] = item
+            logger.debug(f"创建文件夹项: ID={folder.id}, 名称='{folder.name}', parent_id={folder.parent_id}")
 
         # 构建树结构
         for folder in folders:
             item = self._folder_items[folder.id]
             if folder.parent_id is None:
                 self._root_item.appendChild(item)
+                logger.debug(f"添加根节点: ID={folder.id}, 名称='{folder.name}'")
             elif folder.parent_id in self._folder_items:
                 parent_item = self._folder_items[folder.parent_id]
                 parent_item.appendChild(item)
@@ -350,9 +355,8 @@ class FolderTreeWidget(QWidget):
             # 获取右键点击位置的文件夹ID
             folder_id = self._model.getFolderId(index)
             if folder_id > 0:
-                # 更新当前选中的文件夹
-                self._tree_view.setCurrentIndex(index)
+                # 更新当前操作的文件夹ID（用于创建子文件夹等操作）
+                # 但不改变选中状态，保持用户之前的选中
                 self._current_folder_id = folder_id
-                self.folder_selected.emit(folder_id)
                 # 显示菜单
                 self._context_menu.exec(self._tree_view.viewport().mapToGlobal(pos))

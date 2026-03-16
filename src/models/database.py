@@ -177,7 +177,13 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM folders ORDER BY name")
             rows = cursor.fetchall()
-            return [self._row_to_folder(row) for row in rows]
+            folders = [self._row_to_folder(row) for row in rows]
+            # 添加日志用于调试
+            import logging
+            logger = logging.getLogger("database")
+            for f in folders:
+                logger.debug(f"读取文件夹: ID={f.id}, 名称='{f.name}', parent_id={f.parent_id}")
+            return folders
 
     def update_folder(self, folder: Folder) -> bool:
         """更新文件夹
