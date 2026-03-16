@@ -59,33 +59,11 @@ class OCRService:
 
                 logger.info("正在初始化PaddleOCR引擎...")
 
-                # 根据版本使用不同的初始化方式
-                major_version = int(version.split('.')[0])
-
-                if major_version >= 2:
-                    # 新版本 (2.x+) 使用 PaddleX 后端
-                    # 需要指定使用轻量级模型
-                    try:
-                        # 尝试使用新版本的参数指定轻量级模型
-                        self._ocr_engine = PaddleOCR(
-                            use_angle_cls=True,
-                            lang=self._lang,
-                            # 指定使用移动端模型（更轻量）
-                            det_algorithm='DB',
-                            rec_algorithm='CRNN',
-                        )
-                    except TypeError:
-                        # 如果参数不支持，使用最简配置
-                        self._ocr_engine = PaddleOCR(
-                            use_angle_cls=True,
-                            lang=self._lang,
-                        )
-                else:
-                    # 旧版本
-                    self._ocr_engine = PaddleOCR(
-                        use_angle_cls=True,
-                        lang=self._lang,
-                    )
+                # 使用最简配置初始化，避免不同版本API兼容性问题
+                self._ocr_engine = PaddleOCR(
+                    use_angle_cls=True,
+                    lang=self._lang,
+                )
 
                 self._available = True
                 logger.info("PaddleOCR引擎初始化成功")
