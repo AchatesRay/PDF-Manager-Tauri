@@ -75,7 +75,7 @@ impl SearchService {
         filename: &str,
         content: &str,
     ) -> Result<(), SearchError> {
-        let mut writer = self.index.writer(50_000_000)?;
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = self.index.writer(50_000_000)?;
 
         let page_id_field = self.schema.get_field("page_id").unwrap();
         let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
@@ -139,11 +139,11 @@ impl SearchService {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
             let filename = doc.get_first(self.schema.get_field("filename").unwrap())
-                .and_then(|v| v.as_text())
+                .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
             let content = doc.get_first(self.schema.get_field("content").unwrap())
-                .and_then(|v| v.as_text())
+                .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
@@ -170,7 +170,7 @@ impl SearchService {
     }
 
     pub fn delete_pdf(&mut self, pdf_id: u64) -> Result<(), SearchError> {
-        let mut writer = self.index.writer(50_000_000)?;
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = self.index.writer(50_000_000)?;
 
         let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
         let query = tantivy::query::TermQuery::new(
