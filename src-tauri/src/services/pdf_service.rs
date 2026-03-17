@@ -1,4 +1,5 @@
 use crate::models::PdfType;
+use image::DynamicImage;
 use std::path::Path;
 use thiserror::Error;
 use tracing::debug;
@@ -64,6 +65,16 @@ impl PdfService {
             page_count: pages.len() as i32,
             file_size,
         })
+    }
+
+    /// 渲染 PDF 页面为图像
+    /// 注意：这是一个占位实现，需要添加 pdfium 或类似的 PDF 渲染库
+    pub fn render_page(&self, _pdf_path: &Path, _page_num: u32) -> Result<DynamicImage, PdfError> {
+        // TODO: 使用 pdfium 或 pdf-render 库实现 PDF 页面渲染
+        // 目前返回一个占位错误
+        Err(PdfError::RenderError(
+            "PDF rendering not implemented. Please add pdfium or similar library.".to_string(),
+        ))
     }
 }
 

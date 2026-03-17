@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     parent_id INTEGER,
+    storage_path TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE SET NULL
@@ -42,3 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_pdfs_folder ON pdfs(folder_id);
 CREATE INDEX IF NOT EXISTS idx_pdfs_status ON pdfs(status);
 CREATE INDEX IF NOT EXISTS idx_pages_pdf ON pdf_pages(pdf_id);
 "#;
+
+pub const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE folders ADD COLUMN storage_path TEXT",
+];

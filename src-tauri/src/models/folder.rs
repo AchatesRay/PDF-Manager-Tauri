@@ -6,6 +6,7 @@ pub struct Folder {
     pub id: i64,
     pub name: String,
     pub parent_id: Option<i64>,
+    pub storage_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -14,11 +15,13 @@ pub struct Folder {
 pub struct NewFolder {
     pub name: String,
     pub parent_id: Option<i64>,
+    pub storage_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateFolder {
     pub name: String,
+    pub storage_path: Option<String>,
 }
 
 #[cfg(test)]
@@ -32,6 +35,7 @@ mod tests {
             id: 1,
             name: "测试文件夹".to_string(),
             parent_id: None,
+            storage_path: None,
             created_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             updated_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         };
@@ -49,6 +53,7 @@ mod tests {
         let new_folder = NewFolder {
             name: "新文件夹".to_string(),
             parent_id: Some(1),
+            storage_path: Some("/path/to/dir".to_string()),
         };
 
         let json = serde_json::to_string(&new_folder).unwrap();
@@ -64,6 +69,7 @@ mod tests {
             id: 2,
             name: "子文件夹".to_string(),
             parent_id: Some(1),
+            storage_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

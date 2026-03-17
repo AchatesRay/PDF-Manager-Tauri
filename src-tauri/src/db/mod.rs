@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 pub use schema::SCHEMA;
+pub use schema::MIGRATIONS;
 
 pub type Db = Mutex<Connection>;
 
@@ -23,6 +24,11 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
     let db_path = app_dir.join("pdf-manager.db");
     let conn = Connection::open(&db_path)?;
     conn.execute_batch(SCHEMA)?;
+
+    // 运行迁移
+    for migration in MIGRATIONS {
+        conn.execute(migration, []).ok();
+    }
 
     tracing::info!("Database initialized at {:?}", db_path);
 

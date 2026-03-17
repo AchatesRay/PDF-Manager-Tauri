@@ -1,12 +1,29 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, ocrProgress } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
   import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import type { OcrProgress } from '../stores';
 
   let fileInput: HTMLInputElement;
 
   onMount(async () => {
     await loadPdfs();
+
+    // 监听 OCR 进度事件
+    const unlisten = await listen<OcrProgress>('ocr-progress', (event) => {
+      const progress = event.payload;
+      ocrProgress.update(map => {
+        map.set(progress.pdf_id, progress);
+        return map;
+      });
+
+      if (progress.status === 'done') {
+        loadPdfs();
+      }
+    });
+
+    return unlisten;
   });
 
   async function loadPdfs() {
@@ -64,6 +81,14 @@
     }
   }
 
+  async function handleStartOcr(id: number) {
+    try {
+      await startOcr(id);
+    } catch (e) {
+      alert('启动OCR失败: ' + e);
+    }
+  }
+
   function getStatusText(status: string): string {
     switch (status) {
       case 'pending': return '等待处理';
@@ -107,9 +132,26 @@
             <span class="filename">{pdf.filename}</span>
             <span class="meta">
               {pdf.page_count} 页 · {getTypeText(pdf.pdf_type)} · {getStatusText(pdf.status)}
+              {#if $ocrProgress.has(pdf.id) && $ocrProgress.get(pdf.id)?.status === 'processing'}
+                <span class="progress">
+                  ({$ocrProgress.get(pdf.id)?.current}/{$ocrProgress.get(pdf.id)?.total})
+                </span>
+              {/if}
             </span>
           </div>
-          <button class="delete-btn" on:click|stopPropagation={() => handleDelete(pdf.id)}>删除</button>
+          <div class="actions">
+            {#if pdf.status === 'pending'}
+              <button
+                class="ocr-btn"
+                on:click|stopPropagation={() => handleStartOcr(pdf.id)}
+              >
+                开始处理
+              </button>
+            {:else if pdf.status === 'processing'}
+              <span class="processing">处理中...</span>
+            {/if}
+            <button class="delete-btn" on:click|stopPropagation={() => handleDelete(pdf.id)}>删除</button>
+          </div>
         </li>
       {/each}
     </ul>
@@ -192,6 +234,30 @@
   .meta {
     font-size: 12px;
     color: #666;
+  }
+
+  .progress {
+    color: #2196f3;
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .ocr-btn {
+    padding: 5px 10px;
+    background: #4caf50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .processing {
+    font-size: 12px;
+    color: #ff9800;
   }
 
   .delete-btn {
