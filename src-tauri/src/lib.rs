@@ -45,6 +45,7 @@ pub fn run() {
             commands::pdf::delete_pdf,
             commands::pdf::get_pdf_detail,
             commands::search::search,
+            commands::search::search_filename,
             commands::ocr::get_ocr_status,
         ])
         .run(tauri::generate_context!())

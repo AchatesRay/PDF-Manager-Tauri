@@ -1,13 +1,22 @@
 <script lang="ts">
-  import { searchQuery, searchResults, isLoading, showSearchResults } from '../stores';
-  import { search } from '../api';
+  import { searchQuery, searchResults, isLoading, showSearchResults, searchMode, filenameSearchResults } from '../stores';
+  import { search, searchFilename } from '../api';
 
   async function handleSearch() {
     if ($searchQuery.trim()) {
       isLoading.set(true);
       try {
-        searchResults.set(await search($searchQuery.trim()));
+        if ($searchMode === 'content') {
+          searchResults.set(await search($searchQuery.trim()));
+          filenameSearchResults.set([]);
+        } else {
+          filenameSearchResults.set(await searchFilename($searchQuery.trim()));
+          searchResults.set([]);
+        }
         showSearchResults.set(true);
+      } catch (e) {
+        console.error('Search failed:', e);
+        alert('搜索失败: ' + e);
       } finally {
         isLoading.set(false);
       }
@@ -23,15 +32,20 @@
   function clearSearch() {
     searchQuery.set('');
     searchResults.set([]);
+    filenameSearchResults.set([]);
     showSearchResults.set(false);
   }
 </script>
 
 <div class="search-bar">
+  <select bind:value={$searchMode} class="mode-select">
+    <option value="content">内容</option>
+    <option value="filename">文件名</option>
+  </select>
   <input
     type="text"
     bind:value={$searchQuery}
-    placeholder="搜索 PDF 内容..."
+    placeholder="搜索..."
     on:keydown={handleKeydown}
   />
   <button on:click={handleSearch} disabled={$isLoading}>
@@ -45,10 +59,19 @@
 <style>
   .search-bar {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     padding: 10px;
     background: #f5f5f5;
     border-bottom: 1px solid #ddd;
+    flex-shrink: 0;
+  }
+
+  .mode-select {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
   }
 
   input {
@@ -75,6 +98,7 @@
 
   button:disabled {
     background: #ccc;
+    cursor: not-allowed;
   }
 
   .clear-btn {

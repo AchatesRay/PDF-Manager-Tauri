@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading } from '../stores';
-  import { getPdfList, addPdf, deletePdf } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail } from '../api';
   import { onMount } from 'svelte';
 
   let fileInput: HTMLInputElement;
@@ -53,8 +53,15 @@
     }
   }
 
-  function selectPdf(id: number) {
+  async function selectPdf(id: number) {
     selectedPdfId.set(id);
+    try {
+      const detail = await getPdfDetail(id);
+      selectedPdfPath.set(detail.storage_path);
+    } catch (e) {
+      console.error('Failed to get PDF detail:', e);
+      selectedPdfPath.set(null);
+    }
   }
 
   function getStatusText(status: string): string {

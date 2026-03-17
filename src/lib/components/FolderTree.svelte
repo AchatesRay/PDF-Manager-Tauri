@@ -2,9 +2,18 @@
   import { folders, selectedFolderId, isLoading } from '../stores';
   import { getFolders, createFolder, deleteFolder } from '../api';
   import { onMount } from 'svelte';
+  import FolderNode from './FolderNode.svelte';
+  import type { Folder } from '../api';
+
+  interface TreeNode extends Folder {
+    children: TreeNode[];
+  }
 
   let newFolderName = '';
   let showNewFolder = false;
+  let newFolderParentId: number | null = null;
+
+  $: treeNodes = buildTree($folders);
 
   onMount(async () => {
     try {
@@ -14,13 +23,43 @@
     }
   });
 
+  function buildTree(folderList: Folder[]): TreeNode[] {
+    const map = new Map<number, TreeNode>();
+    const roots: TreeNode[] = [];
+
+    // 初始化所有节点
+    folderList.forEach(f => {
+      map.set(f.id, { ...f, children: [] });
+    });
+
+    // 构建树形结构
+    folderList.forEach(f => {
+      const node = map.get(f.id)!;
+      if (f.parent_id && map.has(f.parent_id)) {
+        map.get(f.parent_id)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+
+    // 按名称排序
+    const sortChildren = (nodes: TreeNode[]) => {
+      nodes.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+      nodes.forEach(n => sortChildren(n.children));
+    };
+    sortChildren(roots);
+
+    return roots;
+  }
+
   async function handleCreate() {
     if (newFolderName.trim()) {
       try {
-        await createFolder(newFolderName.trim());
+        await createFolder(newFolderName.trim(), newFolderParentId ?? undefined);
         folders.set(await getFolders());
         newFolderName = '';
         showNewFolder = false;
+        newFolderParentId = null;
       } catch (e) {
         alert('创建失败: ' + e);
       }
@@ -45,7 +84,11 @@
     selectedFolderId.set(id);
   }
 
-  $: $folders, $selectedFolderId, $isLoading;
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      handleCreate();
+    }
+  }
 </script>
 
 <div class="folder-tree">
@@ -60,37 +103,35 @@
         type="text"
         bind:value={newFolderName}
         placeholder="文件夹名称"
-        on:keydown={(e) => {
-          if (e.key === 'Enter') {
-            handleCreate();
-          }
-        }}
+        on:keydown={handleKeydown}
       />
       <button on:click={handleCreate}>确定</button>
     </div>
   {/if}
 
   <ul class="folder-list">
-    <li class:active={$selectedFolderId === null} on:click={() => selectFolder(null)}>
-      全部文件
+    <li
+      class:active={$selectedFolderId === null}
+      on:click={() => selectFolder(null)}
+    >
+      <span class="folder-icon">📚</span>
+      <span class="name">全部文件</span>
     </li>
-    {#each $folders as folder}
-      <li class:active={$selectedFolderId === folder.id} on:click={() => selectFolder(folder.id)}>
-        <span>{folder.name}</span>
-        <button class="delete-btn" on:click|stopPropagation={() => handleDelete(folder.id)}>×</button>
-      </li>
+    {#each treeNodes as node}
+      <FolderNode {node} level={0} onDelete={handleDelete} />
     {/each}
   </ul>
 </div>
 
 <style>
   .folder-tree {
-    width: 200px;
-    border-right: 1px solid #ddd;
-    padding: 10px;
+    width: 100%;
     height: 100%;
+    padding: 10px;
     overflow-y: auto;
     background: #fafafa;
+    display: flex;
+    flex-direction: column;
   }
 
   .header {
@@ -98,11 +139,13 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
+    flex-shrink: 0;
   }
 
   .header h3 {
     font-size: 14px;
     color: #333;
+    margin: 0;
   }
 
   .header button {
@@ -119,43 +162,44 @@
     list-style: none;
     padding: 0;
     margin: 0;
+    flex: 1;
+    overflow-y: auto;
   }
 
-  .folder-list li {
+  .folder-list > li {
     padding: 8px 12px;
     cursor: pointer;
     border-radius: 4px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 4px;
     margin-bottom: 2px;
   }
 
-  .folder-list li:hover {
+  .folder-list > li:hover {
     background: #e0e0e0;
   }
 
-  .folder-list li.active {
+  .folder-list > li.active {
     background: #bbdefb;
   }
 
-  .delete-btn {
-    opacity: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 16px;
-    color: #f44336;
+  .folder-icon {
+    font-size: 14px;
   }
 
-  .folder-list li:hover .delete-btn {
-    opacity: 1;
+  .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .new-folder {
     display: flex;
     gap: 5px;
     margin-bottom: 10px;
+    flex-shrink: 0;
   }
 
   .new-folder input {
