@@ -33,8 +33,8 @@
 
 2. **下载项目**
    ```powershell
-   git clone https://github.com/yourusername/pdf-manager.git
-   cd pdf-manager
+   git clone https://github.com/AchatesRay/PDF-Manager.git
+   cd PDF-Manager
    ```
 
 3. **创建虚拟环境**
@@ -52,8 +52,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/pdf-manager.git
-cd pdf-manager
+git clone https://github.com/AchatesRay/PDF-Manager.git
+cd PDF-Manager
 
 # 创建虚拟环境
 python3 -m venv venv
@@ -214,9 +214,22 @@ pdf-manager/
 │       ├── config.py           # 配置管理
 │       ├── logger.py           # 日志工具
 │       └── path_utils.py       # 路径工具
-├── tests/                      # 测试文件
-├── docs/                       # 文档
-├── pdf_manager.spec            # PyInstaller 打包配置
+├── tests/                      # 单元测试
+│   ├── test_config.py
+│   ├── test_logger.py
+│   ├── test_schemas.py
+│   ├── test_database.py
+│   ├── test_pdf_service.py
+│   ├── test_index_service.py
+│   ├── test_folder_manager.py
+│   ├── test_pdf_manager.py
+│   ├── test_search_service.py
+│   ├── test_path_utils.py
+│   ├── test_ocr_service.py
+│   └── test_ocr_setup_dialog.py
+├── .github/
+│   └── workflows/
+│       └── build.yml           # GitHub Actions CI/CD
 ├── requirements.txt            # 依赖列表
 └── README.md                   # 项目说明
 ```
@@ -277,8 +290,8 @@ PDF导入 → 类型检测 → 文字型？ → 直接提取文字
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/pdf-manager.git
-cd pdf-manager
+git clone https://github.com/AchatesRay/PDF-Manager.git
+cd PDF-Manager
 
 # 创建虚拟环境
 python -m venv venv
@@ -300,6 +313,16 @@ python -m pytest tests/ -v
 python -m pytest tests/test_pdf_service.py -v
 ```
 
+### CI/CD
+
+项目配置了 GitHub Actions 自动构建工作流：
+
+- **触发条件**：推送到 main 分支或 PR 到 main 分支
+- **构建目标**：Windows EXE 可执行文件
+- **产物保留**：30天
+
+可在 GitHub 仓库的 Actions 页面查看构建状态和下载产物。
+
 ### 代码规范
 
 - 使用 Python 3.10+ 语法
@@ -309,14 +332,16 @@ python -m pytest tests/test_pdf_service.py -v
 
 ### 打包发布
 
-使用 PyInstaller 打包成独立可执行文件：
+项目使用 GitHub Actions 自动构建。推送代码到 main 分支后会自动触发构建，产物可在 Actions 页面下载。
+
+如需本地打包，可使用 PyInstaller：
 
 ```bash
 # 安装 PyInstaller
 pip install pyinstaller
 
-# 使用 spec 文件打包（推荐）
-pyinstaller pdf_manager.spec --clean
+# 本地打包（需要创建 spec 文件）
+pyinstaller --onefile --windowed --name "PDF Manager" src/main.py
 
 # 可执行文件在 dist/ 目录
 ```
@@ -372,6 +397,13 @@ A:
 - 记录所有操作和错误信息，便于排查问题
 
 ## 更新日志
+
+### v0.3.1 (2026-03-17)
+
+- **CI/CD**：添加 GitHub Actions 工作流，支持自动构建 Windows EXE
+- **测试**：完善单元测试覆盖，添加 12 个测试模块
+- **依赖**：限制 numpy 版本 <2.0.0，确保兼容性
+- **项目结构**：移除打包配置文件，改用 CI 自动构建
 
 ### v0.3.0 (2026-03-15)
 

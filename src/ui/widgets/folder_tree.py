@@ -33,6 +33,7 @@ class FolderTreeItem:
 
     def appendChild(self, child: "FolderTreeItem") -> None:
         self._children.append(child)
+        child._parent = self  # 设置子项目的父引用
 
     def child(self, row: int) -> Optional["FolderTreeItem"]:
         if 0 <= row < len(self._children):
@@ -200,22 +201,41 @@ class FolderTreeWidget(QWidget):
         self._tree_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree_view.setMouseTracking(True)  # 启用鼠标追踪以支持悬浮效果
 
-        # 设置样式：选中绿色背景，悬浮黄色背景
+        # 设置样式：不设置QTreeView背景色，跟随系统主题
         self._tree_view.setStyleSheet("""
-            QTreeView::item {
-                background-color: transparent;
-                padding: 4px;
+            QTreeView {
                 border: none;
+                outline: none;
+            }
+            QTreeView::item {
+                padding: 6px 8px;
+                border: none;
+                border-radius: 4px;
+                margin: 1px 4px;
             }
             QTreeView::item:selected {
-                background-color: #90EE90;
-                color: black;
+                background-color: #4a90d9;
+                color: white;
             }
-            QTreeView::item:hover {
-                background-color: #FFFFE0;
+            QTreeView::item:hover:!selected {
+                background-color: #c17c27;
+                color: white;
             }
             QTreeView::item:selected:hover {
-                background-color: #7CCD7C;
+                background-color: #3a7bc8;
+            }
+            QTreeView::branch {
+                background-color: transparent;
+            }
+            QTreeView::branch:has-children:!has-siblings:closed,
+            QTreeView::branch:closed:has-children:has-siblings {
+                border-image: none;
+                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2NjYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTkgMThsNi02LTYtNiIvPjwvc3ZnPg==);
+            }
+            QTreeView::branch:open:has-children:!has-siblings,
+            QTreeView::branch:open:has-children:has-siblings {
+                border-image: none;
+                image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM2NjYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTYgOWw2IDYgNi02Ii8+PC9zdmc+);
             }
         """)
 

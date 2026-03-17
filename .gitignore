@@ -44,3 +44,6 @@ data/
 config.json
 docs/
 !docs/superpowers/
+
+# Tauri project (in development)
+pdf-manager-tauri/

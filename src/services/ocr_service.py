@@ -1,6 +1,17 @@
 """OCR处理服务"""
 
 import os
+
+# 必须在导入 paddle 之前设置环境变量，禁用 OneDNN 后端
+# 这可以避免 "ConvertPirAttribute2RuntimeAttribute not support" 错误
+os.environ['FLAGS_enable_onednn_backend'] = '0'
+os.environ['FLAGS_use_mkldnn'] = '0'
+os.environ['FLAGS_use_pinned_memory'] = '0'
+# 禁用可能导致的崩溃的优化
+os.environ['FLAGS_enable_ir_graph_builder'] = '0'
+os.environ['FLAGS_enable_new_ir'] = '0'
+os.environ['FLAGS_new_executor_serial_run'] = '1'
+
 from pathlib import Path
 from typing import Optional, Dict, List, Any, TYPE_CHECKING
 
@@ -54,19 +65,25 @@ class OCRService:
                 version = paddleocr.__version__
                 logger.info(f"PaddleOCR 版本: {version}")
 
-                # 设置环境变量，禁用 oneDNN 以避免某些 CPU 兼容性问题
-                os.environ['FLAGS_enable_onednn_backend'] = '0'
-
                 logger.info("正在初始化PaddleOCR引擎...")
+                logger.info(f"use_gpu 参数: {self._use_gpu}")
 
                 # 使用最简配置初始化，避免不同版本API兼容性问题
+                # GPU 已通过 CUDA_VISIBLE_DEVICES='' 环境变量禁用
+                # enable_mkldnn=False 明确禁用 MKL-DNN 优化
                 self._ocr_engine = PaddleOCR(
                     use_angle_cls=True,
                     lang=self._lang,
+                    enable_mkldnn=False,
+                    use_tensorrt=False,
                 )
 
                 self._available = True
                 logger.info("PaddleOCR引擎初始化成功")
+
+                # 添加诊断：验证引擎是否真正可用
+                logger.info(f"OCR引擎类型: {type(self._ocr_engine)}")
+                logger.info(f"OCR引擎方法: {[m for m in dir(self._ocr_engine) if not m.startswith('_')][:10]}")
 
             except ImportError as e:
                 logger.error(f"PaddleOCR未安装: {e}")
@@ -119,8 +136,15 @@ class OCRService:
 
             logger.debug(f"开始OCR识别，图像尺寸: {img_array.shape}")
 
-            # 执行OCR识别
-            result = ocr_engine.ocr(img_array)
+            # 执行OCR识别 - 添加详细日志
+            logger.debug("正在调用 ocr_engine.ocr()...")
+            try:
+                result = ocr_engine.ocr(img_array, cls=True)
+            except TypeError:
+                # 某些版本不支持 cls 参数
+                logger.debug("OCR引擎不支持cls参数，使用默认参数重试")
+                result = ocr_engine.ocr(img_array)
+            logger.debug(f"OCR调用完成，结果类型: {type(result)}")
 
             # 解析结果
             if result is None or len(result) == 0:
