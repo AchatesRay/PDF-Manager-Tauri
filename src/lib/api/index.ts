@@ -18,6 +18,21 @@ export interface PdfInfo {
   progress?: number;
 }
 
+export interface PdfDetail {
+  id: number;
+  folder_id: number | null;
+  filename: string;
+  original_path: string;
+  storage_path: string;
+  file_size: number;
+  page_count: number;
+  pdf_type: 'text' | 'scanned' | 'mixed';
+  status: 'pending' | 'processing' | 'done' | 'error';
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SearchResult {
   page_id: number;
   pdf_id: number;
@@ -58,9 +73,17 @@ export async function deletePdf(pdfId: number): Promise<void> {
   return invoke('delete_pdf', { pdfId });
 }
 
+export async function getPdfDetail(pdfId: number): Promise<PdfDetail> {
+  return invoke('get_pdf_detail', { pdfId });
+}
+
 // Search API
 export async function search(query: string, folderId?: number): Promise<SearchResult[]> {
   return invoke('search', { query, folderId });
+}
+
+export async function searchFilename(query: string, folderId?: number): Promise<PdfInfo[]> {
+  return invoke('search_filename', { query, folderId });
 }
 
 // OCR API

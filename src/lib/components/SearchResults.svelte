@@ -1,32 +1,70 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults } from '../stores';
-  import type { SearchResult } from '../api';
+  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath } from '../stores';
+  import type { SearchResult, PdfInfo } from '../api';
+  import { getPdfDetail } from '../api';
 
-  function handleClick(result: SearchResult) {
+  async function handleContentResultClick(result: SearchResult) {
     selectedPdfId.set(result.pdf_id);
     showSearchResults.set(false);
+    try {
+      const detail = await getPdfDetail(result.pdf_id);
+      selectedPdfPath.set(detail.storage_path);
+    } catch (e) {
+      console.error('Failed to get PDF detail:', e);
+    }
+  }
+
+  async function handleFilenameResultClick(pdf: PdfInfo) {
+    selectedPdfId.set(pdf.id);
+    showSearchResults.set(false);
+    try {
+      const detail = await getPdfDetail(pdf.id);
+      selectedPdfPath.set(detail.storage_path);
+    } catch (e) {
+      console.error('Failed to get PDF detail:', e);
+    }
   }
 </script>
 
-{#if $showSearchResults && $searchResults.length > 0}
-  <div class="search-results">
-    <h4>搜索结果 ({$searchResults.length})</h4>
-    <ul>
-      {#each $searchResults as result}
-        <li on:click={() => handleClick(result)}>
-          <div class="filename">{result.filename}</div>
-          <div class="page">第 {result.page_number} 页</div>
-          <div class="snippet">{result.snippet}</div>
-        </li>
-      {/each}
-    </ul>
-  </div>
-{/if}
-
-{#if $showSearchResults && $searchResults.length === 0}
-  <div class="no-results">
-    未找到匹配结果
-  </div>
+{#if $showSearchResults}
+  {#if $searchMode === 'content'}
+    {#if $searchResults.length > 0}
+      <div class="search-results">
+        <h4>内容搜索结果 ({$searchResults.length})</h4>
+        <ul>
+          {#each $searchResults as result}
+            <li on:click={() => handleContentResultClick(result)}>
+              <div class="filename">{result.filename}</div>
+              <div class="page">第 {result.page_number} 页</div>
+              <div class="snippet">{result.snippet}</div>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {:else}
+      <div class="no-results">
+        未找到匹配的内容
+      </div>
+    {/if}
+  {:else}
+    {#if $filenameSearchResults.length > 0}
+      <div class="search-results">
+        <h4>文件名搜索结果 ({$filenameSearchResults.length})</h4>
+        <ul>
+          {#each $filenameSearchResults as pdf}
+            <li on:click={() => handleFilenameResultClick(pdf)}>
+              <div class="filename">{pdf.filename}</div>
+              <div class="meta">{pdf.page_count} 页</div>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {:else}
+      <div class="no-results">
+        未找到匹配的文件名
+      </div>
+    {/if}
+  {/if}
 {/if}
 
 <style>
@@ -36,6 +74,7 @@
     border-top: 1px solid #ddd;
     max-height: 300px;
     overflow-y: auto;
+    flex-shrink: 0;
   }
 
   h4 {
@@ -67,7 +106,7 @@
     margin-bottom: 4px;
   }
 
-  .page {
+  .page, .meta {
     font-size: 12px;
     color: #2196f3;
     margin-bottom: 4px;
@@ -85,5 +124,6 @@
     color: #666;
     background: #fff;
     border-top: 1px solid #ddd;
+    flex-shrink: 0;
   }
 </style>
