@@ -4,7 +4,7 @@ use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{Index, IndexReader};
+use tantivy::{Index, IndexReader, TantivyDocument};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -13,6 +13,8 @@ pub enum SearchError {
     IndexError(#[from] tantivy::TantivyError),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Query parse error: {0}")]
+    QueryParseError(#[from] tantivy::query::QueryParserError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +87,7 @@ impl SearchService {
         let tokens: Vec<String> = self.jieba.cut(content, true).into_iter().map(|s| s.to_string()).collect();
         let tokenized_content = tokens.join(" ");
 
-        let mut doc = Document::new();
+        let mut doc = TantivyDocument::default();
         doc.add_u64(page_id_field, page_id);
         doc.add_u64(pdf_id_field, pdf_id);
         if let Some(fid) = folder_id {
@@ -122,7 +124,7 @@ impl SearchService {
 
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
-            let doc = searcher.doc(doc_address)?;
+            let doc: TantivyDocument = searcher.doc(doc_address)?;
 
             let page_id = doc.get_first(self.schema.get_field("page_id").unwrap())
                 .and_then(|v| v.as_u64())
@@ -151,7 +153,7 @@ impl SearchService {
                 }
             }
 
-            let snippet = Self::generate_snippet(&content, query, 100);
+            let snippet = Self::generate_snippet(&content, &query_text, 100);
 
             results.push(SearchResult {
                 page_id,
@@ -173,7 +175,7 @@ impl SearchService {
         let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
         let query = tantivy::query::TermQuery::new(
             tantivy::Term::from_field_u64(pdf_id_field, pdf_id),
-            tantivy::query::IndexRecordOption::Basic,
+            IndexRecordOption::Basic,
         );
 
         writer.delete_query(Box::new(query))?;
