@@ -3,10 +3,12 @@ use crate::models::Folder;
 use chrono::Utc;
 use rusqlite::params;
 use tauri::State;
+use tracing::info;
 
 /// 获取所有文件夹
 #[tauri::command]
 pub fn get_folders(db: State<'_, Db>) -> Result<Vec<Folder>, String> {
+    info!("Getting all folders");
     let conn = db.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -29,12 +31,14 @@ pub fn get_folders(db: State<'_, Db>) -> Result<Vec<Folder>, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    info!("Found {} folders", folders.len());
     Ok(folders)
 }
 
 /// 创建文件夹
 #[tauri::command]
 pub fn create_folder(db: State<'_, Db>, name: String, parent_id: Option<i64>) -> Result<Folder, String> {
+    info!("Creating folder: name={}, parent_id={:?}", name, parent_id);
     let conn = db.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
 
@@ -45,6 +49,7 @@ pub fn create_folder(db: State<'_, Db>, name: String, parent_id: Option<i64>) ->
     .map_err(|e| e.to_string())?;
 
     let id = conn.last_insert_rowid();
+    info!("Folder created: id={}", id);
 
     Ok(Folder {
         id,
@@ -62,6 +67,7 @@ pub fn create_folder(db: State<'_, Db>, name: String, parent_id: Option<i64>) ->
 /// 重命名文件夹
 #[tauri::command]
 pub fn rename_folder(db: State<'_, Db>, id: i64, name: String) -> Result<(), String> {
+    info!("Renaming folder: id={}, name={}", id, name);
     let conn = db.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
 
@@ -71,12 +77,14 @@ pub fn rename_folder(db: State<'_, Db>, id: i64, name: String) -> Result<(), Str
     )
     .map_err(|e| e.to_string())?;
 
+    info!("Folder renamed: id={}", id);
     Ok(())
 }
 
 /// 删除文件夹
 #[tauri::command]
 pub fn delete_folder(db: State<'_, Db>, id: i64) -> Result<(), String> {
+    info!("Deleting folder: id={}", id);
     let conn = db.lock().map_err(|e| e.to_string())?;
 
     let child_count: i64 = conn
@@ -102,5 +110,6 @@ pub fn delete_folder(db: State<'_, Db>, id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM folders WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
 
+    info!("Folder deleted: id={}", id);
     Ok(())
 }

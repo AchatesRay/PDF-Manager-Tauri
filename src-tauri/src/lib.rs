@@ -4,6 +4,7 @@ pub mod models;
 pub mod services;
 
 use tauri::Manager;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,6 +12,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // 初始化日志系统
+            init_logging(app.handle());
+
             // 初始化数据库
             let db = db::init_database(app.handle())?;
             app.manage(std::sync::Mutex::new(db));
@@ -45,4 +49,32 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn init_logging(app_handle: &tauri::AppHandle) {
+    let log_dir = app_handle.path()
+        .app_data_dir()
+        .expect("Failed to get app data dir")
+        .join("logs");
+
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("Failed to create log directory: {}", e);
+        return;
+    }
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "pdf-ocr.log");
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(file_appender)
+                .with_ansi(false)
+        )
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
+    tracing::info!("Logging initialized, log directory: {:?}", log_dir);
 }
