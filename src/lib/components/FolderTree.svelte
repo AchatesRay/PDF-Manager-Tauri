@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { open } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading } from '../stores';
   import { getFolders, createFolder, deleteFolder } from '../api';
   import { onMount } from 'svelte';
@@ -12,6 +13,7 @@
   let newFolderName = '';
   let showNewFolder = false;
   let newFolderParentId: number | null = null;
+  let selectedStoragePath: string | null = null;
 
   $: treeNodes = buildTree($folders);
 
@@ -52,14 +54,31 @@
     return roots;
   }
 
+  async function selectDirectory() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: '选择存储目录',
+    });
+
+    if (selected) {
+      selectedStoragePath = selected as string;
+    }
+  }
+
   async function handleCreate() {
     if (newFolderName.trim()) {
       try {
-        await createFolder(newFolderName.trim(), newFolderParentId ?? undefined);
+        await createFolder(
+          newFolderName.trim(),
+          newFolderParentId ?? undefined,
+          selectedStoragePath ?? undefined
+        );
         folders.set(await getFolders());
         newFolderName = '';
         showNewFolder = false;
         newFolderParentId = null;
+        selectedStoragePath = null;
       } catch (e) {
         alert('创建失败: ' + e);
       }
@@ -105,8 +124,14 @@
         placeholder="文件夹名称"
         on:keydown={handleKeydown}
       />
+      <button class="path-btn" on:click={selectDirectory} title="选择存储目录">
+        📁
+      </button>
       <button on:click={handleCreate}>确定</button>
     </div>
+    {#if selectedStoragePath}
+      <div class="selected-path">{selectedStoragePath}</div>
+    {/if}
   {/if}
 
   <ul class="folder-list">
@@ -216,5 +241,21 @@
     border: none;
     border-radius: 4px;
     cursor: pointer;
+  }
+
+  .path-btn {
+    padding: 5px 8px;
+    background: #fff;
+    border: 1px solid #ddd;
+    cursor: pointer;
+  }
+
+  .selected-path {
+    font-size: 11px;
+    color: #666;
+    margin-top: 4px;
+    margin-bottom: 10px;
+    word-break: break-all;
+    padding: 0 5px;
   }
 </style>

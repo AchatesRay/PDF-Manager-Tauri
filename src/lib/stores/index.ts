@@ -16,6 +16,15 @@ export type SearchMode = 'content' | 'filename';
 export const searchMode = writable<SearchMode>('content');
 export const filenameSearchResults = writable<PdfInfo[]>([]);
 
+// OCR 进度
+export interface OcrProgress {
+  pdf_id: number;
+  current: number;
+  total: number;
+  status: string;
+}
+export const ocrProgress = writable<Map<number, OcrProgress>>(new Map());
+
 export const filteredPdfList = derived(
   [pdfList, selectedFolderId],
   ([$pdfList, $selectedFolderId]) => {

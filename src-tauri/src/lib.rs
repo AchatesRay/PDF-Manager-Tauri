@@ -24,6 +24,12 @@ pub fn run() {
                 .expect("Failed to initialize PDF service");
             app.manage(std::sync::Mutex::new(pdf_service));
 
+            // 初始化 OCR 服务
+            let data_dir = db::get_data_dir(app.handle());
+            let ocr_service = services::ocr_service::OcrService::new(&data_dir)
+                .expect("Failed to initialize OCR service");
+            app.manage(std::sync::Mutex::new(ocr_service));
+
             // 确保数据目录存在
             let data_dir = db::get_data_dir(app.handle());
             std::fs::create_dir_all(&data_dir)?;
@@ -47,6 +53,7 @@ pub fn run() {
             commands::search::search,
             commands::search::search_filename,
             commands::ocr::get_ocr_status,
+            commands::ocr::start_ocr,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

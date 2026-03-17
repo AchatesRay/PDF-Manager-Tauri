@@ -4,6 +4,7 @@ export interface Folder {
   id: number;
   name: string;
   parent_id: number | null;
+  storage_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,12 +49,12 @@ export async function getFolders(): Promise<Folder[]> {
   return invoke('get_folders');
 }
 
-export async function createFolder(name: string, parentId?: number): Promise<Folder> {
-  return invoke('create_folder', { name, parentId });
+export async function createFolder(name: string, parentId?: number, storagePath?: string): Promise<Folder> {
+  return invoke('create_folder', { name, parentId, storagePath });
 }
 
-export async function renameFolder(id: number, name: string): Promise<void> {
-  return invoke('rename_folder', { id, name });
+export async function renameFolder(id: number, name: string, storagePath?: string): Promise<void> {
+  return invoke('rename_folder', { id, name, storagePath });
 }
 
 export async function deleteFolder(id: number): Promise<void> {
@@ -89,4 +90,8 @@ export async function searchFilename(query: string, folderId?: number): Promise<
 // OCR API
 export async function getOcrStatus(): Promise<{ available: boolean; languages: string[] }> {
   return invoke('get_ocr_status');
+}
+
+export async function startOcr(pdfId: number): Promise<void> {
+  return invoke('start_ocr', { pdfId });
 }
