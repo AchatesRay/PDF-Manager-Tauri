@@ -6,6 +6,7 @@ use rusqlite::params;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 fn row_to_pdf_info(row: &rusqlite::Row) -> rusqlite::Result<PdfInfo> {
@@ -31,32 +32,56 @@ pub fn add_pdf(
     pdf_service: State<'_, Mutex<PdfService>>,
     app_handle: tauri::AppHandle,
 ) -> Result<PdfInfo, String> {
+    info!("Adding PDF: path={}, folder_id={:?}", path, folder_id);
+
     let src_path = PathBuf::from(&path);
     if !src_path.exists() {
+        error!("File does not exist: {}", path);
         return Err("File does not exist".to_string());
     }
+    debug!("Source file exists: {:?}", src_path);
 
     let filename = src_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown.pdf".to_string());
+    debug!("Filename extracted: {}", filename);
 
     let storage_name = format!("{}.pdf", Uuid::new_v4());
     let storage_path = get_pdfs_dir(&app_handle).join(&storage_name);
+    debug!("Storage path: {:?}", storage_path);
 
     std::fs::copy(&src_path, &storage_path)
-        .map_err(|e| format!("Failed to copy file: {}", e))?;
+        .map_err(|e| {
+            error!("Failed to copy file: {}", e);
+            format!("Failed to copy file: {}", e)
+        })?;
+    info!("File copied successfully");
 
-    let pdf_svc = pdf_service.lock().map_err(|e| e.to_string())?;
+    let pdf_svc = pdf_service.lock().map_err(|e| {
+        error!("Failed to lock PDF service: {}", e);
+        e.to_string()
+    })?;
     let metadata = pdf_svc
         .get_metadata(&storage_path)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("Failed to get PDF metadata: {}", e);
+            e.to_string()
+        })?;
+    debug!("PDF metadata: pages={}, size={}", metadata.page_count, metadata.file_size);
     let pdf_type = pdf_svc
         .detect_type(&storage_path)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            error!("Failed to detect PDF type: {}", e);
+            e.to_string()
+        })?;
+    debug!("PDF type detected: {:?}", pdf_type);
     drop(pdf_svc);
 
-    let conn = db.lock().map_err(|e| e.to_string())?;
+    let conn = db.lock().map_err(|e| {
+        error!("Failed to lock database: {}", e);
+        e.to_string()
+    })?;
     let now = Utc::now().to_rfc3339();
 
     conn.execute(
@@ -75,10 +100,15 @@ pub fn add_pdf(
             now
         ],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        error!("Failed to insert PDF record: {}", e);
+        e.to_string()
+    })?;
 
     let id = conn.last_insert_rowid();
     drop(conn);
+
+    info!("PDF added successfully: id={}, filename={}", id, filename);
 
     Ok(PdfInfo {
         id,
@@ -97,6 +127,7 @@ pub fn get_pdf_list(
     folder_id: Option<i64>,
     db: State<'_, Db>,
 ) -> Result<Vec<PdfInfo>, String> {
+    info!("Getting PDF list, folder_id={:?}", folder_id);
     let conn = db.lock().map_err(|e| e.to_string())?;
 
     let sql = match folder_id {
@@ -115,6 +146,7 @@ pub fn get_pdf_list(
     .collect::<Result<Vec<_>, _>>()
     .map_err(|e| e.to_string())?;
 
+    info!("Found {} PDFs", pdfs.len());
     Ok(pdfs)
 }
 
@@ -125,6 +157,7 @@ pub fn delete_pdf(
     db: State<'_, Db>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    info!("Deleting PDF: pdf_id={}", pdf_id);
     let conn = db.lock().map_err(|e| e.to_string())?;
 
     let storage_path: String = conn
@@ -150,12 +183,14 @@ pub fn delete_pdf(
         std::fs::remove_dir_all(&thumbnails_dir).ok();
     }
 
+    info!("PDF deleted: pdf_id={}", pdf_id);
     Ok(())
 }
 
 /// 获取 PDF 详情
 #[tauri::command]
 pub fn get_pdf_detail(pdf_id: i64, db: State<'_, Db>) -> Result<Pdf, String> {
+    debug!("Getting PDF detail: pdf_id={}", pdf_id);
     let conn = db.lock().map_err(|e| e.to_string())?;
 
     let pdf = conn
@@ -183,5 +218,6 @@ pub fn get_pdf_detail(pdf_id: i64, db: State<'_, Db>) -> Result<Pdf, String> {
         )
         .map_err(|e| e.to_string())?;
 
+    debug!("PDF detail retrieved: filename={}", pdf.filename);
     Ok(pdf)
 }

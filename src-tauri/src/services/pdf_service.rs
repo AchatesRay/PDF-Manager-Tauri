@@ -1,6 +1,7 @@
 use crate::models::PdfType;
 use std::path::Path;
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum PdfError {
@@ -31,12 +32,15 @@ impl PdfService {
 
     /// 检测 PDF 类型
     pub fn detect_type(&self, pdf_path: &Path) -> Result<PdfType, PdfError> {
+        debug!("Detecting PDF type for: {:?}", pdf_path);
         // 尝试提取文本，如果有足够文本则为文字型
         if let Ok(text) = self.extract_text(pdf_path) {
             if text.trim().len() > 100 {
+                debug!("PDF type detected: Text ({} chars)", text.trim().len());
                 return Ok(PdfType::Text);
             }
         }
+        debug!("PDF type detected: Scanned");
         Ok(PdfType::Scanned)
     }
 
@@ -49,11 +53,13 @@ impl PdfService {
 
     /// 获取 PDF 元信息
     pub fn get_metadata(&self, pdf_path: &Path) -> Result<PdfMetadata, PdfError> {
+        debug!("Getting PDF metadata for: {:?}", pdf_path);
         let doc = lopdf::Document::load(pdf_path)
             .map_err(|e| PdfError::OpenError(e.to_string()))?;
         let pages = doc.get_pages();
         let file_size = std::fs::metadata(pdf_path)?.len() as i64;
 
+        debug!("PDF metadata retrieved: pages={}, size={}", pages.len(), file_size);
         Ok(PdfMetadata {
             page_count: pages.len() as i32,
             file_size,

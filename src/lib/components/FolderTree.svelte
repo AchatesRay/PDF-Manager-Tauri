@@ -56,7 +56,16 @@
 
   {#if showNewFolder}
     <div class="new-folder">
-      <input type="text" bind:value={newFolderName} placeholder="文件夹名称" />
+      <input
+        type="text"
+        bind:value={newFolderName}
+        placeholder="文件夹名称"
+        on:keydown={(e) => {
+          if (e.key === 'Enter') {
+            handleCreate();
+          }
+        }}
+      />
       <button on:click={handleCreate}>确定</button>
     </div>
   {/if}

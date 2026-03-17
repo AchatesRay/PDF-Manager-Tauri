@@ -22,16 +22,24 @@
 
   async function handleFileSelect(e: Event) {
     const input = e.target as HTMLInputElement;
-    if (input.files) {
-      for (const file of Array.from(input.files)) {
-        try {
-          await addPdf(file.path, $selectedFolderId ?? undefined);
-        } catch (err) {
-          alert('添加失败: ' + err);
-        }
-      }
-      await loadPdfs();
+    if (!input.files || input.files.length === 0) {
+      console.log('No files selected');
+      return;
     }
+    console.log('Selected files:', input.files.length);
+    for (const file of Array.from(input.files)) {
+      try {
+        console.log('Adding PDF:', file.path, 'to folder:', $selectedFolderId);
+        const result = await addPdf(file.path, $selectedFolderId ?? undefined);
+        console.log('PDF added successfully:', result);
+      } catch (err) {
+        console.error('Failed to add PDF:', err);
+        alert('添加PDF失败: ' + err);
+      }
+    }
+    await loadPdfs();
+    // 重置 input 以允许再次选择相同文件
+    input.value = '';
   }
 
   async function handleDelete(id: number) {
