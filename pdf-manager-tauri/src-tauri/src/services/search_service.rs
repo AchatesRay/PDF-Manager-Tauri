@@ -196,3 +196,161 @@ impl SearchService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_search_error_display() {
+        let err = SearchError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "not found"));
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_search_result_serialization() {
+        let result = SearchResult {
+            page_id: 1,
+            pdf_id: 100,
+            folder_id: Some(5),
+            page_number: 10,
+            filename: "test.pdf".to_string(),
+            score: 0.95,
+            snippet: "...测试内容...".to_string(),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: SearchResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.page_id, 1);
+        assert_eq!(deserialized.pdf_id, 100);
+        assert_eq!(deserialized.filename, "test.pdf");
+    }
+
+    #[test]
+    fn test_generate_snippet_found() {
+        let content = "这是一段很长的测试文本，包含一些重要内容，我们希望找到关键词并生成摘要";
+        let snippet = SearchService::generate_snippet(content, "关键词", 100);
+
+        assert!(snippet.contains("关键词"));
+        assert!(snippet.starts_with("..."));
+        assert!(snippet.ends_with("..."));
+    }
+
+    #[test]
+    fn test_generate_snippet_not_found() {
+        let content = "这是一段测试文本";
+        let snippet = SearchService::generate_snippet(content, "不存在", 10);
+
+        assert!(snippet.ends_with("..."));
+        assert!(snippet.len() <= 15); // 10 chars + "..."
+    }
+
+    #[test]
+    fn test_search_service_open() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let result = SearchService::open(&index_path);
+        assert!(result.is_ok());
+
+        // 验证目录已创建
+        assert!(index_path.exists());
+    }
+
+    #[test]
+    fn test_index_and_search() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        // 索引一个文档
+        let result = service.index_page(
+            1,
+            100,
+            Some(5),
+            1,
+            "测试文档.pdf",
+            "这是一份测试文档，包含重要内容。"
+        );
+        assert!(result.is_ok());
+
+        // 搜索
+        let results = service.search("测试", None, 10).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].page_id, 1);
+        assert_eq!(results[0].filename, "测试文档.pdf");
+    }
+
+    #[test]
+    fn test_search_with_folder_filter() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        // 索引两个文档，不同文件夹
+        service.index_page(1, 100, Some(1), 1, "doc1.pdf", "测试内容一").unwrap();
+        service.index_page(2, 101, Some(2), 1, "doc2.pdf", "测试内容二").unwrap();
+
+        // 搜索文件夹1
+        let results = service.search("测试", Some(1), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_id, 1);
+
+        // 搜索文件夹2
+        let results = service.search("测试", Some(2), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_id, 2);
+    }
+
+    #[test]
+    fn test_delete_pdf() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        // 索引文档
+        service.index_page(1, 100, None, 1, "test.pdf", "测试内容").unwrap();
+
+        // 验证可以搜索到
+        let results = service.search("测试", None, 10).unwrap();
+        assert!(!results.is_empty());
+
+        // 删除 PDF
+        service.delete_pdf(100).unwrap();
+
+        // 搜索应该返回空（需要重新打开 reader 来看到删除效果）
+        service.reader.reload().unwrap();
+        let results = service.search("测试", None, 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_chinese_tokenization() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        // 索引中文文档
+        service.index_page(
+            1,
+            100,
+            None,
+            1,
+            "中文文档.pdf",
+            "自然语言处理是人工智能的重要分支。"
+        ).unwrap();
+
+        // 搜索中文关键词
+        let results = service.search("自然语言", None, 10).unwrap();
+        assert!(!results.is_empty());
+
+        let results = service.search("人工智能", None, 10).unwrap();
+        assert!(!results.is_empty());
+    }
+}

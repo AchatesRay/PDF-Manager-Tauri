@@ -1,4 +1,6 @@
 mod schema;
+#[cfg(test)]
+mod tests;
 
 use rusqlite::Connection;
 use std::path::PathBuf;

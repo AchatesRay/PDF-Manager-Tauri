@@ -66,3 +66,63 @@ pub struct PdfMetadata {
     pub page_count: i32,
     pub file_size: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_pdf_service_creation() {
+        let service = PdfService::new();
+        assert!(service.is_ok());
+    }
+
+    #[test]
+    fn test_pdf_error_display() {
+        let err = PdfError::OpenError("test error".to_string());
+        assert!(err.to_string().contains("test error"));
+
+        let err = PdfError::TextError("extract failed".to_string());
+        assert!(err.to_string().contains("extract failed"));
+    }
+
+    #[test]
+    fn test_pdf_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let pdf_err: PdfError = io_err.into();
+        assert!(matches!(pdf_err, PdfError::IoError(_)));
+    }
+
+    #[test]
+    fn test_page_count_nonexistent_file() {
+        let service = PdfService::new().unwrap();
+        let result = service.page_count(Path::new("/nonexistent/path/file.pdf"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_type_nonexistent_file() {
+        let service = PdfService::new().unwrap();
+        let result = service.detect_type(Path::new("/nonexistent/path/file.pdf"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_metadata_nonexistent_file() {
+        let service = PdfService::new().unwrap();
+        let result = service.get_metadata(Path::new("/nonexistent/path/file.pdf"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pdf_metadata_struct() {
+        let metadata = PdfMetadata {
+            page_count: 10,
+            file_size: 1024,
+        };
+
+        assert_eq!(metadata.page_count, 10);
+        assert_eq!(metadata.file_size, 1024);
+    }
+}
