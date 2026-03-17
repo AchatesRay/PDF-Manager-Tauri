@@ -5,8 +5,22 @@ use chrono::Utc;
 use rusqlite::params;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::State;
 use uuid::Uuid;
+
+fn row_to_pdf_info(row: &rusqlite::Row) -> rusqlite::Result<PdfInfo> {
+    let status_str: String = row.get(5)?;
+    let pdf_type_str: String = row.get(4)?;
+    Ok(PdfInfo {
+        id: row.get(0)?,
+        folder_id: row.get(1)?,
+        filename: row.get(2)?,
+        page_count: row.get(3)?,
+        pdf_type: pdf_type_str.parse().unwrap_or(PdfType::Scanned),
+        status: status_str.parse().unwrap_or(PdfStatus::Pending),
+        progress: None,
+    })
+}
 
 /// 添加 PDF 文件
 #[tauri::command]
@@ -93,33 +107,9 @@ pub fn get_pdf_list(
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
 
     let pdfs = if let Some(fid) = folder_id {
-        stmt.query_map(params![fid], |row| {
-            let status_str: String = row.get(5)?;
-            let pdf_type_str: String = row.get(4)?;
-            Ok(PdfInfo {
-                id: row.get(0)?,
-                folder_id: row.get(1)?,
-                filename: row.get(2)?,
-                page_count: row.get(3)?,
-                pdf_type: pdf_type_str.parse().unwrap_or(PdfType::Scanned),
-                status: status_str.parse().unwrap_or(PdfStatus::Pending),
-                progress: None,
-            })
-        })
+        stmt.query_map(params![fid], row_to_pdf_info)
     } else {
-        stmt.query_map([], |row| {
-            let status_str: String = row.get(5)?;
-            let pdf_type_str: String = row.get(4)?;
-            Ok(PdfInfo {
-                id: row.get(0)?,
-                folder_id: row.get(1)?,
-                filename: row.get(2)?,
-                page_count: row.get(3)?,
-                pdf_type: pdf_type_str.parse().unwrap_or(PdfType::Scanned),
-                status: status_str.parse().unwrap_or(PdfStatus::Pending),
-                progress: None,
-            })
-        })
+        stmt.query_map([], row_to_pdf_info)
     }
     .map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
