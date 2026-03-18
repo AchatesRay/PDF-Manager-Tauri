@@ -11,8 +11,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
-    "pdfjs-dist": "^3.11.174"
+    "@tauri-apps/plugin-dialog": "^2.0.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.1.0",
