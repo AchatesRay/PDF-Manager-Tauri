@@ -70,6 +70,8 @@ pub fn run() {
                         .expect("Failed to initialize OCR service")
                 }
             };
+            // 检查中文语言包
+            ocr_service.check_chinese_support();
             app.manage(std::sync::Mutex::new(ocr_service));
 
             // 确保数据目录存在
