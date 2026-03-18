@@ -40,9 +40,10 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7734/pdfium-win-x64.tgz" -OutFile "pdfium.tgz"
           tar -xzf pdfium.tgz
-          dir
           dir bin
+          # 复制到 src-tauri 目录，Tauri 会自动打包
           Copy-Item -Path "bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
+          Write-Host "pdfium.dll copied to src-tauri"
           dir src-tauri
 
       - name: Build Tauri app
@@ -55,7 +56,6 @@ jobs:
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
-          # Only create release on tags
           includeDebug: false
 
       - name: Upload artifacts

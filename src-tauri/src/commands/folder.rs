@@ -1,8 +1,8 @@
-use crate::db::Db;
+use crate::db::{Db, get_setting, SETTING_DATA_DIR};
 use crate::models::Folder;
 use chrono::Utc;
 use rusqlite::params;
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::{debug, error, info, warn};
 use std::path::PathBuf;
 
@@ -99,6 +99,7 @@ pub fn create_folder(
     name: String,
     parent_id: Option<i64>,
     storage_path: Option<String>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Folder, String> {
     info!("开始创建文件夹: name={}, parent_id={:?}, storage_path={:?}", name, parent_id, storage_path);
 
@@ -125,6 +126,19 @@ pub fn create_folder(
         return Err("同名文件夹已存在".to_string());
     }
 
+    // 获取数据目录作为默认存储路径
+    let default_data_dir = get_setting(&conn, SETTING_DATA_DIR)
+        .unwrap_or_else(|| {
+            app_handle
+                .path()
+                .app_data_dir()
+                .expect("Failed to get app data directory")
+                .join("data")
+                .to_string_lossy()
+                .to_string()
+        });
+    let default_pdfs_dir = PathBuf::from(&default_data_dir).join("pdfs");
+
     // 获取父文件夹的 storage_path
     let parent_storage_path: Option<String> = if let Some(pid) = parent_id {
         conn.query_row(
@@ -133,7 +147,8 @@ pub fn create_folder(
             |row| row.get(0),
         ).ok().flatten()
     } else {
-        storage_path.clone()
+        // 对于根目录，使用用户指定的路径或默认的 pdfs 目录
+        storage_path.clone().or_else(|| Some(default_pdfs_dir.to_string_lossy().to_string()))
     };
 
     debug!("父文件夹存储路径: {:?}", parent_storage_path);
@@ -155,9 +170,12 @@ pub fn create_folder(
         warn!("未指定存储路径，跳过物理目录创建");
     }
 
+    // 保存计算后的存储路径到数据库
+    let final_storage_path = parent_storage_path.clone();
+
     conn.execute(
         "INSERT INTO folders (name, parent_id, storage_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![name, parent_id, storage_path, now, now],
+        params![name, parent_id, final_storage_path, now, now],
     )
     .map_err(|e| {
         error!("插入文件夹记录失败: {}", e);
@@ -171,7 +189,7 @@ pub fn create_folder(
         id,
         name,
         parent_id,
-        storage_path,
+        storage_path: final_storage_path,
         created_at: chrono::DateTime::parse_from_rfc3339(&now)
             .unwrap()
             .with_timezone(&Utc),

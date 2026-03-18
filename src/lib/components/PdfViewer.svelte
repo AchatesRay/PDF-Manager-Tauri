@@ -4,8 +4,10 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPdfExternally } from '../api';
 
-  // 设置 worker
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  // 使用本地 worker - 通过 Vite 打包
+  // @ts-ignore
+  import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
   export let pdfPath: string | null = null;
 
