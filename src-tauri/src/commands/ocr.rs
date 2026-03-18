@@ -3,7 +3,7 @@ use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, State};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
