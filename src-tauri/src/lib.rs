@@ -131,6 +131,8 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::set_data_dir,
             commands::settings::reset_data_dir,
+            commands::settings::set_pdf_reader,
+            commands::settings::open_pdf_externally,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

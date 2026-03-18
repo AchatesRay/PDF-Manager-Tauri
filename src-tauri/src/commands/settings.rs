@@ -1,4 +1,4 @@
-use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, default_data_dir};
+use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, default_data_dir};
 use rusqlite::Connection;
 use tauri::{Manager, State};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use tracing::{debug, error, info, warn};
 pub struct AppSettings {
     pub data_dir: String,
     pub log_dir: String,
+    pub pdf_reader_path: Option<String>,
 }
 
 /// 获取应用设置
@@ -33,8 +34,10 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
 
     let log_dir = PathBuf::from(&data_dir).join("logs").to_string_lossy().to_string();
 
-    debug!("应用设置: data_dir={}, log_dir={}", data_dir, log_dir);
-    Ok(AppSettings { data_dir, log_dir })
+    let pdf_reader_path = get_setting(&conn, SETTING_PDF_READER);
+
+    debug!("应用设置: data_dir={}, log_dir={}, pdf_reader_path={:?}", data_dir, log_dir, pdf_reader_path);
+    Ok(AppSettings { data_dir, log_dir, pdf_reader_path })
 }
 
 /// 设置数据目录
@@ -138,4 +141,112 @@ pub fn reset_data_dir(db: State<'_, Db>) -> Result<String, String> {
 
     info!("数据目录已重置为默认值");
     Ok("数据目录已重置".to_string())
+}
+
+/// 设置PDF阅读器路径
+#[tauri::command]
+pub fn set_pdf_reader(db: State<'_, Db>, path: Option<String>) -> Result<(), String> {
+    info!("开始设置PDF阅读器路径: {:?}", path);
+
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("获取数据库锁失败: {}", e);
+            return Err(format!("数据库锁定失败: {}", e));
+        }
+    };
+
+    match path {
+        Some(ref p) => {
+            // 验证路径
+            let path_buf = PathBuf::from(p);
+            if !path_buf.exists() {
+                warn!("PDF阅读器不存在: {}", p);
+                return Err(format!("文件不存在: {}", p));
+            }
+            match set_setting(&conn, SETTING_PDF_READER, p) {
+                Ok(_) => info!("PDF阅读器路径已保存: {}", p),
+                Err(e) => {
+                    error!("保存设置失败: {}", e);
+                    return Err(format!("保存设置失败: {}", e));
+                }
+            }
+        }
+        None => {
+            // 清除设置，使用系统默认
+            match conn.execute("DELETE FROM settings WHERE key = ?1", [SETTING_PDF_READER]) {
+                Ok(_) => info!("PDF阅读器路径已清除，将使用系统默认"),
+                Err(e) => {
+                    error!("清除PDF阅读器设置失败: {}", e);
+                    return Err(format!("清除设置失败: {}", e));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 使用外部阅读器打开PDF
+#[tauri::command]
+pub fn open_pdf_externally(db: State<'_, Db>, pdf_path: String) -> Result<(), String> {
+    info!("打开PDF文件: {}", pdf_path);
+
+    // 检查文件是否存在
+    let path = PathBuf::from(&pdf_path);
+    if !path.exists() {
+        error!("PDF文件不存在: {}", pdf_path);
+        return Err(format!("文件不存在: {}", pdf_path));
+    }
+
+    // 获取配置的PDF阅读器路径
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("获取数据库锁失败: {}", e);
+            return Err(format!("数据库锁定失败: {}", e));
+        }
+    };
+
+    let reader_path = get_setting(&conn, SETTING_PDF_READER);
+
+    let result = if let Some(ref reader) = reader_path {
+        // 使用指定的阅读器
+        info!("使用指定阅读器打开PDF: {} {}", reader, pdf_path);
+        std::process::Command::new(reader)
+            .arg(&pdf_path)
+            .spawn()
+    } else {
+        // 使用系统默认程序打开
+        info!("使用系统默认程序打开PDF: {}", pdf_path);
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", &pdf_path])
+                .spawn()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&pdf_path)
+                .spawn()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&pdf_path)
+                .spawn()
+        }
+    };
+
+    match result {
+        Ok(_) => {
+            info!("PDF文件打开成功: {}", pdf_path);
+            Ok(())
+        }
+        Err(e) => {
+            error!("打开PDF文件失败: {}", e);
+            Err(format!("打开文件失败: {}", e))
+        }
+    }
 }
