@@ -17,6 +17,9 @@ export type SearchMode = 'content' | 'filename';
 export const searchMode = writable<SearchMode>('content');
 export const filenameSearchResults = writable<PdfInfo[]>([]);
 
+// 搜索结果跳转页码
+export const jumpToPage = writable<number | null>(null);
+
 // OCR 进度
 export interface OcrProgress {
   pdf_id: number;

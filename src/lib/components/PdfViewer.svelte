@@ -1,6 +1,6 @@
 <script lang="ts">
   import { renderPdfPage } from '../api';
-  import { selectedPdfId } from '../stores';
+  import { selectedPdfId, jumpToPage } from '../stores';
 
   export let pdfPath: string | null = null;
   export let pageCount: number = 0;
@@ -10,6 +10,16 @@
   let isLoading = false;
   let error: string | null = null;
   let scale = 1.0;
+  let fitToWidth = true; // 默认适应窗口
+  let containerWidth = 0;
+  let imageWidth = 0;
+
+  // 监听 jumpToPage 变化，跳转到指定页面
+  $: if ($jumpToPage !== null && $jumpToPage >= 1 && $jumpToPage <= pageCount) {
+    currentPage = $jumpToPage;
+    loadPage(currentPage);
+    jumpToPage.set(null);
+  }
 
   $: if ($selectedPdfId && pageCount > 0) {
     loadPage(currentPage);
@@ -46,15 +56,35 @@
   }
 
   function zoomIn() {
+    fitToWidth = false;
     scale = Math.min(scale + 0.25, 3.0);
   }
 
   function zoomOut() {
-    scale = Math.max(scale - 0.25, 0.5);
+    fitToWidth = false;
+    scale = Math.max(scale - 0.25, 0.25);
   }
 
   function resetZoom() {
+    fitToWidth = false;
     scale = 1.0;
+  }
+
+  function fitWidth() {
+    fitToWidth = true;
+  }
+
+  // 计算适应窗口的缩放比例
+  function getImageScale() {
+    if (fitToWidth && containerWidth > 0 && imageWidth > 0) {
+      return containerWidth / imageWidth;
+    }
+    return scale;
+  }
+
+  // 获取容器宽度
+  function updateContainerWidth(element: HTMLElement) {
+    containerWidth = element.clientWidth - 40; // 减去 padding
   }
 </script>
 
@@ -78,13 +108,14 @@
       </div>
       <div class="zoom">
         <button on:click={zoomOut} title="缩小">-</button>
-        <span class="zoom-level">{Math.round(scale * 100)}%</span>
+        <span class="zoom-level">{Math.round(getImageScale() * 100)}%</span>
         <button on:click={zoomIn} title="放大">+</button>
-        <button on:click={resetZoom} title="重置">重置</button>
+        <button on:click={resetZoom} title="100%">100%</button>
+        <button on:click={fitWidth} class:active={fitToWidth} title="适应窗口">适应</button>
       </div>
     </div>
 
-    <div class="content">
+    <div class="content" use:updateContainerWidth>
       {#if isLoading}
         <div class="loading">
           <div class="spinner"></div>
@@ -99,7 +130,8 @@
           <img
             src={imageSrc}
             alt="PDF Page {currentPage}"
-            style="transform: scale({scale})"
+            style="transform: scale({getImageScale()})"
+            on:load={(e) => { imageWidth = e.target.naturalWidth; }}
           />
         </div>
       {:else}
@@ -181,6 +213,11 @@
 
   .zoom button:hover {
     background: #d0d0d0;
+  }
+
+  .zoom button.active {
+    background: #2196f3;
+    color: white;
   }
 
   .zoom-level {
