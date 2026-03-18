@@ -35,6 +35,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Download pdfium.dll
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/nicholasoxford/pdfium-binaries/releases/download/chromium%2F6644/pdfium.dll.x64.zip" -OutFile "pdfium.zip"
+          Expand-Archive -Path "pdfium.zip" -DestinationPath "src-tauri"
+          Move-Item -Path "src-tauri/pdfium.dll.x64" -Destination "src-tauri/pdfium.dll" -ErrorAction SilentlyContinue
+          dir src-tauri
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
