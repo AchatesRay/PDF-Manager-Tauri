@@ -1,6 +1,7 @@
 use crate::db::{get_pdfs_dir, Db, get_setting, SETTING_DATA_DIR};
 use crate::models::{Pdf, PdfInfo, PdfStatus, PdfType};
 use crate::services::pdf_service::PdfService;
+use crate::services::search_service::SearchService;
 use chrono::Utc;
 use rusqlite::params;
 use std::path::PathBuf;
@@ -315,6 +316,7 @@ pub fn get_pdf_list(
 pub fn delete_pdf(
     pdf_id: i64,
     db: State<'_, Db>,
+    search_service: State<'_, Mutex<SearchService>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     info!("开始删除PDF: pdf_id={}", pdf_id);
@@ -353,6 +355,19 @@ pub fn delete_pdf(
     }
 
     drop(conn);
+
+    // 删除搜索索引
+    {
+        let mut ss = search_service.lock().map_err(|e| {
+            error!("获取搜索服务锁失败: {}", e);
+            format!("搜索服务锁定失败: {}", e)
+        })?;
+        if let Err(e) = ss.delete_pdf(pdf_id as u64) {
+            warn!("删除搜索索引失败 (pdf_id={}): {}", pdf_id, e);
+        } else {
+            debug!("搜索索引删除成功: pdf_id={}", pdf_id);
+        }
+    }
 
     // 删除存储文件
     let path = PathBuf::from(&storage_path);

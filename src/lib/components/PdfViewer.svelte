@@ -1,6 +1,7 @@
 <script lang="ts">
   import { renderPdfPage } from '../api';
   import { selectedPdfId, jumpToPage } from '../stores';
+  import { onMount } from 'svelte';
 
   export let pdfPath: string | null = null;
   export let pageCount: number = 0;
@@ -13,6 +14,8 @@
   let fitToWidth = true; // 默认适应窗口
   let containerWidth = 0;
   let imageWidth = 0;
+  let imageHeight = 0;
+  let contentElement: HTMLElement;
 
   // 监听 jumpToPage 变化，跳转到指定页面
   $: if ($jumpToPage !== null && $jumpToPage >= 1 && $jumpToPage <= pageCount) {
@@ -24,6 +27,38 @@
   $: if ($selectedPdfId && pageCount > 0) {
     loadPage(currentPage);
   }
+
+  // 响应式计算缩放比例
+  $: currentScale = calculateScale();
+
+  function calculateScale(): number {
+    if (fitToWidth && containerWidth > 0 && imageWidth > 0) {
+      return containerWidth / imageWidth;
+    }
+    return scale;
+  }
+
+  function handleImageLoad(e: Event) {
+    const img = e.target as HTMLImageElement;
+    imageWidth = img.naturalWidth;
+    imageHeight = img.naturalHeight;
+  }
+
+  onMount(() => {
+    // 监听窗口大小变化
+    const resizeObserver = new ResizeObserver(() => {
+      if (contentElement) {
+        containerWidth = contentElement.clientWidth - 40;
+      }
+    });
+
+    if (contentElement) {
+      containerWidth = contentElement.clientWidth - 40;
+      resizeObserver.observe(contentElement);
+    }
+
+    return () => resizeObserver.disconnect();
+  });
 
   async function loadPage(page: number) {
     if (!$selectedPdfId || page < 1 || page > pageCount) return;
@@ -73,19 +108,6 @@
   function fitWidth() {
     fitToWidth = true;
   }
-
-  // 计算适应窗口的缩放比例
-  function getImageScale() {
-    if (fitToWidth && containerWidth > 0 && imageWidth > 0) {
-      return containerWidth / imageWidth;
-    }
-    return scale;
-  }
-
-  // 获取容器宽度
-  function updateContainerWidth(element: HTMLElement) {
-    containerWidth = element.clientWidth - 40; // 减去 padding
-  }
 </script>
 
 <div class="pdf-viewer">
@@ -108,14 +130,14 @@
       </div>
       <div class="zoom">
         <button on:click={zoomOut} title="缩小">-</button>
-        <span class="zoom-level">{Math.round(getImageScale() * 100)}%</span>
+        <span class="zoom-level">{Math.round(currentScale * 100)}%</span>
         <button on:click={zoomIn} title="放大">+</button>
         <button on:click={resetZoom} title="100%">100%</button>
         <button on:click={fitWidth} class:active={fitToWidth} title="适应窗口">适应</button>
       </div>
     </div>
 
-    <div class="content" use:updateContainerWidth>
+    <div class="content" bind:this={contentElement}>
       {#if isLoading}
         <div class="loading">
           <div class="spinner"></div>
@@ -130,8 +152,8 @@
           <img
             src={imageSrc}
             alt="PDF Page {currentPage}"
-            style="transform: scale({getImageScale()})"
-            on:load={(e) => { imageWidth = e.target.naturalWidth; }}
+            style="width: {imageWidth * currentScale}px; height: auto;"
+            on:load={handleImageLoad}
           />
         </div>
       {:else}
@@ -243,8 +265,6 @@
 
   .image-container img {
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    transition: transform 0.2s;
-    transform-origin: top center;
   }
 
   .spinner {
