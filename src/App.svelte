@@ -4,7 +4,7 @@
   import SearchBar from './lib/components/SearchBar.svelte';
   import SearchResults from './lib/components/SearchResults.svelte';
   import PdfViewer from './lib/components/PdfViewer.svelte';
-  import { selectedPdfPath } from './lib/stores';
+  import { selectedPdfPath, selectedPdfPageCount } from './lib/stores';
 
   // 面板宽度状态
   let leftWidth = 220;
@@ -66,7 +66,7 @@
   </div>
   <div class="resizer right-resizer" on:mousedown={startDragRight}></div>
   <div class="right-panel" style="width: {rightWidth}px">
-    <PdfViewer pdfPath={$selectedPdfPath} />
+    <PdfViewer pdfPath={$selectedPdfPath} pageCount={$selectedPdfPageCount} />
   </div>
 </main>
 

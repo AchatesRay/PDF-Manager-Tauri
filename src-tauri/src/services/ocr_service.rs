@@ -4,6 +4,12 @@ use std::process::Command;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Error, Debug)]
 pub enum OcrError {
     #[error("Tesseract未找到: {0}")]
@@ -48,7 +54,16 @@ impl OcrService {
         debug!("应用目录中未找到Tesseract: {:?}", local_tesseract);
 
         // 检查系统PATH
-        match Command::new("tesseract").arg("--version").output() {
+        #[cfg(target_os = "windows")]
+        let result = Command::new("tesseract")
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        #[cfg(not(target_os = "windows"))]
+        let result = Command::new("tesseract").arg("--version").output();
+
+        match result {
             Ok(output) => {
                 if output.status.success() {
                     let version = String::from_utf8_lossy(&output.stdout);
@@ -88,17 +103,36 @@ impl OcrService {
         debug!("执行Tesseract: path={}, lang={}, data_path={}",
             self.tesseract_path, self.language, self.data_path);
 
-        let output = Command::new(&self.tesseract_path)
-            .env("TESSDATA_PREFIX", &self.data_path)
-            .arg(&input_path)
-            .arg(&output_path.with_extension(""))
-            .arg("-l")
-            .arg(&self.language)
-            .output()
-            .map_err(|e| {
-                error!("执行Tesseract失败: {}", e);
-                OcrError::OcrFailed(format!("执行Tesseract失败: {}", e))
-            })?;
+        #[cfg(target_os = "windows")]
+        let output = {
+            Command::new(&self.tesseract_path)
+                .env("TESSDATA_PREFIX", &self.data_path)
+                .arg(&input_path)
+                .arg(&output_path.with_extension(""))
+                .arg("-l")
+                .arg(&self.language)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|e| {
+                    error!("执行Tesseract失败: {}", e);
+                    OcrError::OcrFailed(format!("执行Tesseract失败: {}", e))
+                })?
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let output = {
+            Command::new(&self.tesseract_path)
+                .env("TESSDATA_PREFIX", &self.data_path)
+                .arg(&input_path)
+                .arg(&output_path.with_extension(""))
+                .arg("-l")
+                .arg(&self.language)
+                .output()
+                .map_err(|e| {
+                    error!("执行Tesseract失败: {}", e);
+                    OcrError::OcrFailed(format!("执行Tesseract失败: {}", e))
+                })?
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -132,10 +166,18 @@ impl OcrService {
     pub fn is_available(&self) -> bool {
         debug!("检查OCR服务可用性...");
 
-        match Command::new(&self.tesseract_path)
+        #[cfg(target_os = "windows")]
+        let result = Command::new(&self.tesseract_path)
             .arg("--version")
-            .output()
-        {
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        #[cfg(not(target_os = "windows"))]
+        let result = Command::new(&self.tesseract_path)
+            .arg("--version")
+            .output();
+
+        match result {
             Ok(output) => {
                 let available = output.status.success();
                 if available {
@@ -155,11 +197,20 @@ impl OcrService {
     pub fn available_languages(&self) -> Vec<String> {
         debug!("获取可用语言列表...");
 
-        match Command::new(&self.tesseract_path)
+        #[cfg(target_os = "windows")]
+        let result = Command::new(&self.tesseract_path)
             .arg("--list-langs")
             .env("TESSDATA_PREFIX", &self.data_path)
-            .output()
-        {
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        #[cfg(not(target_os = "windows"))]
+        let result = Command::new(&self.tesseract_path)
+            .arg("--list-langs")
+            .env("TESSDATA_PREFIX", &self.data_path)
+            .output();
+
+        match result {
             Ok(output) => {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
