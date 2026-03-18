@@ -5,8 +5,6 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:asset:default",
-    "core:asset:allow-asset-protocol-configure-headers",
     "shell:allow-open",
     "shell:allow-execute",
     "dialog:default",
