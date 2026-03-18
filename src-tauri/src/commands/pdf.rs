@@ -1,11 +1,11 @@
-use crate::db::{get_pdfs_dir, Db};
+use crate::db::{get_pdfs_dir, Db, get_setting, SETTING_DATA_DIR};
 use crate::models::{Pdf, PdfInfo, PdfStatus, PdfType};
 use crate::services::pdf_service::PdfService;
 use chrono::Utc;
 use rusqlite::params;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -21,6 +21,49 @@ fn row_to_pdf_info(row: &rusqlite::Row) -> rusqlite::Result<PdfInfo> {
         status: status_str.parse().unwrap_or(PdfStatus::Pending),
         progress: None,
     })
+}
+
+/// 获取文件夹的完整存储路径（向上遍历构建路径）
+fn get_folder_storage_path(conn: &rusqlite::Connection, folder_id: Option<i64>) -> Option<PathBuf> {
+    let mut path_parts: Vec<String> = Vec::new();
+    let mut current_id = folder_id;
+    let mut root_storage_path: Option<String> = None;
+
+    // 向上遍历获取所有父文件夹名称
+    while let Some(id) = current_id {
+        let result: Result<(Option<i64>, String, Option<String>), _> = conn
+            .query_row(
+                "SELECT parent_id, name, storage_path FROM folders WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            );
+
+        if let Ok((parent_id, name, storage_path)) = result {
+            path_parts.push(name);
+            // 根文件夹有 storage_path
+            if storage_path.is_some() && root_storage_path.is_none() {
+                root_storage_path = storage_path;
+            }
+            current_id = parent_id;
+        } else {
+            break;
+        }
+    }
+
+    // 反转得到从根到当前的路径
+    path_parts.reverse();
+
+    // 组合完整路径
+    if let Some(base) = root_storage_path {
+        let mut full_path = PathBuf::from(base);
+        for part in path_parts {
+            full_path.push(&part);
+        }
+        debug!("Calculated folder storage path: {:?}", full_path);
+        Some(full_path)
+    } else {
+        None
+    }
 }
 
 /// 添加 PDF 文件
@@ -73,22 +116,48 @@ pub fn add_pdf(
         return Err("该PDF文件已添加过".to_string());
     }
 
-    let storage_name = format!("{}.pdf", Uuid::new_v4());
-    let storage_path = get_pdfs_dir(&app_handle).join(&storage_name);
-    debug!("存储路径: {:?}", storage_path);
+    // 获取存储路径：优先使用文件夹的 storage_path，否则使用用户配置的数据目录
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    let storage_dir = if let Some(folder_path) = get_folder_storage_path(&conn, folder_id) {
+        debug!("使用文件夹存储路径: {:?}", folder_path);
+        folder_path
+    } else {
+        // 获取用户配置的数据目录
+        let data_dir = get_setting(&conn, SETTING_DATA_DIR)
+            .map(|p| PathBuf::from(p).join("pdfs"))
+            .unwrap_or_else(|| get_pdfs_dir(&app_handle));
+        debug!("使用数据目录存储路径: {:?}", data_dir);
+        data_dir
+    };
+    drop(conn);
 
     // 确保存储目录存在
-    if let Some(parent) = storage_path.parent() {
-        if !parent.exists() {
-            match std::fs::create_dir_all(parent) {
-                Ok(_) => debug!("创建存储目录: {:?}", parent),
-                Err(e) => {
-                    error!("创建存储目录失败: {}", e);
-                    return Err(format!("无法创建存储目录: {}", e));
-                }
+    if !storage_dir.exists() {
+        match std::fs::create_dir_all(&storage_dir) {
+            Ok(_) => info!("创建存储目录: {:?}", storage_dir),
+            Err(e) => {
+                error!("创建存储目录失败: {:?}", e);
+                return Err(format!("无法创建存储目录: {}", e));
             }
         }
     }
+
+    // 使用原始文件名，如果存在同名文件则添加后缀
+    let mut storage_path = storage_dir.join(&filename);
+    if storage_path.exists() {
+        // 同名文件已存在，添加 UUID 后缀
+        let stem = src_path.file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        let new_filename = format!("{}_{}.pdf", stem, Uuid::new_v4().simple());
+        storage_path = storage_dir.join(&new_filename);
+        warn!("同名文件已存在，使用新文件名: {:?}", storage_path);
+    }
+    debug!("存储路径: {:?}", storage_path);
 
     // 复制文件
     let file_size = match std::fs::metadata(&src_path) {
