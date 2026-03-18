@@ -92,6 +92,24 @@ pub fn run() {
                 }
             }
 
+            // 初始化搜索服务
+            debug!("初始化搜索服务...");
+            let index_path = data_dir.join("index");
+            let search_service = match services::search_service::SearchService::open(&index_path) {
+                Ok(s) => {
+                    info!("搜索服务初始化成功");
+                    s
+                }
+                Err(e) => {
+                    error!("搜索服务初始化失败: {}", e);
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("搜索服务初始化失败: {}", e)
+                    )));
+                }
+            };
+            app.manage(std::sync::Mutex::new(search_service));
+
             info!("应用初始化完成, 数据目录: {:?}", data_dir);
             info!("日志文件位置: {:?}", data_dir.join("logs"));
 
