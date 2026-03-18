@@ -153,7 +153,7 @@ impl SearchService {
         let query_text = tokens.join(" ");
         debug!("搜索查询分词: '{}' -> '{}'", query, query_text);
 
-        let query = match query_parser.parse_query(&query_text) {
+        let parsed_query = match query_parser.parse_query(&query_text) {
             Ok(q) => q,
             Err(e) => {
                 error!("解析查询失败: '{}', 错误: {}", query_text, e);
@@ -161,7 +161,7 @@ impl SearchService {
             }
         };
 
-        let top_docs = match searcher.search(&query, &TopDocs::with_limit(limit)) {
+        let top_docs = match searcher.search(&parsed_query, &TopDocs::with_limit(limit)) {
             Ok(docs) => docs,
             Err(e) => {
                 error!("执行搜索失败: {}", e);

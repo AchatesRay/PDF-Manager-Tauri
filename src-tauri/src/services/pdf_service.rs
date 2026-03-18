@@ -1,6 +1,5 @@
 use crate::models::PdfType;
 use image::DynamicImage;
-use once_cell::sync::OnceCell;
 use pdfium_render::prelude::*;
 use std::path::Path;
 use thiserror::Error;
@@ -18,37 +17,31 @@ pub enum PdfError {
     IoError(#[from] std::io::Error),
 }
 
-pub struct PdfService {
-    pdfium: OnceCell<Pdfium>,
-}
+/// PDF 服务
+///
+/// 注意: Pdfium 实例不在结构体中存储，因为 PdfiumLibraryBindings 不是 Send，
+/// 无法在多线程环境中共享。每次渲染时创建新的 Pdfium 实例。
+pub struct PdfService;
 
 impl PdfService {
     pub fn new() -> Result<Self, PdfError> {
         info!("初始化PDF服务");
-        Ok(Self {
-            pdfium: OnceCell::new(),
-        })
+        Ok(Self)
     }
 
-    /// 获取或初始化 Pdfium 实例
-    fn get_pdfium(&self) -> Result<&Pdfium, PdfError> {
-        self.pdfium.get_or_try_init(|| {
-            info!("初始化Pdfium渲染引擎...");
-
-            // 使用系统库绑定
-            // 注意: 需要系统上安装 pdfium.dll 或在应用目录中放置该 DLL
-            let bindings = Pdfium::bind_to_system_library()
-                .map_err(|e| {
-                    error!("Pdfium绑定失败: {}。请确保 pdfium.dll 在系统 PATH 或应用目录中。", e);
-                    PdfError::RenderError(format!(
-                        "无法绑定Pdfium: {}。请确保 pdfium.dll 已安装。",
-                        e
-                    ))
-                })?;
-
-            info!("Pdfium初始化成功");
-            Ok(Pdfium::new(bindings))
-        })
+    /// 创建 Pdfium 实例
+    fn create_pdfium() -> Result<Pdfium, PdfError> {
+        // 使用系统库绑定
+        // 注意: 需要系统上安装 pdfium.dll 或在应用目录中放置该 DLL
+        Pdfium::bind_to_system_library()
+            .map(|bindings| Pdfium::new(bindings))
+            .map_err(|e| {
+                error!("Pdfium绑定失败: {}。请确保 pdfium.dll 在系统 PATH 或应用目录中。", e);
+                PdfError::RenderError(format!(
+                    "无法绑定Pdfium: {}。请确保 pdfium.dll 已安装。",
+                    e
+                ))
+            })
     }
 
     /// 获取 PDF 页数
@@ -159,7 +152,10 @@ impl PdfService {
             return Err(PdfError::RenderError(format!("文件不存在: {}", pdf_path.display())));
         }
 
-        let pdfium = self.get_pdfium()?;
+        // 每次渲染创建新的 Pdfium 实例
+        // 这是为了避免线程安全问题 (PdfiumLibraryBindings 不是 Send)
+        let pdfium = Self::create_pdfium()?;
+        info!("Pdfium实例创建成功，开始渲染...");
 
         // 打开 PDF 文档
         let document = pdfium
