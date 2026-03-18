@@ -69,6 +69,7 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
 
 /// 设置键名
 pub const SETTING_DATA_DIR: &str = "data_dir";
+pub const SETTING_PDF_READER: &str = "pdf_reader_path";
 
 /// 获取设置值
 pub fn get_setting(conn: &Connection, key: &str) -> Option<String> {

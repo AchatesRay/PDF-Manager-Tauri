@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import * as pdfjsLib from 'pdfjs-dist';
+  import { openPdfExternally } from '../api';
 
   // 设置 worker
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -81,6 +82,15 @@
     renderPage(currentPage);
   }
 
+  async function handleOpenExternally() {
+    if (!pdfPath) return;
+    try {
+      await openPdfExternally(pdfPath);
+    } catch (e) {
+      alert('打开PDF失败: ' + e);
+    }
+  }
+
   onDestroy(() => {
     pdfDoc?.destroy();
   });
@@ -108,6 +118,7 @@
       <button on:click={zoomOut} disabled={scale <= 0.5}>-</button>
       <span>{Math.round(scale * 100)}%</span>
       <button on:click={zoomIn} disabled={scale >= 3}>+</button>
+      <button class="external-btn" on:click={handleOpenExternally}>外部打开</button>
     </div>
     <div class="canvas-container">
       <canvas bind:this={canvas}></canvas>
@@ -156,6 +167,12 @@
   .toolbar button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .external-btn {
+    background: #4caf50;
+    color: white;
+    margin-left: 10px;
   }
 
   .spacer {

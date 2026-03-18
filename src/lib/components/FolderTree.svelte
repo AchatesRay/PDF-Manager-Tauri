@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading } from '../stores';
-  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir } from '../api';
+  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, openPdfExternally } from '../api';
   import { onMount } from 'svelte';
   import FolderNode from './FolderNode.svelte';
   import type { Folder, AppSettings } from '../api';
@@ -179,6 +179,36 @@
       }
     }
   }
+
+  async function selectPdfReader() {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: '可执行文件', extensions: ['exe'] }],
+      title: '选择PDF阅读器',
+    });
+
+    if (selected) {
+      try {
+        await setPdfReader(selected as string);
+        settings = await getSettings();
+        alert('PDF阅读器已设置');
+      } catch (e) {
+        alert('设置失败: ' + e);
+      }
+    }
+  }
+
+  async function clearPdfReader() {
+    if (confirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。')) {
+      try {
+        await setPdfReader(null);
+        settings = await getSettings();
+        alert('PDF阅读器设置已清除');
+      } catch (e) {
+        alert('清除失败: ' + e);
+      }
+    }
+  }
 </script>
 
 <div class="folder-tree">
@@ -204,6 +234,17 @@
       <div class="settings-item">
         <label>日志目录:</label>
         <div class="settings-path">{settings?.log_dir || '加载中...'}</div>
+      </div>
+      <div class="settings-title" style="margin-top: 12px;">PDF阅读器</div>
+      <div class="settings-item">
+        <label>外部阅读器:</label>
+        <div class="settings-path">{settings?.pdf_reader_path || '使用系统默认'}</div>
+        <div class="settings-actions">
+          <button on:click={selectPdfReader}>选择阅读器</button>
+          {#if settings?.pdf_reader_path}
+            <button class="reset-btn" on:click={clearPdfReader}>清除</button>
+          {/if}
+        </div>
       </div>
     </div>
   {/if}

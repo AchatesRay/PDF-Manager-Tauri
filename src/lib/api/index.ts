@@ -100,6 +100,7 @@ export async function startOcr(pdfId: number): Promise<void> {
 export interface AppSettings {
   data_dir: string;
   log_dir: string;
+  pdf_reader_path: string | null;
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -112,4 +113,12 @@ export async function setDataDir(path: string): Promise<void> {
 
 export async function resetDataDir(): Promise<string> {
   return invoke('reset_data_dir');
+}
+
+export async function setPdfReader(path: string | null): Promise<void> {
+  return invoke('set_pdf_reader', { path });
+}
+
+export async function openPdfExternally(pdfPath: string): Promise<void> {
+  return invoke('open_pdf_externally', { pdfPath });
 }
