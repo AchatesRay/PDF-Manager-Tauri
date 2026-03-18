@@ -1,6 +1,7 @@
 use crate::db::Db;
 use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
+use crate::services::search_service::SearchService;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
@@ -53,12 +54,13 @@ pub async fn start_ocr(
     db: State<'_, Db>,
     ocr_service: State<'_, Mutex<OcrService>>,
     pdf_service: State<'_, Mutex<PdfService>>,
+    search_service: State<'_, Mutex<SearchService>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     info!("开始OCR处理: pdf_id={}", pdf_id);
 
     // 获取 PDF 信息
-    let (storage_path, page_count, filename): (String, i32, String) = {
+    let (storage_path, page_count, filename, folder_id): (String, i32, String, Option<i64>) = {
         let conn = match db.lock() {
             Ok(c) => c,
             Err(e) => {
@@ -68,9 +70,9 @@ pub async fn start_ocr(
         };
 
         match conn.query_row(
-            "SELECT storage_path, page_count, filename FROM pdfs WHERE id = ?1",
+            "SELECT storage_path, page_count, filename, folder_id FROM pdfs WHERE id = ?1",
             rusqlite::params![pdf_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ) {
             Ok(info) => info,
             Err(e) => {
@@ -149,6 +151,17 @@ pub async fn start_ocr(
         }
     };
 
+    let mut search_svc = match search_service.lock() {
+        Ok(s) => s,
+        Err(e) => {
+            error!("获取搜索服务锁失败: {}", e);
+            drop(pdf_svc);
+            drop(ocr_svc);
+            let _ = update_pdf_status(&db, pdf_id, "error", Some(&format!("搜索服务锁定失败: {}", e)));
+            return Err(format!("搜索服务锁定失败: {}", e));
+        }
+    };
+
     let mut success_count = 0;
     let mut error_count = 0;
 
@@ -156,7 +169,7 @@ pub async fn start_ocr(
     for page_num in 1..=page_count {
         info!("处理PDF页面: pdf_id={}, page={}/{}", pdf_id, page_num, page_count);
 
-        match process_page(&pdf_id, page_num, &storage_path, &ocr_svc, &pdf_svc, &db) {
+        match process_page(&pdf_id, page_num, &storage_path, &ocr_svc, &pdf_svc, &db, &mut search_svc, &filename, folder_id) {
             Ok(_) => {
                 success_count += 1;
                 info!("页面处理成功: pdf_id={}, page={}", pdf_id, page_num);
@@ -176,6 +189,7 @@ pub async fn start_ocr(
         });
     }
 
+    drop(search_svc);
     drop(pdf_svc);
     drop(ocr_svc);
 
@@ -239,6 +253,9 @@ fn process_page(
     ocr_service: &OcrService,
     pdf_service: &PdfService,
     db: &State<'_, Db>,
+    search_service: &mut SearchService,
+    filename: &str,
+    folder_id: Option<i64>,
 ) -> Result<(), String> {
     debug!("渲染PDF页面: page={}, path={}", page_num, storage_path);
 
@@ -262,7 +279,7 @@ fn process_page(
 
     debug!("OCR识别成功: page={}, 文本长度={}", page_num, text.len());
 
-    // 保存到数据库
+    // 保存到数据库并获取 page_id
     let conn = db.lock().map_err(|e| {
         error!("获取数据库锁失败: {}", e);
         format!("数据库锁定失败: {}", e)
@@ -278,6 +295,29 @@ fn process_page(
         format!("保存结果失败: {}", e)
     })?;
 
-    debug!("OCR结果已保存: page={}", page_num);
+    // 获取 page_id
+    let page_id: i64 = conn.query_row(
+        "SELECT id FROM pdf_pages WHERE pdf_id = ?1 AND page_number = ?2",
+        rusqlite::params![pdf_id, page_num],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
+    debug!("OCR结果已保存: page={}, page_id={}", page_num, page_id);
+
+    // 添加到搜索索引
+    if page_id > 0 {
+        match search_service.index_page(
+            page_id as u64,
+            *pdf_id as u64,
+            folder_id,
+            page_num as u32,
+            filename,
+            &text,
+        ) {
+            Ok(_) => info!("页面已添加到搜索索引: page_id={}, pdf_id={}", page_id, pdf_id),
+            Err(e) => warn!("添加搜索索引失败: page_id={}, 错误: {}", page_id, e),
+        }
+    }
+
     Ok(())
 }

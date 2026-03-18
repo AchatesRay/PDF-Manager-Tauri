@@ -6,6 +6,7 @@ export const folders = writable<Folder[]>([]);
 export const pdfList = writable<PdfInfo[]>([]);
 export const selectedPdfId = writable<number | null>(null);
 export const selectedPdfPath = writable<string | null>(null);
+export const selectedPdfPageCount = writable<number>(0);
 export const searchResults = writable<SearchResult[]>([]);
 export const searchQuery = writable('');
 export const isLoading = writable(false);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { open, confirm } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading } from '../stores';
   import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, openPdfExternally } from '../api';
   import { onMount } from 'svelte';
@@ -125,7 +125,15 @@
   }
 
   async function handleDelete(id: number) {
-    if (confirm('确定删除此文件夹？')) {
+    const folder = $folders.find(f => f.id === id);
+    const folderName = folder?.name || '此文件夹';
+
+    const confirmed = await confirm(`确定要删除文件夹 "${folderName}" 吗？`, {
+      title: '确认删除',
+      kind: 'warning',
+    });
+
+    if (confirmed) {
       try {
         await deleteFolder(id);
         folders.set(await getFolders());
@@ -169,7 +177,12 @@
   }
 
   async function handleResetDataDir() {
-    if (confirm('确定重置数据目录为默认值？')) {
+    const confirmed = await confirm('确定重置数据目录为默认值？', {
+      title: '确认重置',
+      kind: 'warning',
+    });
+
+    if (confirmed) {
       try {
         await resetDataDir();
         settings = await getSettings();
@@ -199,7 +212,12 @@
   }
 
   async function clearPdfReader() {
-    if (confirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。')) {
+    const confirmed = await confirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。', {
+      title: '确认清除',
+      kind: 'warning',
+    });
+
+    if (confirmed) {
       try {
         await setPdfReader(null);
         settings = await getSettings();

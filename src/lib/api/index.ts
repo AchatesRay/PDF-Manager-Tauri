@@ -122,3 +122,8 @@ export async function setPdfReader(path: string | null): Promise<void> {
 export async function openPdfExternally(pdfPath: string): Promise<void> {
   return invoke('open_pdf_externally', { pdfPath });
 }
+
+// PDF Preview API
+export async function renderPdfPage(pdfId: number, pageNum: number): Promise<string> {
+  return invoke('render_pdf_page', { pdfId, pageNum });
+}

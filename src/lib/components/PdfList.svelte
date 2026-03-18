@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, ocrProgress } from '../stores';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress } from '../stores';
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { open, confirm } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
 
   onMount(async () => {
@@ -64,7 +64,15 @@
   }
 
   async function handleDelete(id: number) {
-    if (confirm('确定删除此 PDF？')) {
+    const pdf = $pdfList.find(p => p.id === id);
+    const filename = pdf?.filename || '此PDF';
+
+    const confirmed = await confirm(`确定要删除 "${filename}" 吗？`, {
+      title: '确认删除',
+      kind: 'warning',
+    });
+
+    if (confirmed) {
       try {
         await deletePdf(id);
         await loadPdfs();
@@ -79,9 +87,11 @@
     try {
       const detail = await getPdfDetail(id);
       selectedPdfPath.set(detail.storage_path);
+      selectedPdfPageCount.set(detail.page_count);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
       selectedPdfPath.set(null);
+      selectedPdfPageCount.set(0);
     }
   }
 

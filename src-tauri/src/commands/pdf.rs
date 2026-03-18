@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use tauri::{Manager, State};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 fn row_to_pdf_info(row: &rusqlite::Row) -> rusqlite::Result<PdfInfo> {
     let status_str: String = row.get(5)?;
@@ -417,4 +418,63 @@ pub fn get_pdf_detail(pdf_id: i64, db: State<'_, Db>) -> Result<Pdf, String> {
 
     debug!("PDF详情获取成功: filename={}, pages={}, status={:?}", pdf.filename, pdf.page_count, pdf.status);
     Ok(pdf)
+}
+
+/// 渲染 PDF 页面为图像（返回 base64 编码）
+#[tauri::command]
+pub fn render_pdf_page(
+    pdf_id: i64,
+    page_num: u32,
+    db: State<'_, Db>,
+    pdf_service: State<'_, Mutex<PdfService>>,
+) -> Result<String, String> {
+    debug!("渲染PDF页面: pdf_id={}, page={}", pdf_id, page_num);
+
+    // 获取 PDF 存储路径
+    let storage_path: String = {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+
+        conn.query_row(
+            "SELECT storage_path FROM pdfs WHERE id = ?1",
+            params![pdf_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| {
+            error!("PDF不存在 (id={}): {}", pdf_id, e);
+            format!("PDF不存在: {}", e)
+        })?
+    };
+
+    // 获取 PDF 服务锁
+    let pdf_svc = pdf_service.lock().map_err(|e| {
+        error!("获取PDF服务锁失败: {}", e);
+        format!("PDF服务锁定失败: {}", e)
+    })?;
+
+    // 渲染页面
+    let image = pdf_svc
+        .render_page(std::path::Path::new(&storage_path), page_num)
+        .map_err(|e| {
+            error!("渲染PDF页面失败: pdf_id={}, page={}, 错误: {}", pdf_id, page_num, e);
+            format!("渲染页面失败: {}", e)
+        })?;
+
+    drop(pdf_svc);
+
+    // 转换为 PNG 格式并编码为 base64
+    let mut buffer = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
+        .map_err(|e| {
+            error!("编码图像失败: {}", e);
+            format!("编码图像失败: {}", e)
+        })?;
+
+    let base64_str = STANDARD.encode(&buffer);
+    info!("PDF页面渲染成功: pdf_id={}, page={}, size={} bytes", pdf_id, page_num, base64_str.len());
+
+    Ok(format!("data:image/png;base64,{}", base64_str))
 }

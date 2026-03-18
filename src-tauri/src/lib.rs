@@ -124,6 +124,7 @@ pub fn run() {
             commands::pdf::get_pdf_list,
             commands::pdf::delete_pdf,
             commands::pdf::get_pdf_detail,
+            commands::pdf::render_pdf_page,
             commands::search::search,
             commands::search::search_filename,
             commands::ocr::get_ocr_status,
@@ -141,6 +142,7 @@ pub fn run() {
 fn init_logging(data_dir: &std::path::Path) {
     use tracing_subscriber::fmt::time::LocalTime;
     use time::macros::format_description;
+    use time::OffsetDateTime;
 
     let log_dir = data_dir.join("logs");
 
@@ -149,7 +151,23 @@ fn init_logging(data_dir: &std::path::Path) {
         return;
     }
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "pdf-ocr.log");
+    // 自定义文件名：日期在前
+    let today = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let date_str = today.format(format_description!("[year]-[month]-[day]")).unwrap_or("unknown".to_string());
+    let log_filename = format!("{}-pdf-ocr.log", date_str);
+    let log_path = log_dir.join(&log_filename);
+
+    let file_appender = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("无法打开日志文件 {:?}: {}", log_path, e);
+            return;
+        }
+    };
 
     // 从环境变量获取日志级别，默认为info
     let log_level = std::env::var("RUST_LOG")
@@ -161,7 +179,7 @@ fn init_logging(data_dir: &std::path::Path) {
     match tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(file_appender)
+                .with_writer(std::sync::Mutex::new(file_appender))
                 .with_ansi(false)
                 .with_target(true)
                 .with_thread_ids(false)
@@ -176,7 +194,7 @@ fn init_logging(data_dir: &std::path::Path) {
     {
         Ok(_) => {
             info!("日志系统初始化成功");
-            info!("日志目录: {:?}", log_dir);
+            info!("日志文件: {:?}", log_path);
             info!("日志级别: {}", log_level);
         }
         Err(e) => {
