@@ -1,7 +1,7 @@
 <script lang="ts">
   import { renderPdfPage } from '../api';
   import { selectedPdfId, jumpToPage } from '../stores';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   export let pdfPath: string | null = null;
   export let pageCount: number = 0;
@@ -12,10 +12,11 @@
   let error: string | null = null;
   let scale = 1.0;
   let fitToWidth = true; // 默认适应窗口
-  let containerWidth = 0;
-  let imageWidth = 0;
-  let imageHeight = 0;
+  let containerWidth = 800; // 默认宽度
+  let imageWidth = 2480; // 默认图片宽度
+  let imageHeight = 3508;
   let contentElement: HTMLElement;
+  let resizeObserver: ResizeObserver;
 
   // 监听 jumpToPage 变化，跳转到指定页面
   $: if ($jumpToPage !== null && $jumpToPage >= 1 && $jumpToPage <= pageCount) {
@@ -25,39 +26,51 @@
   }
 
   $: if ($selectedPdfId && pageCount > 0) {
+    currentPage = 1;
     loadPage(currentPage);
   }
 
   // 响应式计算缩放比例
-  $: currentScale = calculateScale();
-
-  function calculateScale(): number {
-    if (fitToWidth && containerWidth > 0 && imageWidth > 0) {
-      return containerWidth / imageWidth;
-    }
-    return scale;
-  }
+  $: currentScale = fitToWidth && containerWidth > 0 && imageWidth > 0
+    ? containerWidth / imageWidth
+    : scale;
 
   function handleImageLoad(e: Event) {
     const img = e.target as HTMLImageElement;
     imageWidth = img.naturalWidth;
     imageHeight = img.naturalHeight;
+    console.log('Image loaded:', imageWidth, 'x', imageHeight, 'container:', containerWidth, 'scale:', currentScale);
+  }
+
+  // 更新容器宽度
+  function updateContainerWidth() {
+    if (contentElement) {
+      const newWidth = contentElement.clientWidth - 40;
+      if (newWidth > 0 && newWidth !== containerWidth) {
+        containerWidth = newWidth;
+        console.log('Container width updated:', containerWidth);
+      }
+    }
   }
 
   onMount(() => {
+    // 初始化容器宽度
+    updateContainerWidth();
+
     // 监听窗口大小变化
-    const resizeObserver = new ResizeObserver(() => {
-      if (contentElement) {
-        containerWidth = contentElement.clientWidth - 40;
-      }
+    resizeObserver = new ResizeObserver(() => {
+      updateContainerWidth();
     });
 
     if (contentElement) {
-      containerWidth = contentElement.clientWidth - 40;
       resizeObserver.observe(contentElement);
     }
 
-    return () => resizeObserver.disconnect();
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
   });
 
   async function loadPage(page: number) {
@@ -68,6 +81,9 @@
 
     try {
       imageSrc = await renderPdfPage($selectedPdfId!, page);
+      // 图片加载后更新容器宽度
+      await tick();
+      updateContainerWidth();
     } catch (e) {
       error = '加载页面失败: ' + e;
       imageSrc = null;
@@ -107,6 +123,7 @@
 
   function fitWidth() {
     fitToWidth = true;
+    updateContainerWidth();
   }
 </script>
 
@@ -152,7 +169,7 @@
           <img
             src={imageSrc}
             alt="PDF Page {currentPage}"
-            style="width: {imageWidth * currentScale}px; height: auto;"
+            style="width: {imageWidth * currentScale}px;"
             on:load={handleImageLoad}
           />
         </div>
