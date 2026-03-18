@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import * as pdfjsLib from 'pdfjs-dist';
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPdfExternally } from '../api';
 
   // 设置 worker
@@ -25,7 +26,10 @@
     error = null;
 
     try {
-      const loadingTask = pdfjsLib.getDocument(path);
+      // 将本地文件路径转换为 Tauri 可访问的 URL
+      const fileUrl = convertFileSrc(path);
+      console.log('Loading PDF from:', fileUrl);
+      const loadingTask = pdfjsLib.getDocument(fileUrl);
       pdfDoc = await loadingTask.promise;
       totalPages = pdfDoc.numPages;
       currentPage = 1;

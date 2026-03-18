@@ -143,9 +143,17 @@ pub fn default_data_dir(app_handle: &tauri::AppHandle) -> PathBuf {
 
 /// 获取数据存储目录 (使用配置的目录)
 pub fn get_data_dir(app_handle: &tauri::AppHandle) -> PathBuf {
-    // 从数据库获取配置的数据目录
-    // 这里需要从 managed state 获取数据库连接
-    // 由于 setup 时数据库可能还未完全初始化，使用默认目录
+    // 尝试从数据库获取配置的数据目录
+    // 由于可能在 setup 早期调用，需要从 app state 获取数据库
+    if let Some(db) = app_handle.try_state::<Db>() {
+        if let Ok(conn) = db.lock() {
+            if let Some(custom_dir) = get_setting(&conn, SETTING_DATA_DIR) {
+                debug!("使用自定义数据目录: {}", custom_dir);
+                return PathBuf::from(custom_dir);
+            }
+        }
+    }
+    // 回退到默认目录
     default_data_dir(app_handle)
 }
 
