@@ -141,7 +141,8 @@ impl SearchService {
 
         // 中文分词
         let tokens: Vec<String> = self.jieba.cut(content, true).into_iter().map(|s| s.to_string()).collect();
-        debug!("分词完成: {} tokens", tokens.len());
+        info!("分词完成: {} tokens, 内容前100字符: {:?}", tokens.len(), &content.chars().take(100).collect::<String>());
+        debug!("分词结果前20个: {:?}", tokens.iter().take(20).collect::<Vec<_>>());
 
         let mut doc = TantivyDocument::default();
         doc.add_u64(page_id_field, page_id);
@@ -186,7 +187,7 @@ impl SearchService {
         folder_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        debug!("搜索: query='{}', folder_id={:?}, limit={}", query, folder_id, limit);
+        info!("搜索: query='{}', folder_id={:?}, limit={}", query, folder_id, limit);
 
         let searcher = self.reader.searcher();
 
@@ -195,7 +196,7 @@ impl SearchService {
 
         // 中文分词
         let tokens: Vec<String> = self.jieba.cut(query, true).into_iter().map(|s| s.to_string()).collect();
-        debug!("搜索查询分词: '{}' -> {:?}", query, tokens);
+        info!("搜索查询分词: '{}' -> {:?}", query, tokens);
 
         // 构建 BooleanQuery：每个分词结果作为一个 TermQuery，使用 Should 组合
         let mut queries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
@@ -205,6 +206,7 @@ impl SearchService {
             if token.trim().is_empty() {
                 continue;
             }
+            info!("添加搜索词: '{}'", token);
             let term = Term::from_field_text(content_field, token);
             let term_query = Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
             queries.push((Occur::Should, term_query));

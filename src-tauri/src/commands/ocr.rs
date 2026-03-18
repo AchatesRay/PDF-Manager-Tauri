@@ -277,7 +277,7 @@ fn process_page(
             format!("OCR识别失败: {}", e)
         })?;
 
-    debug!("OCR识别成功: page={}, 文本长度={}", page_num, text.len());
+    info!("OCR识别成功: page={}, 文本长度={}, 内容前200字符: {:?}", page_num, text.len(), text.chars().take(200).collect::<String>());
 
     // 保存到数据库并获取 page_id
     let conn = db.lock().map_err(|e| {
