@@ -7,6 +7,8 @@ edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ureq = "2"
+zip = "0.6"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -29,7 +31,7 @@ chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2"
 lopdf = "0.34"
 pdf-extract = "0.7"
-pdfium-render = { version = "0.8", features = ["static", "sync"] }
+pdfium-render = "0.8"
 
 [features]
 default = ["custom-protocol"]
