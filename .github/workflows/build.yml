@@ -38,9 +38,11 @@ jobs:
       - name: Download pdfium.dll
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/nicholasoxford/pdfium-binaries/releases/download/chromium%2F6644/pdfium.dll.x64.zip" -OutFile "pdfium.zip"
-          Expand-Archive -Path "pdfium.zip" -DestinationPath "src-tauri"
-          Move-Item -Path "src-tauri/pdfium.dll.x64" -Destination "src-tauri/pdfium.dll" -ErrorAction SilentlyContinue
+          Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7734/pdfium-win-x64.tgz" -OutFile "pdfium.tgz"
+          tar -xzf pdfium.tgz
+          dir
+          dir pdfium-win-x64
+          Copy-Item -Path "pdfium-win-x64/bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
           dir src-tauri
 
       - name: Build Tauri app
