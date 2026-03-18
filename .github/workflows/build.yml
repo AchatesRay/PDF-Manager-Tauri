@@ -41,8 +41,8 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7734/pdfium-win-x64.tgz" -OutFile "pdfium.tgz"
           tar -xzf pdfium.tgz
           dir
-          dir pdfium-win-x64
-          Copy-Item -Path "pdfium-win-x64/bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
+          dir bin
+          Copy-Item -Path "bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
           dir src-tauri
 
       - name: Build Tauri app
