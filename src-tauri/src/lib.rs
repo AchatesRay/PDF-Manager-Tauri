@@ -139,6 +139,9 @@ pub fn run() {
 }
 
 fn init_logging(data_dir: &std::path::Path) {
+    use tracing_subscriber::fmt::time::LocalTime;
+    use time::macros::format_description;
+
     let log_dir = data_dir.join("logs");
 
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
@@ -152,6 +155,9 @@ fn init_logging(data_dir: &std::path::Path) {
     let log_level = std::env::var("RUST_LOG")
         .unwrap_or_else(|_| "info".to_string());
 
+    // 使用本地时间格式化
+    let timer = LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"));
+
     match tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -160,6 +166,7 @@ fn init_logging(data_dir: &std::path::Path) {
                 .with_target(true)
                 .with_thread_ids(false)
                 .with_line_number(true)
+                .with_timer(timer)
         )
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()

@@ -52,7 +52,12 @@ impl SearchService {
         info!("初始化搜索服务, index_path={:?}", index_path);
 
         let schema = Self::create_schema();
-        let index = if index_path.exists() {
+
+        // 检查是否存在有效的 Tantivy 索引（需要 meta.json 文件）
+        let meta_json_path = index_path.join("meta.json");
+        let has_valid_index = meta_json_path.exists();
+
+        let index = if has_valid_index {
             debug!("打开现有索引: {:?}", index_path);
             Index::open_in_dir(index_path)?
         } else {
