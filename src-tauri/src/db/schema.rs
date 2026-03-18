@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS pdf_pages (
     FOREIGN KEY (pdf_id) REFERENCES pdfs(id) ON DELETE CASCADE
 );
 
+-- 全局设置表
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_pdfs_folder ON pdfs(folder_id);
 CREATE INDEX IF NOT EXISTS idx_pdfs_status ON pdfs(status);

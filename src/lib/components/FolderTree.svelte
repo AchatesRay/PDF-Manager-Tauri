@@ -1,10 +1,10 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading } from '../stores';
-  import { getFolders, createFolder, deleteFolder } from '../api';
+  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir } from '../api';
   import { onMount } from 'svelte';
   import FolderNode from './FolderNode.svelte';
-  import type { Folder } from '../api';
+  import type { Folder, AppSettings } from '../api';
 
   interface TreeNode extends Folder {
     children: TreeNode[];
@@ -14,12 +14,16 @@
   let showNewFolder = false;
   let newFolderParentId: number | null = null;
   let selectedStoragePath: string | null = null;
+  let showSettings = false;
+  let settings: AppSettings | null = null;
+  let parentFolderName: string | null = null;
 
   $: treeNodes = buildTree($folders);
 
   onMount(async () => {
     try {
       folders.set(await getFolders());
+      settings = await getSettings();
     } catch (e) {
       console.error('Failed to load folders:', e);
     }
@@ -54,6 +58,12 @@
     return roots;
   }
 
+  // 根据ID获取文件夹名称
+  function getFolderNameById(id: number): string | null {
+    const folder = $folders.find(f => f.id === id);
+    return folder?.name ?? null;
+  }
+
   async function selectDirectory() {
     const selected = await open({
       directory: true,
@@ -66,6 +76,26 @@
     }
   }
 
+  // 创建根文件夹
+  function handleAddClick() {
+    if (showNewFolder) {
+      handleCreate();
+    } else {
+      newFolderParentId = null;
+      parentFolderName = null;
+      showNewFolder = true;
+    }
+  }
+
+  // 创建子文件夹
+  function handleAddSubfolder(parentId: number) {
+    newFolderParentId = parentId;
+    parentFolderName = getFolderNameById(parentId);
+    showNewFolder = true;
+    newFolderName = '';
+    selectedStoragePath = null;
+  }
+
   async function handleCreate() {
     if (newFolderName.trim()) {
       try {
@@ -75,14 +105,23 @@
           selectedStoragePath ?? undefined
         );
         folders.set(await getFolders());
-        newFolderName = '';
-        showNewFolder = false;
-        newFolderParentId = null;
-        selectedStoragePath = null;
+        resetNewFolder();
       } catch (e) {
         alert('创建失败: ' + e);
       }
     }
+  }
+
+  function resetNewFolder() {
+    newFolderName = '';
+    showNewFolder = false;
+    newFolderParentId = null;
+    parentFolderName = null;
+    selectedStoragePath = null;
+  }
+
+  function handleCancel() {
+    resetNewFolder();
   }
 
   async function handleDelete(id: number) {
@@ -106,6 +145,38 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       handleCreate();
+    } else if (e.key === 'Escape') {
+      handleCancel();
+    }
+  }
+
+  async function selectDataDir() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: '选择数据存储目录',
+    });
+
+    if (selected) {
+      try {
+        await setDataDir(selected as string);
+        settings = await getSettings();
+        alert('数据目录已更新，重启应用后生效');
+      } catch (e) {
+        alert('设置失败: ' + e);
+      }
+    }
+  }
+
+  async function handleResetDataDir() {
+    if (confirm('确定重置数据目录为默认值？')) {
+      try {
+        await resetDataDir();
+        settings = await getSettings();
+        alert('数据目录已重置，重启应用后生效');
+      } catch (e) {
+        alert('重置失败: ' + e);
+      }
     }
   }
 </script>
@@ -113,23 +184,50 @@
 <div class="folder-tree">
   <div class="header">
     <h3>文件夹</h3>
-    <button on:click={() => showNewFolder = !showNewFolder}>+</button>
+    <div class="header-btns">
+      <button class="settings-btn" on:click={() => showSettings = !showSettings} title="设置">⚙️</button>
+      <button on:click={handleAddClick}>+</button>
+    </div>
   </div>
+
+  {#if showSettings}
+    <div class="settings-panel">
+      <div class="settings-title">存储设置</div>
+      <div class="settings-item">
+        <label>数据目录:</label>
+        <div class="settings-path">{settings?.data_dir || '加载中...'}</div>
+        <div class="settings-actions">
+          <button on:click={selectDataDir}>选择目录</button>
+          <button class="reset-btn" on:click={handleResetDataDir}>重置</button>
+        </div>
+      </div>
+      <div class="settings-item">
+        <label>日志目录:</label>
+        <div class="settings-path">{settings?.log_dir || '加载中...'}</div>
+      </div>
+    </div>
+  {/if}
 
   {#if showNewFolder}
     <div class="new-folder">
+      {#if parentFolderName}
+        <div class="parent-hint">在 "{parentFolderName}" 下创建:</div>
+      {/if}
       <input
         type="text"
         bind:value={newFolderName}
         placeholder="文件夹名称"
         on:keydown={handleKeydown}
       />
-      <button class="path-btn" on:click={selectDirectory} title="选择存储目录">
-        📁
-      </button>
+      {#if !newFolderParentId}
+        <button class="path-btn" on:click={selectDirectory} title="选择存储目录">
+          📁
+        </button>
+      {/if}
+      <button class="cancel-btn" on:click={handleCancel}>取消</button>
       <button on:click={handleCreate}>确定</button>
     </div>
-    {#if selectedStoragePath}
+    {#if !newFolderParentId && selectedStoragePath}
       <div class="selected-path">{selectedStoragePath}</div>
     {/if}
   {/if}
@@ -143,7 +241,7 @@
       <span class="name">全部文件</span>
     </li>
     {#each treeNodes as node}
-      <FolderNode {node} level={0} onDelete={handleDelete} />
+      <FolderNode {node} level={0} onDelete={handleDelete} onAddSubfolder={handleAddSubfolder} />
     {/each}
   </ul>
 </div>
@@ -225,6 +323,14 @@
     gap: 5px;
     margin-bottom: 10px;
     flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .parent-hint {
+    width: 100%;
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 4px;
   }
 
   .new-folder input {
@@ -243,6 +349,10 @@
     cursor: pointer;
   }
 
+  .new-folder .cancel-btn {
+    background: #9e9e9e;
+  }
+
   .path-btn {
     padding: 5px 8px;
     background: #fff;
@@ -257,5 +367,73 @@
     margin-bottom: 10px;
     word-break: break-all;
     padding: 0 5px;
+  }
+
+  .header-btns {
+    display: flex;
+    gap: 5px;
+  }
+
+  .settings-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: #9e9e9e;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .settings-panel {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+
+  .settings-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #333;
+  }
+
+  .settings-item {
+    margin-bottom: 8px;
+  }
+
+  .settings-item label {
+    display: block;
+    color: #666;
+    margin-bottom: 4px;
+  }
+
+  .settings-path {
+    background: #f5f5f5;
+    padding: 4px 8px;
+    border-radius: 4px;
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+
+  .settings-actions {
+    display: flex;
+    gap: 5px;
+  }
+
+  .settings-actions button {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #2196f3;
+    color: white;
+    font-size: 11px;
+  }
+
+  .settings-actions .reset-btn {
+    background: #9e9e9e;
   }
 </style>
