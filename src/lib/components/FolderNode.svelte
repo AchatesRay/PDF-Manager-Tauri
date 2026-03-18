@@ -2,12 +2,13 @@
   import { selectedFolderId } from '../stores';
   import type { Folder } from '../api';
 
-  export let folder: Folder & { children?: (Folder & { children?: Folder[] })[] };
+  export let node: Folder & { children: (Folder & { children: Folder[] })[] };
   export let level = 0;
   export let onDelete: (id: number) => void;
+  export let onAddSubfolder: (parentId: number) => void;
 
   let isExpanded = false;
-  let hasChildren = folder.children && folder.children.length > 0;
+  $: hasChildren = node.children && node.children.length > 0;
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -15,12 +16,17 @@
   }
 
   function selectFolder() {
-    selectedFolderId.set(folder.id);
+    selectedFolderId.set(node.id);
+  }
+
+  function handleAddSubfolder(e: MouseEvent) {
+    e.stopPropagation();
+    onAddSubfolder(node.id);
   }
 </script>
 
 <li
-  class:active={$selectedFolderId === folder.id}
+  class:active={$selectedFolderId === node.id}
   style="padding-left: {12 + level * 16}px"
   on:click={selectFolder}
 >
@@ -32,16 +38,18 @@
     <span class="expand-placeholder"></span>
   {/if}
   <span class="folder-icon">📁</span>
-  <span class="name">{folder.name}</span>
-  <button class="delete-btn" on:click|stopPropagation={() => onDelete(folder.id)}>×</button>
+  <span class="name">{node.name}</span>
+  <button class="add-btn" on:click={handleAddSubfolder} title="添加子文件夹">+</button>
+  <button class="delete-btn" on:click|stopPropagation={() => onDelete(node.id)} title="删除">×</button>
 </li>
 
 {#if hasChildren && isExpanded}
-  {#each folder.children || [] as child}
+  {#each node.children as child}
     <svelte:self
-      folder={child}
+      node={child}
       level={level + 1}
       {onDelete}
+      {onAddSubfolder}
     />
   {/each}
 {/if}
@@ -93,6 +101,21 @@
     white-space: nowrap;
   }
 
+  .add-btn {
+    opacity: 0;
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: #4caf50;
+    color: white;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .delete-btn {
     opacity: 0;
     border: none;
@@ -102,6 +125,7 @@
     color: #f44336;
   }
 
+  li:hover .add-btn,
   li:hover .delete-btn {
     opacity: 1;
   }

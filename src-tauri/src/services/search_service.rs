@@ -6,14 +6,15 @@ use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::{Index, IndexReader, TantivyDocument};
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum SearchError {
-    #[error("Index error: {0}")]
+    #[error("索引错误: {0}")]
     IndexError(#[from] tantivy::TantivyError),
-    #[error("IO error: {0}")]
+    #[error("IO错误: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Query parse error: {0}")]
+    #[error("查询解析错误: {0}")]
     QueryParseError(#[from] tantivy::query::QueryParserError),
 }
 
@@ -48,16 +49,21 @@ impl SearchService {
     }
 
     pub fn open(index_path: &Path) -> Result<Self, SearchError> {
+        info!("初始化搜索服务, index_path={:?}", index_path);
+
         let schema = Self::create_schema();
         let index = if index_path.exists() {
+            debug!("打开现有索引: {:?}", index_path);
             Index::open_in_dir(index_path)?
         } else {
+            info!("创建新索引: {:?}", index_path);
             std::fs::create_dir_all(index_path)?;
             Index::create_in_dir(index_path, schema.clone())?
         };
 
         let reader = index.reader()?;
 
+        info!("搜索服务初始化成功");
         Ok(Self {
             index,
             reader,
@@ -75,7 +81,16 @@ impl SearchService {
         filename: &str,
         content: &str,
     ) -> Result<(), SearchError> {
-        let mut writer: tantivy::IndexWriter<TantivyDocument> = self.index.writer(50_000_000)?;
+        debug!("索引页面: page_id={}, pdf_id={}, filename={}, content_len={}",
+            page_id, pdf_id, filename, content.len());
+
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = match self.index.writer(50_000_000) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("创建索引写入器失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        };
 
         let page_id_field = self.schema.get_field("page_id").unwrap();
         let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
@@ -84,8 +99,10 @@ impl SearchService {
         let filename_field = self.schema.get_field("filename").unwrap();
         let content_field = self.schema.get_field("content").unwrap();
 
+        // 中文分词
         let tokens: Vec<String> = self.jieba.cut(content, true).into_iter().map(|s| s.to_string()).collect();
         let tokenized_content = tokens.join(" ");
+        debug!("分词完成: {} tokens", tokens.len());
 
         let mut doc = TantivyDocument::default();
         doc.add_u64(page_id_field, page_id);
@@ -97,8 +114,21 @@ impl SearchService {
         doc.add_text(filename_field, filename);
         doc.add_text(content_field, &tokenized_content);
 
-        writer.add_document(doc)?;
-        writer.commit()?;
+        match writer.add_document(doc) {
+            Ok(_) => debug!("文档添加成功"),
+            Err(e) => {
+                error!("添加文档失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        match writer.commit() {
+            Ok(_) => info!("页面索引成功: page_id={}, filename={}", page_id, filename),
+            Err(e) => {
+                error!("提交索引失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
 
         Ok(())
     }
@@ -109,6 +139,8 @@ impl SearchService {
         folder_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        debug!("搜索: query='{}', folder_id={:?}, limit={}", query, folder_id, limit);
+
         let searcher = self.reader.searcher();
 
         let content_field = self.schema.get_field("content").unwrap();
@@ -116,15 +148,38 @@ impl SearchService {
 
         let query_parser = QueryParser::for_index(&self.index, vec![content_field, filename_field]);
 
+        // 中文分词
         let tokens: Vec<String> = self.jieba.cut(query, true).into_iter().map(|s| s.to_string()).collect();
         let query_text = tokens.join(" ");
+        debug!("搜索查询分词: '{}' -> '{}'", query, query_text);
 
-        let query = query_parser.parse_query(&query_text)?;
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
+        let query = match query_parser.parse_query(&query_text) {
+            Ok(q) => q,
+            Err(e) => {
+                error!("解析查询失败: '{}', 错误: {}", query_text, e);
+                return Err(SearchError::QueryParseError(e));
+            }
+        };
+
+        let top_docs = match searcher.search(&query, &TopDocs::with_limit(limit)) {
+            Ok(docs) => docs,
+            Err(e) => {
+                error!("执行搜索失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        };
+
+        debug!("搜索返回 {} 条结果", top_docs.len());
 
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
-            let doc: TantivyDocument = searcher.doc(doc_address)?;
+            let doc: TantivyDocument = match searcher.doc(doc_address) {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("获取文档失败: {:?}, 错误: {}", doc_address, e);
+                    continue;
+                }
+            };
 
             let page_id = doc.get_first(self.schema.get_field("page_id").unwrap())
                 .and_then(|v| v.as_u64())
@@ -147,6 +202,7 @@ impl SearchService {
                 .unwrap_or("")
                 .to_string();
 
+            // 文件夹过滤
             if let Some(target_fid) = folder_id {
                 if fid != Some(target_fid) {
                     continue;
@@ -166,11 +222,20 @@ impl SearchService {
             });
         }
 
+        info!("搜索完成: query='{}', 结果数={}", query, results.len());
         Ok(results)
     }
 
     pub fn delete_pdf(&mut self, pdf_id: u64) -> Result<(), SearchError> {
-        let mut writer: tantivy::IndexWriter<TantivyDocument> = self.index.writer(50_000_000)?;
+        info!("删除PDF索引: pdf_id={}", pdf_id);
+
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = match self.index.writer(50_000_000) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("创建索引写入器失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        };
 
         let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
         let query = tantivy::query::TermQuery::new(
@@ -178,8 +243,21 @@ impl SearchService {
             IndexRecordOption::Basic,
         );
 
-        writer.delete_query(Box::new(query))?;
-        writer.commit()?;
+        match writer.delete_query(Box::new(query)) {
+            Ok(_) => debug!("删除查询执行成功"),
+            Err(e) => {
+                error!("删除PDF索引失败: pdf_id={}, 错误: {}", pdf_id, e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        match writer.commit() {
+            Ok(_) => info!("PDF索引删除成功: pdf_id={}", pdf_id),
+            Err(e) => {
+                error!("提交删除失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
 
         Ok(())
     }

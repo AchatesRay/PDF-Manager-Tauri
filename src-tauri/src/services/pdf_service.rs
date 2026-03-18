@@ -1,80 +1,241 @@
 use crate::models::PdfType;
 use image::DynamicImage;
+use once_cell::sync::OnceCell;
+use pdfium_render::prelude::*;
 use std::path::Path;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum PdfError {
-    #[error("Failed to open PDF: {0}")]
+    #[error("无法打开PDF: {0}")]
     OpenError(String),
-    #[error("Failed to render page: {0}")]
+    #[error("渲染页面失败: {0}")]
     RenderError(String),
-    #[error("Failed to extract text: {0}")]
+    #[error("提取文本失败: {0}")]
     TextError(String),
-    #[error("IO error: {0}")]
+    #[error("IO错误: {0}")]
     IoError(#[from] std::io::Error),
 }
 
-pub struct PdfService;
+pub struct PdfService {
+    pdfium: OnceCell<Pdfium>,
+}
 
 impl PdfService {
     pub fn new() -> Result<Self, PdfError> {
-        Ok(Self {})
+        info!("初始化PDF服务");
+        Ok(Self {
+            pdfium: OnceCell::new(),
+        })
+    }
+
+    /// 获取或初始化 Pdfium 实例
+    fn get_pdfium(&self) -> Result<&Pdfium, PdfError> {
+        self.pdfium.get_or_try_init(|| {
+            info!("初始化Pdfium渲染引擎...");
+
+            // 首先尝试静态绑定
+            let bindings = match Pdfium::pdfium_platform() {
+                Ok(platform) => {
+                    debug!("检测到平台: {:?}", platform);
+                    match Pdfium::build_static_bindings(platform) {
+                        Ok(b) => {
+                            info!("Pdfium静态绑定成功");
+                            b
+                        }
+                        Err(e) => {
+                            warn!("Pdfium静态绑定失败: {}, 尝试系统库", e);
+                            Pdfium::bind_to_system_library()
+                                .map_err(|e2| {
+                                    error!("Pdfium系统库绑定也失败: {}", e2);
+                                    PdfError::RenderError(format!("无法绑定Pdfium: 静态={}, 系统={}", e, e2))
+                                })?
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("检测平台失败: {}, 尝试系统库", e);
+                    Pdfium::bind_to_system_library()
+                        .map_err(|e2| {
+                            error!("Pdfium绑定失败: {}", e2);
+                            PdfError::RenderError(format!("无法绑定Pdfium: {}", e2))
+                        })?
+                }
+            };
+
+            info!("Pdfium初始化成功");
+            Ok(Pdfium::new(bindings))
+        })
     }
 
     /// 获取 PDF 页数
     pub fn page_count(&self, pdf_path: &Path) -> Result<u32, PdfError> {
+        debug!("获取PDF页数: {:?}", pdf_path);
+
+        if !pdf_path.exists() {
+            error!("PDF文件不存在: {:?}", pdf_path);
+            return Err(PdfError::OpenError(format!("文件不存在: {}", pdf_path.display())));
+        }
+
         let doc = lopdf::Document::load(pdf_path)
-            .map_err(|e| PdfError::OpenError(e.to_string()))?;
+            .map_err(|e| {
+                error!("加载PDF失败: {:?}, 错误: {}", pdf_path, e);
+                PdfError::OpenError(format!("无法加载PDF: {}", e))
+            })?;
+
         let pages = doc.get_pages();
-        Ok(pages.len() as u32)
+        let count = pages.len() as u32;
+        debug!("PDF页数: {} ({:?})", count, pdf_path);
+        Ok(count)
     }
 
     /// 检测 PDF 类型
     pub fn detect_type(&self, pdf_path: &Path) -> Result<PdfType, PdfError> {
-        debug!("Detecting PDF type for: {:?}", pdf_path);
-        // 尝试提取文本，如果有足够文本则为文字型
-        if let Ok(text) = self.extract_text(pdf_path) {
-            if text.trim().len() > 100 {
-                debug!("PDF type detected: Text ({} chars)", text.trim().len());
-                return Ok(PdfType::Text);
+        debug!("检测PDF类型: {:?}", pdf_path);
+
+        match self.extract_text(pdf_path) {
+            Ok(text) => {
+                let char_count = text.trim().len();
+                debug!("提取文本字符数: {}", char_count);
+
+                if char_count > 100 {
+                    info!("PDF类型: 文字型 ({}字符) - {:?}", char_count, pdf_path);
+                    Ok(PdfType::Text)
+                } else {
+                    info!("PDF类型: 扫描型 ({}字符) - {:?}", char_count, pdf_path);
+                    Ok(PdfType::Scanned)
+                }
+            }
+            Err(e) => {
+                warn!("提取文本失败，假定为扫描型: {:?}, 错误: {}", pdf_path, e);
+                Ok(PdfType::Scanned)
             }
         }
-        debug!("PDF type detected: Scanned");
-        Ok(PdfType::Scanned)
     }
 
     /// 提取 PDF 文本
     pub fn extract_text(&self, pdf_path: &Path) -> Result<String, PdfError> {
+        debug!("提取PDF文本: {:?}", pdf_path);
+
         let text = pdf_extract::extract_text(pdf_path)
-            .map_err(|e| PdfError::TextError(e.to_string()))?;
+            .map_err(|e| {
+                error!("提取PDF文本失败: {:?}, 错误: {}", pdf_path, e);
+                PdfError::TextError(format!("文本提取失败: {}", e))
+            })?;
+
+        debug!("文本提取成功: {} 字符", text.len());
         Ok(text)
     }
 
     /// 获取 PDF 元信息
     pub fn get_metadata(&self, pdf_path: &Path) -> Result<PdfMetadata, PdfError> {
-        debug!("Getting PDF metadata for: {:?}", pdf_path);
-        let doc = lopdf::Document::load(pdf_path)
-            .map_err(|e| PdfError::OpenError(e.to_string()))?;
-        let pages = doc.get_pages();
-        let file_size = std::fs::metadata(pdf_path)?.len() as i64;
+        debug!("获取PDF元数据: {:?}", pdf_path);
 
-        debug!("PDF metadata retrieved: pages={}, size={}", pages.len(), file_size);
-        Ok(PdfMetadata {
+        if !pdf_path.exists() {
+            error!("PDF文件不存在: {:?}", pdf_path);
+            return Err(PdfError::OpenError(format!("文件不存在: {}", pdf_path.display())));
+        }
+
+        let doc = lopdf::Document::load(pdf_path)
+            .map_err(|e| {
+                error!("加载PDF失败: {:?}, 错误: {}", pdf_path, e);
+                PdfError::OpenError(format!("无法加载PDF: {}", e))
+            })?;
+
+        let pages = doc.get_pages();
+        let file_size = match std::fs::metadata(pdf_path) {
+            Ok(meta) => meta.len() as i64,
+            Err(e) => {
+                warn!("获取文件大小失败: {:?}, 错误: {}", pdf_path, e);
+                0
+            }
+        };
+
+        let metadata = PdfMetadata {
             page_count: pages.len() as i32,
             file_size,
-        })
+        };
+
+        debug!("PDF元数据: pages={}, size={} bytes", metadata.page_count, metadata.file_size);
+        Ok(metadata)
     }
 
     /// 渲染 PDF 页面为图像
-    /// 注意：这是一个占位实现，需要添加 pdfium 或类似的 PDF 渲染库
-    pub fn render_page(&self, _pdf_path: &Path, _page_num: u32) -> Result<DynamicImage, PdfError> {
-        // TODO: 使用 pdfium 或 pdf-render 库实现 PDF 页面渲染
-        // 目前返回一个占位错误
-        Err(PdfError::RenderError(
-            "PDF rendering not implemented. Please add pdfium or similar library.".to_string(),
-        ))
+    ///
+    /// 参数:
+    /// - pdf_path: PDF 文件路径
+    /// - page_num: 页码 (1-indexed, 用户视角)
+    ///
+    /// 返回:
+    /// - 渲染后的图像 (约 300 DPI)
+    pub fn render_page(&self, pdf_path: &Path, page_num: u32) -> Result<DynamicImage, PdfError> {
+        debug!("渲染PDF页面: page={}, path={:?}", page_num, pdf_path);
+
+        if !pdf_path.exists() {
+            error!("PDF文件不存在: {:?}", pdf_path);
+            return Err(PdfError::RenderError(format!("文件不存在: {}", pdf_path.display())));
+        }
+
+        let pdfium = self.get_pdfium()?;
+
+        // 打开 PDF 文档
+        let document = pdfium
+            .load_pdf_from_file(pdf_path, None)
+            .map_err(|e| {
+                error!("加载PDF失败: {:?}, 错误: {}", pdf_path, e);
+                PdfError::RenderError(format!("无法加载PDF: {}", e))
+            })?;
+
+        // 获取页面 (用户输入是 1-indexed，pdfium 使用 0-indexed)
+        let page_index = page_num.saturating_sub(1);
+        let total_pages = document.pages().len();
+
+        if page_index >= total_pages {
+            error!("页码超出范围: page={}, total={}", page_num, total_pages);
+            return Err(PdfError::RenderError(
+                format!("页码 {} 超出范围 (总页数: {})", page_num, total_pages)
+            ));
+        }
+
+        let page = document
+            .pages()
+            .get(page_index)
+            .map_err(|e| {
+                error!("获取页面失败: page={}, 错误: {}", page_num, e);
+                PdfError::RenderError(format!("无法获取页面 {}: {}", page_num, e))
+            })?;
+
+        // 渲染配置: A4 @ 300 DPI (2480 x 3508 像素)
+        let render_config = PdfRenderConfig::new()
+            .set_target_width(2480)
+            .set_maximum_height(3508);
+
+        debug!("开始渲染页面: page={}, config=2480x3508", page_num);
+
+        // 渲染页面为位图
+        let bitmap = page
+            .render_with_config(&render_config)
+            .map_err(|e| {
+                error!("渲染页面失败: page={}, 错误: {}", page_num, e);
+                PdfError::RenderError(format!("渲染失败: {}", e))
+            })?;
+
+        // 转换为 image::DynamicImage
+        let width = bitmap.width() as u32;
+        let height = bitmap.height() as u32;
+        let pixels = bitmap.as_bytes();
+
+        debug!("位图大小: {}x{}, {} bytes", width, height, pixels.len());
+
+        let buffer = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, pixels.to_vec())
+            .ok_or_else(|| {
+                error!("创建图像缓冲区失败: {}x{}", width, height);
+                PdfError::RenderError("无法创建图像缓冲区".to_string())
+            })?;
+
+        info!("页面渲染成功: page={}, size={}x{}", page_num, width, height);
+        Ok(image::DynamicImage::ImageRgba8(buffer))
     }
 }
 

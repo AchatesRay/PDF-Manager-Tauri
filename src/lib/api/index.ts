@@ -95,3 +95,21 @@ export async function getOcrStatus(): Promise<{ available: boolean; languages: s
 export async function startOcr(pdfId: number): Promise<void> {
   return invoke('start_ocr', { pdfId });
 }
+
+// Settings API
+export interface AppSettings {
+  data_dir: string;
+  log_dir: string;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return invoke('get_settings');
+}
+
+export async function setDataDir(path: string): Promise<void> {
+  return invoke('set_data_dir', { path });
+}
+
+export async function resetDataDir(): Promise<string> {
+  return invoke('reset_data_dir');
+}
