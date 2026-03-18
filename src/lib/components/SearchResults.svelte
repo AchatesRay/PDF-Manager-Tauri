@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath } from '../stores';
+  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount } from '../stores';
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
   async function handleContentResultClick(result: SearchResult) {
     selectedPdfId.set(result.pdf_id);
     showSearchResults.set(false);
+    jumpToPage.set(result.page_number);
     try {
       const detail = await getPdfDetail(result.pdf_id);
       selectedPdfPath.set(detail.storage_path);
+      selectedPdfPageCount.set(detail.page_count);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
     }
@@ -17,12 +19,20 @@
   async function handleFilenameResultClick(pdf: PdfInfo) {
     selectedPdfId.set(pdf.id);
     showSearchResults.set(false);
+    jumpToPage.set(null);
     try {
       const detail = await getPdfDetail(pdf.id);
       selectedPdfPath.set(detail.storage_path);
+      selectedPdfPageCount.set(detail.page_count);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
     }
+  }
+
+  // 解析高亮的 snippet
+  function renderSnippet(snippet: string): string {
+    // 将 **text** 转换为 <mark>text</mark>
+    return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
   }
 </script>
 
@@ -36,7 +46,9 @@
             <li on:click={() => handleContentResultClick(result)}>
               <div class="filename">{result.filename}</div>
               <div class="page">第 {result.page_number} 页</div>
-              <div class="snippet">{result.snippet}</div>
+              <div class="snippet">
+                {@html renderSnippet(result.snippet)}
+              </div>
             </li>
           {/each}
         </ul>
@@ -116,6 +128,12 @@
     font-size: 13px;
     color: #666;
     line-height: 1.4;
+  }
+
+  .snippet :global(mark) {
+    background-color: #fff176;
+    padding: 0 2px;
+    border-radius: 2px;
   }
 
   .no-results {

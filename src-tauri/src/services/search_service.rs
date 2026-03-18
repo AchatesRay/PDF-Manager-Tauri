@@ -2,9 +2,9 @@ use jieba_rs::Jieba;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::*;
-use tantivy::{Index, IndexReader, TantivyDocument};
+use tantivy::{Index, IndexReader, TantivyDocument, Term};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -44,7 +44,10 @@ impl SearchService {
         builder.add_u64_field("folder_id", STORED);
         builder.add_u64_field("page_number", STORED);
         builder.add_text_field("filename", TEXT | STORED);
-        builder.add_text_field("content", TEXT | STORED);
+        // 使用 STRING 类型，配合手动分词实现中文搜索
+        builder.add_text_field("content", STRING | STORED);
+        // 保存原始内容用于生成 snippet
+        builder.add_text_field("raw_content", STORED);
         builder.build()
     }
 
@@ -103,10 +106,10 @@ impl SearchService {
         let page_number_field = self.schema.get_field("page_number").unwrap();
         let filename_field = self.schema.get_field("filename").unwrap();
         let content_field = self.schema.get_field("content").unwrap();
+        let raw_content_field = self.schema.get_field("raw_content").unwrap();
 
         // 中文分词
         let tokens: Vec<String> = self.jieba.cut(content, true).into_iter().map(|s| s.to_string()).collect();
-        let tokenized_content = tokens.join(" ");
         debug!("分词完成: {} tokens", tokens.len());
 
         let mut doc = TantivyDocument::default();
@@ -117,7 +120,15 @@ impl SearchService {
         }
         doc.add_u64(page_number_field, page_number as u64);
         doc.add_text(filename_field, filename);
-        doc.add_text(content_field, &tokenized_content);
+
+        // 为每个分词结果添加一个 STRING 字段值
+        // STRING 字段会将整个值作为一个 term 存储
+        for token in &tokens {
+            doc.add_text(content_field, token);
+        }
+
+        // 保存原始内容用于生成 snippet
+        doc.add_text(raw_content_field, content);
 
         match writer.add_document(doc) {
             Ok(_) => debug!("文档添加成功"),
@@ -151,22 +162,37 @@ impl SearchService {
         let content_field = self.schema.get_field("content").unwrap();
         let filename_field = self.schema.get_field("filename").unwrap();
 
-        let query_parser = QueryParser::for_index(&self.index, vec![content_field, filename_field]);
-
         // 中文分词
         let tokens: Vec<String> = self.jieba.cut(query, true).into_iter().map(|s| s.to_string()).collect();
-        let query_text = tokens.join(" ");
-        debug!("搜索查询分词: '{}' -> '{}'", query, query_text);
+        debug!("搜索查询分词: '{}' -> {:?}", query, tokens);
 
-        let parsed_query = match query_parser.parse_query(&query_text) {
-            Ok(q) => q,
-            Err(e) => {
-                error!("解析查询失败: '{}', 错误: {}", query_text, e);
-                return Err(SearchError::QueryParseError(e));
+        // 构建 BooleanQuery：每个分词结果作为一个 TermQuery，使用 Should 组合
+        let mut queries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+
+        for token in &tokens {
+            // 跳过空 token 和单字符空格
+            if token.trim().is_empty() {
+                continue;
             }
-        };
+            let term = Term::from_field_text(content_field, token);
+            let term_query = Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+            queries.push((Occur::Should, term_query));
+        }
 
-        let top_docs = match searcher.search(&parsed_query, &TopDocs::with_limit(limit)) {
+        // 也搜索文件名
+        let query_parser = QueryParser::for_index(&self.index, vec![filename_field]);
+        if let Ok(filename_query) = query_parser.parse_query(query) {
+            queries.push((Occur::Should, filename_query));
+        }
+
+        if queries.is_empty() {
+            debug!("查询为空，返回空结果");
+            return Ok(Vec::new());
+        }
+
+        let boolean_query = BooleanQuery::new(queries);
+
+        let top_docs = match searcher.search(&boolean_query, &TopDocs::with_limit(limit)) {
             Ok(docs) => docs,
             Err(e) => {
                 error!("执行搜索失败: {}", e);
@@ -202,7 +228,8 @@ impl SearchService {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let content = doc.get_first(self.schema.get_field("content").unwrap())
+            // 获取原始内容用于生成 snippet
+            let raw_content = doc.get_first(self.schema.get_field("raw_content").unwrap())
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -214,7 +241,8 @@ impl SearchService {
                 }
             }
 
-            let snippet = Self::generate_snippet(&content, &query_text, 100);
+            // 使用原始查询词生成 snippet 并高亮
+            let snippet = Self::generate_snippet(&raw_content, query, 100);
 
             results.push(SearchResult {
                 page_id,
@@ -268,13 +296,22 @@ impl SearchService {
     }
 
     fn generate_snippet(content: &str, query: &str, max_len: usize) -> String {
-        let content: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-
+        // 在原始内容中查找查询词的位置
         if let Some(pos) = content.find(query) {
             let start = pos.saturating_sub(30);
             let end = (pos + query.len() + 30).min(content.len());
             let snippet: String = content.chars().skip(start).take(end - start).collect();
-            format!("...{}...", snippet)
+
+            // 高亮显示匹配的关键词
+            let query_in_snippet = if start > 0 {
+                // 如果有偏移，需要计算查询词在 snippet 中的位置
+                &snippet[pos - start..pos - start + query.len()]
+            } else {
+                query
+            };
+
+            let highlighted = snippet.replace(query_in_snippet, &format!("**{}**", query_in_snippet));
+            format!("...{}...", highlighted)
         } else {
             let end = max_len.min(content.len());
             format!("{}...", content.chars().take(end).collect::<String>())
@@ -321,6 +358,8 @@ mod tests {
         assert!(snippet.contains("关键词"));
         assert!(snippet.starts_with("..."));
         assert!(snippet.ends_with("..."));
+        // 验证高亮标记
+        assert!(snippet.contains("**关键词**"));
     }
 
     #[test]

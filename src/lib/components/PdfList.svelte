@@ -105,9 +105,9 @@
 
   function getStatusText(status: string): string {
     switch (status) {
-      case 'pending': return '等待处理';
+      case 'pending': return '等待';
       case 'processing': return '处理中';
-      case 'done': return '已完成';
+      case 'done': return '已OCR';
       case 'error': return '出错';
       default: return status;
     }
@@ -115,9 +115,9 @@
 
   function getTypeText(type: string): string {
     switch (type) {
-      case 'text': return '文字型';
-      case 'scanned': return '扫描型';
-      case 'mixed': return '混合型';
+      case 'text': return '文字';
+      case 'scanned': return '扫描';
+      case 'mixed': return '混合';
       default: return type;
     }
   }
@@ -130,40 +130,33 @@
 <div class="pdf-list">
   <div class="header">
     <h3>PDF 文件 ({filteredPdfs.length})</h3>
-    <button on:click={handleAddPdf}>添加 PDF</button>
+    <button on:click={handleAddPdf}>添加</button>
   </div>
 
   {#if $isLoading}
     <div class="loading">加载中...</div>
   {:else if filteredPdfs.length === 0}
-    <div class="empty">暂无 PDF 文件<br/><small>点击上方按钮添加</small></div>
+    <div class="empty">暂无 PDF 文件</div>
   {:else}
     <ul class="list">
       {#each filteredPdfs as pdf}
         <li class:active={$selectedPdfId === pdf.id} on:click={() => selectPdf(pdf.id)}>
-          <div class="info">
-            <span class="filename">{pdf.filename}</span>
-            <span class="meta">
-              {pdf.page_count} 页 · {getTypeText(pdf.pdf_type)} · {getStatusText(pdf.status)}
-              {#if $ocrProgress.has(pdf.id) && $ocrProgress.get(pdf.id)?.status === 'processing'}
-                <span class="progress">
-                  ({$ocrProgress.get(pdf.id)?.current}/{$ocrProgress.get(pdf.id)?.total})
-                </span>
-              {/if}
-            </span>
-          </div>
+          <span class="filename" title={pdf.filename}>{pdf.filename}</span>
+          <span class="meta">{pdf.page_count}页</span>
+          <span class="meta">{getTypeText(pdf.pdf_type)}</span>
+          <span class="status status-{pdf.status}">
+            {getStatusText(pdf.status)}
+            {#if $ocrProgress.has(pdf.id) && $ocrProgress.get(pdf.id)?.status === 'processing'}
+              ({$ocrProgress.get(pdf.id)?.current}/{$ocrProgress.get(pdf.id)?.total})
+            {/if}
+          </span>
           <div class="actions">
             {#if pdf.status === 'pending'}
-              <button
-                class="ocr-btn"
-                on:click|stopPropagation={() => handleStartOcr(pdf.id)}
-              >
-                开始处理
-              </button>
+              <button class="ocr-btn" on:click|stopPropagation={() => handleStartOcr(pdf.id)}>OCR</button>
             {:else if pdf.status === 'processing'}
-              <span class="processing">处理中...</span>
+              <span class="processing-indicator">...</span>
             {/if}
-            <button class="delete-btn" on:click|stopPropagation={() => handleDelete(pdf.id)}>删除</button>
+            <button class="delete-btn" on:click|stopPropagation={() => handleDelete(pdf.id)}>删</button>
           </div>
         </li>
       {/each}
@@ -210,15 +203,16 @@
   }
 
   .list li {
-    padding: 12px;
+    padding: 8px 10px;
     cursor: pointer;
     border-radius: 4px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 5px;
+    gap: 8px;
+    margin-bottom: 4px;
     background: #fff;
     border: 1px solid #eee;
+    font-size: 13px;
   }
 
   .list li:hover {
@@ -230,66 +224,83 @@
     background: #e3f2fd;
   }
 
-  .info {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    overflow: hidden;
-  }
-
   .filename {
-    font-weight: 500;
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: 500;
+    min-width: 0;
   }
 
   .meta {
     font-size: 12px;
     color: #666;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
-  .progress {
-    color: #2196f3;
+  .status {
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .status-pending {
+    background: #f5f5f5;
+    color: #666;
+  }
+
+  .status-processing {
+    background: #fff3e0;
+    color: #e65100;
+  }
+
+  .status-done {
+    background: #e8f5e9;
+    color: #2e7d32;
+  }
+
+  .status-error {
+    background: #ffebee;
+    color: #c62828;
   }
 
   .actions {
     display: flex;
-    gap: 8px;
-    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
 
   .ocr-btn {
-    padding: 5px 10px;
+    padding: 3px 8px;
     background: #4caf50;
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
+    font-size: 12px;
   }
 
-  .processing {
+  .processing-indicator {
     font-size: 12px;
     color: #ff9800;
   }
 
   .delete-btn {
-    padding: 5px 10px;
+    padding: 3px 8px;
     background: #f44336;
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
-    flex-shrink: 0;
+    font-size: 12px;
   }
 
   .loading, .empty {
     text-align: center;
     padding: 40px 20px;
     color: #666;
-  }
-
-  .empty small {
-    color: #999;
   }
 </style>
