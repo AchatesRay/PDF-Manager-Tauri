@@ -23,7 +23,7 @@ pub enum OcrError {
 pub struct OcrService {
     tesseract_path: String,
     language: String,
-    data_path: String,
+    data_path: Option<String>, // None 表示使用系统默认路径
 }
 
 impl OcrService {
@@ -31,15 +31,80 @@ impl OcrService {
         info!("初始化OCR服务, app_dir={:?}", app_dir);
 
         let tesseract_path = Self::find_tesseract(app_dir)?;
-        let data_path = app_dir.join("tesseract").to_string_lossy().to_string();
 
-        info!("OCR服务初始化成功: tesseract={}, data_path={}", tesseract_path, data_path);
+        // 查找 tessdata 目录
+        let data_path = Self::find_tessdata(app_dir, &tesseract_path);
+
+        if let Some(ref path) = data_path {
+            info!("OCR服务初始化成功: tesseract={}, tessdata={}", tesseract_path, path);
+        } else {
+            info!("OCR服务初始化成功: tesseract={}, 使用系统默认 tessdata", tesseract_path);
+        }
 
         Ok(Self {
             tesseract_path,
             language: "chi_sim+eng".to_string(),
             data_path,
         })
+    }
+
+    /// 查找 tessdata 目录
+    fn find_tessdata(app_dir: &Path, tesseract_path: &str) -> Option<String> {
+        // 1. 检查应用目录下的 tesseract/tessdata
+        let app_tessdata = app_dir.join("tesseract").join("tessdata");
+        if app_tessdata.exists() {
+            // 检查是否有 chi_sim.traineddata
+            if app_tessdata.join("chi_sim.traineddata").exists() {
+                info!("找到应用目录下的 tessdata: {:?}", app_tessdata);
+                return Some(app_dir.join("tesseract").to_string_lossy().to_string());
+            } else {
+                warn!("应用目录 tessdata 存在但缺少中文语言包: {:?}", app_tessdata);
+            }
+        }
+
+        // 2. 检查 Tesseract 安装目录下的 tessdata (Windows 常见路径)
+        if cfg!(target_os = "windows") {
+            if let Ok(output) = Command::new(tesseract_path)
+                .arg("--list-langs")
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("chi_sim") {
+                    info!("系统 Tesseract 包含中文语言包");
+                    return None; // 使用系统默认
+                } else {
+                    warn!("系统 Tesseract 不包含中文语言包，可用语言: {}", stdout);
+                }
+            }
+        }
+
+        // 3. 检查常见的系统 tessdata 路径
+        let common_paths = if cfg!(target_os = "windows") {
+            vec![
+                "C:\\Program Files\\Tesseract-OCR\\tessdata",
+                "C:\\Program Files (x86)\\Tesseract-OCR\\tessdata",
+            ]
+        } else {
+            vec![
+                "/usr/share/tessdata",
+                "/usr/local/share/tessdata",
+                "/usr/share/tesseract-ocr/5/tessdata",
+                "/usr/share/tesseract-ocr/4.00/tessdata",
+            ]
+        };
+
+        for path in common_paths {
+            let tessdata_path = Path::new(path);
+            if tessdata_path.exists() && tessdata_path.join("chi_sim.traineddata").exists() {
+                let parent = tessdata_path.parent().unwrap_or(tessdata_path);
+                info!("找到系统 tessdata: {:?}", tessdata_path);
+                return Some(parent.to_string_lossy().to_string());
+            }
+        }
+
+        warn!("未找到包含中文语言包的 tessdata 目录，OCR 可能无法正确识别中文");
+        None
     }
 
     fn find_tesseract(app_dir: &Path) -> Result<String, OcrError> {
@@ -100,14 +165,16 @@ impl OcrService {
             }
         }
 
-        debug!("执行Tesseract: path={}, lang={}, data_path={}",
+        debug!("执行Tesseract: path={}, lang={}, data_path={:?}",
             self.tesseract_path, self.language, self.data_path);
 
         #[cfg(target_os = "windows")]
         let output = {
-            Command::new(&self.tesseract_path)
-                .env("TESSDATA_PREFIX", &self.data_path)
-                .arg(&input_path)
+            let mut cmd = Command::new(&self.tesseract_path);
+            if let Some(ref path) = self.data_path {
+                cmd.env("TESSDATA_PREFIX", path);
+            }
+            cmd.arg(&input_path)
                 .arg(&output_path.with_extension(""))
                 .arg("-l")
                 .arg(&self.language)
@@ -121,9 +188,11 @@ impl OcrService {
 
         #[cfg(not(target_os = "windows"))]
         let output = {
-            Command::new(&self.tesseract_path)
-                .env("TESSDATA_PREFIX", &self.data_path)
-                .arg(&input_path)
+            let mut cmd = Command::new(&self.tesseract_path);
+            if let Some(ref path) = self.data_path {
+                cmd.env("TESSDATA_PREFIX", path);
+            }
+            cmd.arg(&input_path)
                 .arg(&output_path.with_extension(""))
                 .arg("-l")
                 .arg(&self.language)
@@ -198,17 +267,24 @@ impl OcrService {
         debug!("获取可用语言列表...");
 
         #[cfg(target_os = "windows")]
-        let result = Command::new(&self.tesseract_path)
-            .arg("--list-langs")
-            .env("TESSDATA_PREFIX", &self.data_path)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
+        let result = {
+            let mut cmd = Command::new(&self.tesseract_path);
+            cmd.arg("--list-langs");
+            if let Some(ref path) = self.data_path {
+                cmd.env("TESSDATA_PREFIX", path);
+            }
+            cmd.creation_flags(CREATE_NO_WINDOW).output()
+        };
 
         #[cfg(not(target_os = "windows"))]
-        let result = Command::new(&self.tesseract_path)
-            .arg("--list-langs")
-            .env("TESSDATA_PREFIX", &self.data_path)
-            .output();
+        let result = {
+            let mut cmd = Command::new(&self.tesseract_path);
+            cmd.arg("--list-langs");
+            if let Some(ref path) = self.data_path {
+                cmd.env("TESSDATA_PREFIX", path);
+            }
+            cmd.output()
+        };
 
         match result {
             Ok(output) => {
@@ -232,5 +308,18 @@ impl OcrService {
                 vec![]
             }
         }
+    }
+
+    /// 检查中文语言包是否可用
+    pub fn check_chinese_support(&self) -> bool {
+        let langs = self.available_languages();
+        let has_chinese = langs.iter().any(|l| l == "chi_sim" || l == "chi_tra");
+        if has_chinese {
+            info!("中文语言包已安装");
+        } else {
+            warn!("中文语言包未安装！可用语言: {:?}", langs);
+            warn!("请安装中文语言包: 下载 chi_sim.traineddata 并放入 tessdata 目录");
+        }
+        has_chinese
     }
 }
