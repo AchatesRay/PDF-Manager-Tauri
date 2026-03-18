@@ -6,13 +6,12 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
+    "shell:allow-execute",
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "dialog:allow-confirm",
-    "process:allow-exit",
-    "process:allow-restart"
+    "dialog:allow-confirm"
   ]
 }
