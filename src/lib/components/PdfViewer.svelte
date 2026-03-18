@@ -4,13 +4,10 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { openPdfExternally } from '../api';
 
-  export let pdfPath: string | null = null;
+  // 使用 CDN 加载 worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-  onMount(async () => {
-    // 动态设置 worker
-    const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.min.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default;
-  });
+  export let pdfPath: string | null = null;
 
   let canvas: HTMLCanvasElement;
   let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
