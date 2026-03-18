@@ -35,34 +35,16 @@ impl PdfService {
         self.pdfium.get_or_try_init(|| {
             info!("初始化Pdfium渲染引擎...");
 
-            // 首先尝试静态绑定
-            let bindings = match Pdfium::pdfium_platform() {
-                Ok(platform) => {
-                    debug!("检测到平台: {:?}", platform);
-                    match Pdfium::build_static_bindings(platform) {
-                        Ok(b) => {
-                            info!("Pdfium静态绑定成功");
-                            b
-                        }
-                        Err(e) => {
-                            warn!("Pdfium静态绑定失败: {}, 尝试系统库", e);
-                            Pdfium::bind_to_system_library()
-                                .map_err(|e2| {
-                                    error!("Pdfium系统库绑定也失败: {}", e2);
-                                    PdfError::RenderError(format!("无法绑定Pdfium: 静态={}, 系统={}", e, e2))
-                                })?
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("检测平台失败: {}, 尝试系统库", e);
-                    Pdfium::bind_to_system_library()
-                        .map_err(|e2| {
-                            error!("Pdfium绑定失败: {}", e2);
-                            PdfError::RenderError(format!("无法绑定Pdfium: {}", e2))
-                        })?
-                }
-            };
+            // 使用系统库绑定
+            // 注意: 需要系统上安装 pdfium.dll 或在应用目录中放置该 DLL
+            let bindings = Pdfium::bind_to_system_library()
+                .map_err(|e| {
+                    error!("Pdfium绑定失败: {}。请确保 pdfium.dll 在系统 PATH 或应用目录中。", e);
+                    PdfError::RenderError(format!(
+                        "无法绑定Pdfium: {}。请确保 pdfium.dll 已安装。",
+                        e
+                    ))
+                })?;
 
             info!("Pdfium初始化成功");
             Ok(Pdfium::new(bindings))
@@ -189,7 +171,7 @@ impl PdfService {
 
         // 获取页面 (用户输入是 1-indexed，pdfium 使用 0-indexed)
         let page_index = page_num.saturating_sub(1);
-        let total_pages = document.pages().len();
+        let total_pages = document.pages().len() as u32;
 
         if page_index >= total_pages {
             error!("页码超出范围: page={}, total={}", page_num, total_pages);
@@ -200,7 +182,7 @@ impl PdfService {
 
         let page = document
             .pages()
-            .get(page_index)
+            .get(page_index as u16)
             .map_err(|e| {
                 error!("获取页面失败: page={}, 错误: {}", page_num, e);
                 PdfError::RenderError(format!("无法获取页面 {}: {}", page_num, e))
