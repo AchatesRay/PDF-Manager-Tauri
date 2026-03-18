@@ -3,9 +3,8 @@
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
+  import { open } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
-
-  let fileInput: HTMLInputElement;
 
   onMount(async () => {
     await loadPdfs();
@@ -37,17 +36,24 @@
     }
   }
 
-  async function handleFileSelect(e: Event) {
-    const input = e.target as HTMLInputElement;
-    if (!input.files || input.files.length === 0) {
-      console.log('No files selected');
+  async function handleAddPdf() {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      title: '选择 PDF 文件',
+    });
+
+    if (!selected) {
       return;
     }
-    console.log('Selected files:', input.files.length);
-    for (const file of Array.from(input.files)) {
+
+    const files = Array.isArray(selected) ? selected : [selected];
+    console.log('Selected files:', files.length);
+
+    for (const filePath of files) {
       try {
-        console.log('Adding PDF:', file.path, 'to folder:', $selectedFolderId);
-        const result = await addPdf(file.path, $selectedFolderId ?? undefined);
+        console.log('Adding PDF:', filePath, 'to folder:', $selectedFolderId);
+        const result = await addPdf(filePath, $selectedFolderId ?? undefined);
         console.log('PDF added successfully:', result);
       } catch (err) {
         console.error('Failed to add PDF:', err);
@@ -55,8 +61,6 @@
       }
     }
     await loadPdfs();
-    // 重置 input 以允许再次选择相同文件
-    input.value = '';
   }
 
   async function handleDelete(id: number) {
@@ -116,8 +120,7 @@
 <div class="pdf-list">
   <div class="header">
     <h3>PDF 文件 ({filteredPdfs.length})</h3>
-    <input type="file" accept=".pdf" multiple bind:this={fileInput} on:change={handleFileSelect} style="display: none" />
-    <button on:click={() => fileInput.click()}>添加 PDF</button>
+    <button on:click={handleAddPdf}>添加 PDF</button>
   </div>
 
   {#if $isLoading}
