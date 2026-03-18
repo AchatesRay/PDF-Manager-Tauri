@@ -44,8 +44,8 @@ impl SearchService {
         builder.add_u64_field("folder_id", STORED);
         builder.add_u64_field("page_number", STORED);
         builder.add_text_field("filename", TEXT | STORED);
-        // 使用 STRING 类型配合 INDEXED 实现中文搜索
-        builder.add_text_field("content", STRING | STORED | INDEXED);
+        // 使用 STRING 类型，每个分词作为一个独立的 term 存储
+        builder.add_text_field("content", STRING);
         // 保存原始内容用于生成 snippet
         builder.add_text_field("raw_content", STORED);
         builder.build()
@@ -58,7 +58,7 @@ impl SearchService {
 
         // 索引版本文件，用于检测 schema 变化
         let version_file = index_path.join(".version");
-        let current_version = "2"; // 更新版本号当 schema 变化时
+        let current_version = "3"; // 更新版本号当 schema 变化时
 
         // 检查版本是否匹配，不匹配则删除旧索引
         let needs_rebuild = if version_file.exists() {
@@ -95,9 +95,10 @@ impl SearchService {
         } else {
             info!("创建新索引: {:?}", index_path);
             std::fs::create_dir_all(index_path)?;
-            Index::create_in_dir(index_path, schema.clone())?;
+            let idx = Index::create_in_dir(index_path, schema.clone())?;
             // 写入版本文件
             std::fs::write(&version_file, current_version)?;
+            idx
         };
 
         let reader = index.reader()?;
