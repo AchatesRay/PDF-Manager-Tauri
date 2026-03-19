@@ -45,6 +45,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Download pdfium.dll
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/nicholasoxford/pdfium-binaries/releases/download/chromium%2F6307/pdfium-x64.dll" -OutFile "src-tauri/pdfium.dll"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
