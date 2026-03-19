@@ -5,6 +5,9 @@
 
   let currentResultIndex = 0;
 
+  // 计算匹配关键字总数
+  $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
+
   // 当搜索结果变化时重置索引
   $: if ($searchResults.length > 0) {
     currentResultIndex = Math.min(currentResultIndex, $searchResults.length - 1);
@@ -63,7 +66,7 @@
     {#if $searchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>内容搜索结果 ({$searchResults.length})</h4>
+          <h4>内容搜索结果 ({$searchResults.length}条, {totalMatchCount}处匹配)</h4>
           <div class="nav-buttons">
             <button on:click={() => navigateResult('prev')} title="上一个">↑ 上一个</button>
             <span class="index-info">{currentResultIndex + 1}/{$searchResults.length}</span>
@@ -78,6 +81,7 @@
             >
               <span class="filename">{result.filename}</span>
               <span class="page">P{result.page_number}</span>
+              <span class="match-count">{result.match_count}处</span>
               <span class="snippet">
                 {@html renderSnippet(result.snippet)}
               </span>
@@ -191,7 +195,7 @@
   .filename {
     font-weight: 500;
     flex-shrink: 0;
-    max-width: 150px;
+    max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -202,6 +206,15 @@
     color: #2196f3;
     flex-shrink: 0;
     background: #e3f2fd;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .match-count {
+    font-size: 12px;
+    color: #ff9800;
+    flex-shrink: 0;
+    background: #fff3e0;
     padding: 2px 6px;
     border-radius: 3px;
   }

@@ -27,6 +27,7 @@ pub struct SearchResult {
     pub filename: String,
     pub score: f32,
     pub snippet: String,
+    pub match_count: u32,
 }
 
 pub struct SearchService {
@@ -334,7 +335,7 @@ impl SearchService {
             }
 
             // 使用原始查询词生成 snippet 并高亮
-            let snippet = Self::generate_snippet(&raw_content, query, 100);
+            let (snippet, match_count) = Self::generate_snippet(&raw_content, query, 100);
 
             results.push(SearchResult {
                 page_id,
@@ -344,6 +345,7 @@ impl SearchService {
                 filename,
                 score,
                 snippet,
+                match_count,
             });
         }
 
@@ -387,13 +389,37 @@ impl SearchService {
         Ok(())
     }
 
-    fn generate_snippet(content: &str, query: &str, max_len: usize) -> String {
+    fn generate_snippet(content: &str, query: &str, max_len: usize) -> (String, u32) {
         // 在原始内容中查找查询词的位置
         // 使用字符索引而不是字节索引来正确处理 UTF-8
         let content_chars: Vec<char> = content.chars().collect();
         let query_chars: Vec<char> = query.chars().collect();
 
-        // 在字符数组中查找查询词
+        if query_chars.is_empty() {
+            let end = max_len.min(content_chars.len());
+            return (format!("{}...", content_chars[..end].iter().collect::<String>()), 0);
+        }
+
+        // 统计关键字在整个内容中出现的次数
+        let mut match_count = 0u32;
+        let mut i = 0;
+        while i <= content_chars.len().saturating_sub(query_chars.len()) {
+            let mut found = true;
+            for j in 0..query_chars.len() {
+                if content_chars[i + j] != query_chars[j] {
+                    found = false;
+                    break;
+                }
+            }
+            if found {
+                match_count += 1;
+                i += query_chars.len(); // 跳过已匹配的部分，避免重复计数
+            } else {
+                i += 1;
+            }
+        }
+
+        // 找到第一个匹配位置用于生成 snippet
         let mut found_pos = None;
         'outer: for i in 0..content_chars.len().saturating_sub(query_chars.len()) {
             for j in 0..query_chars.len() {
@@ -405,20 +431,22 @@ impl SearchService {
             break;
         }
 
-        if let Some(pos) = found_pos {
+        let snippet = if let Some(pos) = found_pos {
             let start = pos.saturating_sub(30);
             let end = (pos + query_chars.len() + 30).min(content_chars.len());
 
-            let snippet: String = content_chars[start..end].iter().collect();
+            let snippet_str: String = content_chars[start..end].iter().collect();
 
             // 高亮显示匹配的关键词
             let query_in_snippet: String = query_chars.iter().collect();
-            let highlighted = snippet.replace(&query_in_snippet, &format!("**{}**", query_in_snippet));
+            let highlighted = snippet_str.replace(&query_in_snippet, &format!("**{}**", query_in_snippet));
             format!("...{}...", highlighted)
         } else {
             let end = max_len.min(content_chars.len());
             format!("{}...", content_chars[..end].iter().collect::<String>())
-        }
+        };
+
+        (snippet, match_count)
     }
 }
 
@@ -443,6 +471,7 @@ mod tests {
             filename: "test.pdf".to_string(),
             score: 0.95,
             snippet: "...测试内容...".to_string(),
+            match_count: 3,
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -451,27 +480,30 @@ mod tests {
         assert_eq!(deserialized.page_id, 1);
         assert_eq!(deserialized.pdf_id, 100);
         assert_eq!(deserialized.filename, "test.pdf");
+        assert_eq!(deserialized.match_count, 3);
     }
 
     #[test]
     fn test_generate_snippet_found() {
         let content = "这是一段很长的测试文本，包含一些重要内容，我们希望找到关键词并生成摘要";
-        let snippet = SearchService::generate_snippet(content, "关键词", 100);
+        let (snippet, match_count) = SearchService::generate_snippet(content, "关键词", 100);
 
         assert!(snippet.contains("关键词"));
         assert!(snippet.starts_with("..."));
         assert!(snippet.ends_with("..."));
         // 验证高亮标记
         assert!(snippet.contains("**关键词**"));
+        assert_eq!(match_count, 1);
     }
 
     #[test]
     fn test_generate_snippet_not_found() {
         let content = "这是一段测试文本";
-        let snippet = SearchService::generate_snippet(content, "不存在", 10);
+        let (snippet, match_count) = SearchService::generate_snippet(content, "不存在", 10);
 
         assert!(snippet.ends_with("..."));
         assert!(snippet.len() <= 15); // 10 chars + "..."
+        assert_eq!(match_count, 0);
     }
 
     #[test]

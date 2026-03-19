@@ -42,6 +42,7 @@ export interface SearchResult {
   filename: string;
   score: number;
   snippet: string;
+  match_count: number;
 }
 
 // Folder APIs
