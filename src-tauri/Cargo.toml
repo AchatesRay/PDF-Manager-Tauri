@@ -28,7 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2"
 lopdf = "0.34"
 pdf-extract = "0.7"
-pdfium-render = { version = "0.8", features = ["dynamic", "download"] }
+pdfium-render = { version = "0.8", features = ["static"] }
 base64 = "0.22"
 
 [features]
