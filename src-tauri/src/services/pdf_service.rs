@@ -202,7 +202,7 @@ impl PdfService {
         // 转换为 image::DynamicImage
         let width = bitmap.width() as u32;
         let height = bitmap.height() as u32;
-        let pixels = bitmap.as_bytes();
+        let pixels = bitmap.as_raw_bytes();
 
         debug!("位图大小: {}x{}, {} bytes", width, height, pixels.len());
 

@@ -15,20 +15,30 @@ pub type Db = Mutex<Connection>;
 
 /// 初始化数据库
 pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dyn std::error::Error>> {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .expect("Failed to get app data directory");
+    // 获取可执行文件所在目录作为默认数据目录
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| {
+            app_handle
+                .path()
+                .app_data_dir()
+                .expect("Failed to get app data directory")
+        });
 
-    info!("初始化数据库, app_dir={:?}", app_dir);
+    // 检查是否存在自定义数据目录配置
+    let data_dir = check_custom_data_dir(&exe_dir, app_handle);
 
-    if let Err(e) = std::fs::create_dir_all(&app_dir) {
-        error!("创建应用目录失败: {:?}, 错误: {}", app_dir, e);
+    info!("初始化数据库, 数据目录={:?}", data_dir);
+
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        error!("创建数据目录失败: {:?}, 错误: {}", data_dir, e);
         return Err(Box::new(e));
     }
-    debug!("应用目录已确认存在: {:?}", app_dir);
+    debug!("数据目录已确认存在: {:?}", data_dir);
 
-    let db_path = app_dir.join("pdf-manager.db");
+    // 数据库文件放入数据目录中
+    let db_path = data_dir.join("pdf-manager.db");
     info!("数据库路径: {:?}", db_path);
 
     let conn = match Connection::open(&db_path) {
@@ -63,6 +73,35 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
 
     info!("数据库初始化完成: {:?}", db_path);
     Ok(conn)
+}
+
+/// 检查是否有自定义数据目录配置
+fn check_custom_data_dir(default_dir: &PathBuf, _app_handle: &tauri::AppHandle) -> PathBuf {
+    // 先尝试在默认目录下查找数据库文件，检查是否有配置
+    let default_db_path = default_dir.join("pdf-manager.db");
+
+    if default_db_path.exists() {
+        // 尝试读取配置
+        if let Ok(conn) = Connection::open(&default_db_path) {
+            if let Ok(custom_dir) = conn.query_row(
+                "SELECT value FROM settings WHERE key = 'data_dir'",
+                [],
+                |row| row.get::<_, String>(0),
+            ) {
+                debug!("找到自定义数据目录配置: {}", custom_dir);
+                return PathBuf::from(custom_dir);
+            }
+        }
+    }
+
+    // 检查环境变量
+    if let Ok(custom_dir) = std::env::var("PDF_MANAGER_DATA_DIR") {
+        debug!("使用环境变量指定的数据目录: {}", custom_dir);
+        return PathBuf::from(custom_dir);
+    }
+
+    // 使用默认目录
+    default_dir.clone()
 }
 
 // ===== 设置管理 =====
@@ -127,15 +166,23 @@ pub fn get_configured_data_dir(conn: &Connection, app_handle: &tauri::AppHandle)
     }
 }
 
-/// 获取默认数据目录 (安装目录下)
+/// 获取默认数据目录 (可执行文件所在目录)
 pub fn default_data_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+    // 优先使用可执行文件所在目录
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            debug!("默认数据目录 (可执行文件目录): {:?}", exe_dir);
+            return exe_dir.to_path_buf();
+        }
+    }
+
+    // 回退到 app_data_dir
     let path = app_handle
         .path()
         .app_data_dir()
-        .expect("Failed to get app data directory")
-        .join("data");
+        .expect("Failed to get app data directory");
 
-    debug!("默认数据目录: {:?}", path);
+    debug!("默认数据目录 (app_data_dir): {:?}", path);
     path
 }
 

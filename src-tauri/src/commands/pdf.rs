@@ -6,7 +6,7 @@ use chrono::Utc;
 use rusqlite::params;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::State;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use base64::{engine::general_purpose::STANDARD, Engine};
