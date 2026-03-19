@@ -6,41 +6,50 @@
   // 当前全局匹配索引（从0开始）
   let currentMatchIndex = 0;
 
-  // 计算总匹配数
-  $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
+  // 计算 snippet 中实际的高亮数量
+  function countHighlights(snippet: string): number {
+    const matches = snippet.match(/\*\*(.+?)\*\*/g);
+    return matches ? matches.length : 0;
+  }
 
-  // 计算每个结果的累计匹配数（用于定位当前匹配在哪个结果中）
-  $: cumulativeMatches = (() => {
+  // 计算总高亮数量（用于导航）
+  $: totalHighlightCount = $searchResults.reduce((sum, r) => sum + countHighlights(r.snippet), 0);
+
+  // 计算每个结果的累计高亮数量
+  $: cumulativeHighlights = (() => {
     const arr: number[] = [];
     let cum = 0;
     for (const r of $searchResults) {
       arr.push(cum);
-      cum += r.match_count || 0;
+      cum += countHighlights(r.snippet);
     }
     return arr;
   })();
 
-  // 根据全局匹配索引找到对应的结果索引和页内匹配索引
-  function findMatchPosition(globalIndex: number): { resultIndex: number; inPageIndex: number } {
+  // 计算总匹配数（显示用）
+  $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
+
+  // 根据全局高亮索引找到对应的结果索引和页内高亮索引
+  function findHighlightPosition(globalIndex: number): { resultIndex: number; inPageHighlightIndex: number } {
     for (let i = 0; i < $searchResults.length; i++) {
-      const cum = cumulativeMatches[i];
-      const count = $searchResults[i].match_count || 0;
-      if (globalIndex >= cum && globalIndex < cum + count) {
-        return { resultIndex: i, inPageIndex: globalIndex - cum };
+      const cum = cumulativeHighlights[i];
+      const count = countHighlights($searchResults[i].snippet);
+      if (count > 0 && globalIndex >= cum && globalIndex < cum + count) {
+        return { resultIndex: i, inPageHighlightIndex: globalIndex - cum };
       }
     }
-    return { resultIndex: 0, inPageIndex: 0 };
+    return { resultIndex: 0, inPageHighlightIndex: 0 };
   }
 
   // 当搜索结果变化时重置索引
   $: if ($searchResults.length > 0) {
-    currentMatchIndex = Math.min(currentMatchIndex, totalMatchCount - 1);
+    currentMatchIndex = Math.min(currentMatchIndex, totalHighlightCount - 1);
     // 自动跳转到第一个结果
-    navigateToMatch(0);
+    navigateToHighlight(0);
   }
 
-  async function navigateToMatch(globalIndex: number) {
-    const { resultIndex } = findMatchPosition(globalIndex);
+  async function navigateToHighlight(globalIndex: number) {
+    const { resultIndex } = findHighlightPosition(globalIndex);
     const result = $searchResults[resultIndex];
     if (!result) return;
 
@@ -58,21 +67,21 @@
   }
 
   async function handleResultClick(index: number) {
-    // 点击结果时跳转到该结果的第一个匹配
-    const globalIndex = cumulativeMatches[index];
-    await navigateToMatch(globalIndex);
+    // 点击结果时跳转到该结果的第一个高亮
+    const globalIndex = cumulativeHighlights[index];
+    await navigateToHighlight(globalIndex);
   }
 
   async function navigatePrev() {
-    if (totalMatchCount === 0) return;
-    const newIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : totalMatchCount - 1;
-    await navigateToMatch(newIndex);
+    if (totalHighlightCount === 0) return;
+    const newIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : totalHighlightCount - 1;
+    await navigateToHighlight(newIndex);
   }
 
   async function navigateNext() {
-    if (totalMatchCount === 0) return;
-    const newIndex = currentMatchIndex < totalMatchCount - 1 ? currentMatchIndex + 1 : 0;
-    await navigateToMatch(newIndex);
+    if (totalHighlightCount === 0) return;
+    const newIndex = currentMatchIndex < totalHighlightCount - 1 ? currentMatchIndex + 1 : 0;
+    await navigateToHighlight(newIndex);
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
@@ -89,15 +98,15 @@
   }
 
   // 解析高亮的 snippet
-  // isCurrentResult: 当前结果是否包含当前选中的匹配
-  // currentInPageIndex: 当前选中匹配在页内的索引（从0开始）
-  function renderSnippet(snippet: string, isCurrentResult: boolean, currentInPageIndex: number): string {
+  // isCurrentResult: 当前结果是否包含当前选中的高亮
+  // currentInPageHighlightIndex: 当前选中高亮在页内的索引（从0开始）
+  function renderSnippet(snippet: string, isCurrentResult: boolean, currentInPageHighlightIndex: number): string {
     // 将 **text** 转换为高亮标记
-    // 当前选中的匹配用橙色，其他用黄色
-    let matchIndex = 0;
+    // 当前选中的高亮用橙色，其他用黄色
+    let highlightIndex = 0;
     return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
-      const isCurrent = isCurrentResult && matchIndex === currentInPageIndex;
-      matchIndex++;
+      const isCurrent = isCurrentResult && highlightIndex === currentInPageHighlightIndex;
+      highlightIndex++;
       if (isCurrent) {
         return `<mark class="current-match">${text}</mark>`;
       }
@@ -105,10 +114,10 @@
     });
   }
 
-  // 获取当前匹配所在的页内索引
-  $: currentMatchPosition = findMatchPosition(currentMatchIndex);
-  $: currentResultIndex = currentMatchPosition.resultIndex;
-  $: currentInPageIndex = currentMatchPosition.inPageIndex;
+  // 获取当前高亮所在的页内索引
+  $: currentHighlightPosition = findHighlightPosition(currentMatchIndex);
+  $: currentResultIndex = currentHighlightPosition.resultIndex;
+  $: currentInPageHighlightIndex = currentHighlightPosition.inPageHighlightIndex;
 </script>
 
 {#if $showSearchResults}
@@ -119,7 +128,7 @@
           <h4>内容搜索结果 ({totalMatchCount}处匹配)</h4>
           <div class="nav-buttons">
             <button on:click={navigatePrev} title="上一个">上一个</button>
-            <span class="index-info">{currentMatchIndex + 1}/{totalMatchCount}</span>
+            <span class="index-info">{currentMatchIndex + 1}/{totalHighlightCount}</span>
             <button on:click={navigateNext} title="下一个">下一个</button>
           </div>
         </div>
@@ -133,7 +142,7 @@
               <span class="page">P{result.page_number}</span>
               <span class="match-count">{result.match_count}处</span>
               <span class="snippet">
-                {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
+                {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageHighlightIndex)}
               </span>
             </li>
           {/each}
