@@ -5,7 +5,6 @@
 
   async function handleContentResultClick(result: SearchResult) {
     selectedPdfId.set(result.pdf_id);
-    showSearchResults.set(false);
     jumpToPage.set(result.page_number);
     try {
       const detail = await getPdfDetail(result.pdf_id);
@@ -18,7 +17,6 @@
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
     selectedPdfId.set(pdf.id);
-    showSearchResults.set(false);
     jumpToPage.set(null);
     try {
       const detail = await getPdfDetail(pdf.id);
@@ -128,6 +126,8 @@
     font-size: 13px;
     color: #666;
     line-height: 1.4;
+    word-break: break-word;
+    white-space: normal;
   }
 
   .snippet :global(mark) {

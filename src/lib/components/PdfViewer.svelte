@@ -17,15 +17,24 @@
   let imageHeight = 3508;
   let contentElement: HTMLElement;
   let resizeObserver: ResizeObserver;
+  let pendingJumpPage: number | null = null; // 待跳转页码
+  let lastLoadedPdfId: number | null = null; // 上次加载的PDF ID
 
-  // 监听 jumpToPage 变化，跳转到指定页面
-  $: if ($jumpToPage !== null && $jumpToPage >= 1 && $jumpToPage <= pageCount) {
-    currentPage = $jumpToPage;
-    loadPage(currentPage);
+  // 监听 jumpToPage 变化，记录待跳转页码
+  $: if ($jumpToPage !== null && $jumpToPage >= 1) {
+    pendingJumpPage = $jumpToPage;
     jumpToPage.set(null);
   }
 
-  $: if ($selectedPdfId && pageCount > 0) {
+  // 当 pageCount 变化且有待跳转页码时执行跳转
+  $: if (pendingJumpPage !== null && pageCount > 0 && pendingJumpPage <= pageCount) {
+    currentPage = pendingJumpPage;
+    loadPage(currentPage);
+    pendingJumpPage = null;
+  }
+
+  // 新PDF加载时重置到第一页
+  $: if ($selectedPdfId && $selectedPdfId !== lastLoadedPdfId && pageCount > 0 && pendingJumpPage === null) {
     currentPage = 1;
     loadPage(currentPage);
   }
@@ -78,6 +87,7 @@
 
     isLoading = true;
     error = null;
+    lastLoadedPdfId = $selectedPdfId;
 
     try {
       imageSrc = await renderPdfPage($selectedPdfId!, page);
