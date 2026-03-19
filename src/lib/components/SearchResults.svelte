@@ -3,24 +3,48 @@
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
-  // 当前选中的结果索引
-  let currentIndex = 0;
+  // 当前全局匹配索引（从0开始）
+  let currentMatchIndex = 0;
 
-  // 计算匹配总数
+  // 计算总匹配数
   $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
+
+  // 计算每个结果的累计匹配数（用于定位当前匹配在哪个结果中）
+  $: cumulativeMatches = (() => {
+    const arr: number[] = [];
+    let cum = 0;
+    for (const r of $searchResults) {
+      arr.push(cum);
+      cum += r.match_count || 0;
+    }
+    return arr;
+  })();
+
+  // 根据全局匹配索引找到对应的结果索引和页内匹配索引
+  function findMatchPosition(globalIndex: number): { resultIndex: number; inPageIndex: number } {
+    for (let i = 0; i < $searchResults.length; i++) {
+      const cum = cumulativeMatches[i];
+      const count = $searchResults[i].match_count || 0;
+      if (globalIndex >= cum && globalIndex < cum + count) {
+        return { resultIndex: i, inPageIndex: globalIndex - cum };
+      }
+    }
+    return { resultIndex: 0, inPageIndex: 0 };
+  }
 
   // 当搜索结果变化时重置索引
   $: if ($searchResults.length > 0) {
-    currentIndex = Math.min(currentIndex, $searchResults.length - 1);
+    currentMatchIndex = Math.min(currentMatchIndex, totalMatchCount - 1);
     // 自动跳转到第一个结果
-    navigateToResult(0);
+    navigateToMatch(0);
   }
 
-  async function navigateToResult(index: number) {
-    const result = $searchResults[index];
+  async function navigateToMatch(globalIndex: number) {
+    const { resultIndex } = findMatchPosition(globalIndex);
+    const result = $searchResults[resultIndex];
     if (!result) return;
 
-    currentIndex = index;
+    currentMatchIndex = globalIndex;
     try {
       const detail = await getPdfDetail(result.pdf_id);
       selectedPdfId.set(result.pdf_id);
@@ -34,19 +58,21 @@
   }
 
   async function handleResultClick(index: number) {
-    await navigateToResult(index);
+    // 点击结果时跳转到该结果的第一个匹配
+    const globalIndex = cumulativeMatches[index];
+    await navigateToMatch(globalIndex);
   }
 
   async function navigatePrev() {
-    if ($searchResults.length === 0) return;
-    const newIndex = currentIndex > 0 ? currentIndex - 1 : $searchResults.length - 1;
-    await navigateToResult(newIndex);
+    if (totalMatchCount === 0) return;
+    const newIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : totalMatchCount - 1;
+    await navigateToMatch(newIndex);
   }
 
   async function navigateNext() {
-    if ($searchResults.length === 0) return;
-    const newIndex = currentIndex < $searchResults.length - 1 ? currentIndex + 1 : 0;
-    await navigateToResult(newIndex);
+    if (totalMatchCount === 0) return;
+    const newIndex = currentMatchIndex < totalMatchCount - 1 ? currentMatchIndex + 1 : 0;
+    await navigateToMatch(newIndex);
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
@@ -63,10 +89,26 @@
   }
 
   // 解析高亮的 snippet
-  function renderSnippet(snippet: string): string {
-    // 将 **text** 转换为 <mark>text</mark>
-    return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
+  // isCurrentResult: 当前结果是否包含当前选中的匹配
+  // currentInPageIndex: 当前选中匹配在页内的索引（从0开始）
+  function renderSnippet(snippet: string, isCurrentResult: boolean, currentInPageIndex: number): string {
+    // 将 **text** 转换为高亮标记
+    // 当前选中的匹配用橙色，其他用黄色
+    let matchIndex = 0;
+    return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
+      const isCurrent = isCurrentResult && matchIndex === currentInPageIndex;
+      matchIndex++;
+      if (isCurrent) {
+        return `<mark class="current-match">${text}</mark>`;
+      }
+      return `<mark>${text}</mark>`;
+    });
   }
+
+  // 获取当前匹配所在的页内索引
+  $: currentMatchPosition = findMatchPosition(currentMatchIndex);
+  $: currentResultIndex = currentMatchPosition.resultIndex;
+  $: currentInPageIndex = currentMatchPosition.inPageIndex;
 </script>
 
 {#if $showSearchResults}
@@ -74,24 +116,24 @@
     {#if $searchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>内容搜索结果 ({$searchResults.length}页, {totalMatchCount}处匹配)</h4>
+          <h4>内容搜索结果 ({totalMatchCount}处匹配)</h4>
           <div class="nav-buttons">
-            <button on:click={navigatePrev} title="上一个">↑ 上一个</button>
-            <span class="index-info">{currentIndex + 1}/{$searchResults.length}</span>
-            <button on:click={navigateNext} title="下一个">下一个 ↓</button>
+            <button on:click={navigatePrev} title="上一个">上一个</button>
+            <span class="index-info">{currentMatchIndex + 1}/{totalMatchCount}</span>
+            <button on:click={navigateNext} title="下一个">下一个</button>
           </div>
         </div>
         <ul class="result-list">
           {#each $searchResults as result, index}
             <li
-              class:active={index === currentIndex}
+              class:active={index === currentResultIndex}
               on:click={() => handleResultClick(index)}
             >
               <span class="filename" title={result.filename}>{result.filename}</span>
               <span class="page">P{result.page_number}</span>
               <span class="match-count">{result.match_count}处</span>
               <span class="snippet">
-                {@html renderSnippet(result.snippet)}
+                {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
               </span>
             </li>
           {/each}
@@ -256,6 +298,11 @@
     background-color: #fff176;
     padding: 0 2px;
     border-radius: 2px;
+  }
+
+  .snippet :global(mark.current-match) {
+    background-color: #ff9800;
+    color: white;
   }
 
   .no-results {
