@@ -407,8 +407,8 @@ impl SearchService {
             return (format!("{}...", content_chars[..end].iter().collect::<String>()), 0);
         }
 
-        // 统计关键字在整个内容中出现的次数
-        let mut match_count = 0u32;
+        // 找到所有匹配位置
+        let mut match_positions: Vec<usize> = Vec::new();
         let mut i = 0;
         while i <= content_chars.len().saturating_sub(query_chars.len()) {
             let mut found = true;
@@ -419,32 +419,23 @@ impl SearchService {
                 }
             }
             if found {
-                match_count += 1;
+                match_positions.push(i);
                 i += query_chars.len(); // 跳过已匹配的部分，避免重复计数
             } else {
                 i += 1;
             }
         }
 
-        // 找到第一个匹配位置用于生成 snippet
-        let mut found_pos = None;
-        'outer: for i in 0..content_chars.len().saturating_sub(query_chars.len()) {
-            for j in 0..query_chars.len() {
-                if content_chars[i + j] != query_chars[j] {
-                    continue 'outer;
-                }
-            }
-            found_pos = Some(i);
-            break;
-        }
+        let match_count = match_positions.len() as u32;
 
-        let snippet = if let Some(pos) = found_pos {
-            let start = pos.saturating_sub(30);
-            let end = (pos + query_chars.len() + 30).min(content_chars.len());
+        // 生成 snippet：包含第一个匹配位置附近的内容
+        let snippet = if let Some(&first_pos) = match_positions.first() {
+            let start = first_pos.saturating_sub(30);
+            let end = (first_pos + query_chars.len() + 30).min(content_chars.len());
 
             let snippet_str: String = content_chars[start..end].iter().collect();
 
-            // 高亮显示匹配的关键词
+            // 高亮 snippet 中所有匹配的关键词
             let query_in_snippet: String = query_chars.iter().collect();
             let highlighted = snippet_str.replace(&query_in_snippet, &format!("**{}**", query_in_snippet));
             format!("...{}...", highlighted)
