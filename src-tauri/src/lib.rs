@@ -3,60 +3,29 @@ pub mod db;
 pub mod models;
 pub mod services;
 
-use tauri::{Manager, WebviewWindowBuilder};
-use tauri::utils::config::WebviewUrl;
+use tauri::Manager;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 尽早初始化日志系统（使用可执行文件目录）
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    // 先初始化基本日志到文件和控制台
+    init_early_logging(&exe_dir);
+
     info!("启动应用程序");
+    info!("可执行文件目录: {:?}", exe_dir);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             info!("开始初始化应用");
-
-            // 获取可执行文件所在目录作为默认数据目录
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| {
-                    app.path()
-                        .app_data_dir()
-                        .expect("Failed to get app data directory")
-                });
-
-            // 配置 WebView2 数据目录到安装目录下
-            let webview_data_dir = exe_dir.join("EBWebView");
-            debug!("WebView2 数据目录: {:?}", webview_data_dir);
-
-            // 关闭默认窗口，创建新窗口使用自定义数据目录
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.close();
-            }
-
-            // 创建新窗口
-            let _window = WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::App("index.html".into())
-            )
-            .title("PDF Manager")
-            .inner_size(1200.0, 800.0)
-            .resizable(true)
-            .data_directory(webview_data_dir)
-            .build()
-            .map_err(|e| {
-                error!("创建窗口失败: {}", e);
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("创建窗口失败: {}", e)
-                ))
-            })?;
-
-            info!("窗口创建成功");
 
             // 初始化数据库
             debug!("初始化数据库...");
@@ -244,4 +213,72 @@ fn init_logging(data_dir: &std::path::Path) {
             eprintln!("日志系统初始化失败: {}", e);
         }
     }
+}
+
+/// 初始化早期日志（在应用启动时立即执行，记录到可执行文件目录）
+fn init_early_logging(exe_dir: &std::path::Path) {
+    use tracing_subscriber::fmt::time::LocalTime;
+    use time::macros::format_description;
+    use time::OffsetDateTime;
+
+    // 设置 WebView2 数据目录到安装目录下
+    let webview_data_dir = exe_dir.join("EBWebView");
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_data_dir);
+
+    let log_dir = exe_dir.join("logs");
+
+    // 创建日志目录
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    // 日志文件名
+    let today = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let date_str = today.format(format_description!("[year]-[month]-[day]")).unwrap_or("unknown".to_string());
+    let log_filename = format!("{}-pdf-ocr-startup.log", date_str);
+    let log_path = log_dir.join(&log_filename);
+
+    // 尝试创建日志文件
+    let file_appender = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(_) => {
+            // 如果无法创建文件，只输出到控制台
+            eprintln!("无法创建日志文件，仅输出到控制台");
+            let _ = tracing_subscriber::fmt()
+                .with_target(true)
+                .with_line_number(true)
+                .with_timer(LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]")))
+                .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+                .try_init();
+            return;
+        }
+    };
+
+    // 初始化日志系统，同时输出到文件和控制台
+    let timer = LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"));
+
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(file_appender))
+                .with_ansi(false)
+                .with_target(true)
+                .with_line_number(true)
+                .with_timer(timer.clone())
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .with_target(true)
+                .with_line_number(true)
+                .with_timer(timer)
+        )
+        .with(tracing_subscriber::EnvFilter::new("info"))
+        .try_init();
+
+    info!("早期日志系统初始化成功，日志文件: {:?}", log_path);
+    info!("WebView2 数据目录已设置为: {:?}", webview_data_dir);
 }
