@@ -31,14 +31,13 @@ impl PdfService {
 
     /// 创建 Pdfium 实例
     fn create_pdfium() -> Result<Pdfium, PdfError> {
-        // 使用系统库绑定
-        // 注意: 需要系统上安装 pdfium.dll 或在应用目录中放置该 DLL
-        Pdfium::bind_to_system_library()
+        // 使用静态链接的 pdfium 库
+        Pdfium::bind_to_statically_linked()
             .map(|bindings| Pdfium::new(bindings))
             .map_err(|e| {
-                error!("Pdfium绑定失败: {}。请确保 pdfium.dll 在系统 PATH 或应用目录中。", e);
+                error!("Pdfium静态绑定失败: {}", e);
                 PdfError::RenderError(format!(
-                    "无法绑定Pdfium: {}。请确保 pdfium.dll 已安装。",
+                    "无法绑定Pdfium: {}",
                     e
                 ))
             })
