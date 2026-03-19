@@ -45,9 +45,19 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Download pdfium.dll
+      - name: Prepare pdfium.dll for build
         run: |
-          Invoke-WebRequest -Uri "https://github.com/nicholasoxford/pdfium-binaries/releases/download/chromium%2F6307/pdfium-x64.dll" -OutFile "src-tauri/pdfium.dll"
+          # 先构建 pdfium-render 来触发下载
+          cd src-tauri
+          cargo build --lib
+          # 从 target 目录复制 pdfium.dll 到 src-tauri
+          $dllPath = Get-ChildItem -Path target -Filter "pdfium.dll" -Recurse | Select-Object -First 1
+          if ($dllPath) {
+            Copy-Item $dllPath.FullName .
+            Write-Host "Copied pdfium.dll from $($dllPath.FullName)"
+          } else {
+            Write-Host "pdfium.dll not found in target directory"
+          }
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
