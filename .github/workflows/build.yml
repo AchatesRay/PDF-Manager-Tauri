@@ -1,20 +1,16 @@
-name: Build Tauri App
+name: Build Windows Release
 
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,44 +20,46 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - name: Cache cargo registry
+        uses: actions/cache@v4
         with:
-          workspaces: './src-tauri -> target'
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Install frontend dependencies
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
         run: npm install
-
-      - name: Download pdfium.dll
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7734/pdfium-win-x64.tgz" -OutFile "pdfium.tgz"
-          tar -xzf pdfium.tgz
-          dir bin
-          # 复制到 src-tauri 目录，Tauri 会自动打包
-          Copy-Item -Path "bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
-          Write-Host "pdfium.dll copied to src-tauri"
-          dir src-tauri
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'PDF Manager ${{ github.ref_name }}'
+          tagName: v__VERSION__
+          releaseName: 'PDF Manager v__VERSION__'
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
-          includeDebug: false
+          args: --target x86_64-pc-windows-msvc
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Manager-Windows
+          name: pdf-manager-windows
           path: |
-            src-tauri/target/release/bundle/
-          retention-days: 30
+            src-tauri/target/release/bundle/nsis/*.exe

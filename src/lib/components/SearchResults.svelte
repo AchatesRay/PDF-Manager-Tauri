@@ -3,42 +3,54 @@
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
-  let currentResultIndex = 0;
+  // 当前匹配项索引（在展开后的所有匹配项中）
+  let currentMatchIndex = 0;
 
-  // 计算匹配关键字总数
-  $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
-
-  // 当搜索结果变化时重置索引
-  $: if ($searchResults.length > 0) {
-    currentResultIndex = Math.min(currentResultIndex, $searchResults.length - 1);
+  // 展开后的匹配项列表：每个关键词匹配作为一个独立的导航目标
+  interface MatchItem {
+    result: SearchResult;
+    matchIndex: number; // 在该页面中的第几个匹配 (1-based)
   }
 
-  async function handleContentResultClick(result: SearchResult, index: number) {
-    currentResultIndex = index;
+  // 将搜索结果展开为所有匹配项
+  $: expandedMatches = $searchResults.flatMap((result: SearchResult) => {
+    const count = result.match_count || 1;
+    return Array.from({ length: count }, (_, i) => ({
+      result,
+      matchIndex: i + 1
+    }));
+  }) as MatchItem[];
+
+  // 当搜索结果变化时重置索引
+  $: if (expandedMatches.length > 0) {
+    currentMatchIndex = Math.min(currentMatchIndex, expandedMatches.length - 1);
+  }
+
+  async function handleContentResultClick(matchItem: MatchItem, index: number) {
+    currentMatchIndex = index;
     try {
-      const detail = await getPdfDetail(result.pdf_id);
-      selectedPdfId.set(result.pdf_id);
+      const detail = await getPdfDetail(matchItem.result.pdf_id);
+      selectedPdfId.set(matchItem.result.pdf_id);
       selectedPdfPath.set(detail.storage_path);
       selectedPdfPageCount.set(detail.page_count);
-      jumpToPage.set(result.page_number);
+      jumpToPage.set(matchItem.result.page_number);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
       alert('该PDF文件可能已被删除，请重新搜索');
     }
   }
 
-  async function navigateResult(direction: 'prev' | 'next') {
-    const results = $searchResults;
-    if (results.length === 0) return;
+  async function navigateMatch(direction: 'prev' | 'next') {
+    if (expandedMatches.length === 0) return;
 
     if (direction === 'prev') {
-      currentResultIndex = currentResultIndex > 0 ? currentResultIndex - 1 : results.length - 1;
+      currentMatchIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : expandedMatches.length - 1;
     } else {
-      currentResultIndex = currentResultIndex < results.length - 1 ? currentResultIndex + 1 : 0;
+      currentMatchIndex = currentMatchIndex < expandedMatches.length - 1 ? currentMatchIndex + 1 : 0;
     }
 
-    const result = results[currentResultIndex];
-    await handleContentResultClick(result, currentResultIndex);
+    const matchItem = expandedMatches[currentMatchIndex];
+    await handleContentResultClick(matchItem, currentMatchIndex);
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
@@ -66,26 +78,35 @@
     {#if $searchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>内容搜索结果 ({$searchResults.length}条, {totalMatchCount}处匹配)</h4>
+          <h4>内容搜索结果 ({$searchResults.length}页, {expandedMatches.length}处匹配)</h4>
           <div class="nav-buttons">
-            <button on:click={() => navigateResult('prev')} title="上一个">↑ 上一个</button>
-            <span class="index-info">{currentResultIndex + 1}/{$searchResults.length}</span>
-            <button on:click={() => navigateResult('next')} title="下一个">下一个 ↓</button>
+            <button on:click={() => navigateMatch('prev')} title="上一个匹配">↑ 上一个</button>
+            <span class="index-info">{currentMatchIndex + 1}/{expandedMatches.length}</span>
+            <button on:click={() => navigateMatch('next')} title="下一个匹配">下一个 ↓</button>
           </div>
         </div>
         <ul>
           {#each $searchResults as result, index}
-            <li
-              class:active={index === currentResultIndex}
-              on:click={() => handleContentResultClick(result, index)}
-            >
-              <span class="filename">{result.filename}</span>
-              <span class="page">P{result.page_number}</span>
-              <span class="match-count">{result.match_count}处</span>
-              <span class="snippet">
-                {@html renderSnippet(result.snippet)}
-              </span>
-            </li>
+            {@const matchStart = $searchResults.slice(0, index).reduce((sum, r) => sum + (r.match_count || 1), 0)}
+            {#each Array.from({ length: result.match_count || 1 }, (_, i) => i) as matchOffset}
+              {@const matchIndex = matchStart + matchOffset}
+              {@const isActive = matchIndex === currentMatchIndex}
+              <li
+                class:active={isActive}
+                on:click={() => handleContentResultClick({ result, matchIndex: matchOffset + 1 }, matchIndex)}
+              >
+                <span class="filename">{result.filename}</span>
+                <span class="page">P{result.page_number}</span>
+                <span class="match-index">#{matchOffset + 1}</span>
+                {#if matchOffset === 0}
+                  <span class="snippet">
+                    {@html renderSnippet(result.snippet)}
+                  </span>
+                {:else}
+                  <span class="snippet placeholder">...</span>
+                {/if}
+              </li>
+            {/each}
           {/each}
         </ul>
       </div>
@@ -210,13 +231,18 @@
     border-radius: 3px;
   }
 
-  .match-count {
+  .match-index {
     font-size: 12px;
-    color: #ff9800;
+    color: #9c27b0;
     flex-shrink: 0;
-    background: #fff3e0;
+    background: #f3e5f5;
     padding: 2px 6px;
     border-radius: 3px;
+  }
+
+  .snippet.placeholder {
+    color: #999;
+    font-style: italic;
   }
 
   .meta {
