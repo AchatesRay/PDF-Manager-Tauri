@@ -3,7 +3,15 @@
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
-  async function handleContentResultClick(result: SearchResult) {
+  let currentResultIndex = 0;
+
+  // 当搜索结果变化时重置索引
+  $: if ($searchResults.length > 0) {
+    currentResultIndex = Math.min(currentResultIndex, $searchResults.length - 1);
+  }
+
+  async function handleContentResultClick(result: SearchResult, index: number) {
+    currentResultIndex = index;
     try {
       const detail = await getPdfDetail(result.pdf_id);
       selectedPdfId.set(result.pdf_id);
@@ -14,6 +22,20 @@
       console.error('Failed to get PDF detail:', e);
       alert('该PDF文件可能已被删除，请重新搜索');
     }
+  }
+
+  async function navigateResult(direction: 'prev' | 'next') {
+    const results = $searchResults;
+    if (results.length === 0) return;
+
+    if (direction === 'prev') {
+      currentResultIndex = currentResultIndex > 0 ? currentResultIndex - 1 : results.length - 1;
+    } else {
+      currentResultIndex = currentResultIndex < results.length - 1 ? currentResultIndex + 1 : 0;
+    }
+
+    const result = results[currentResultIndex];
+    await handleContentResultClick(result, currentResultIndex);
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
@@ -40,10 +62,20 @@
   {#if $searchMode === 'content'}
     {#if $searchResults.length > 0}
       <div class="search-results">
-        <h4>内容搜索结果 ({$searchResults.length})</h4>
+        <div class="header-row">
+          <h4>内容搜索结果 ({$searchResults.length})</h4>
+          <div class="nav-buttons">
+            <button on:click={() => navigateResult('prev')} title="上一个">↑ 上一个</button>
+            <span class="index-info">{currentResultIndex + 1}/{$searchResults.length}</span>
+            <button on:click={() => navigateResult('next')} title="下一个">下一个 ↓</button>
+          </div>
+        </div>
         <ul>
-          {#each $searchResults as result}
-            <li on:click={() => handleContentResultClick(result)}>
+          {#each $searchResults as result, index}
+            <li
+              class:active={index === currentResultIndex}
+              on:click={() => handleContentResultClick(result, index)}
+            >
               <span class="filename">{result.filename}</span>
               <span class="page">P{result.page_number}</span>
               <span class="snippet">
@@ -89,10 +121,43 @@
     flex-shrink: 0;
   }
 
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
   h4 {
-    margin: 0 0 10px 0;
+    margin: 0;
     font-size: 14px;
     color: #333;
+  }
+
+  .nav-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .nav-buttons button {
+    padding: 4px 10px;
+    background: #e0e0e0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .nav-buttons button:hover {
+    background: #bddef7;
+  }
+
+  .index-info {
+    font-size: 12px;
+    color: #666;
+    min-width: 40px;
+    text-align: center;
   }
 
   ul {
@@ -111,10 +176,16 @@
     align-items: center;
     gap: 10px;
     font-size: 13px;
+    border: 2px solid transparent;
   }
 
   li:hover {
     background: #f0f0f0;
+  }
+
+  li.active {
+    border-color: #2196f3;
+    background: #e3f2fd;
   }
 
   .filename {

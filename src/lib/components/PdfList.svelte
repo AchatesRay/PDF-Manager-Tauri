@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress } from '../stores';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders } from '../stores';
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { open, confirm } from '@tauri-apps/plugin-dialog';
+  import { open, confirm, message } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
 
   onMount(async () => {
@@ -37,6 +37,24 @@
   }
 
   async function handleAddPdf() {
+    // 检查是否有文件夹
+    if ($folders.length === 0) {
+      await message('请先创建一个文件夹，然后选中该文件夹再导入PDF文件。', {
+        title: '提示',
+        kind: 'info',
+      });
+      return;
+    }
+
+    // 检查是否选中了文件夹
+    if ($selectedFolderId === null) {
+      await message('请先在左侧选择一个文件夹，然后再添加PDF文件。', {
+        title: '提示',
+        kind: 'info',
+      });
+      return;
+    }
+
     const selected = await open({
       multiple: true,
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
