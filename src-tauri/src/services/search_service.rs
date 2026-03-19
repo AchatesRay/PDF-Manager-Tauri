@@ -386,6 +386,13 @@ impl SearchService {
             }
         }
 
+        // 刷新 reader 以使删除立即生效
+        if let Err(e) = self.reader.reload() {
+            warn!("刷新索引reader失败: {}", e);
+        } else {
+            debug!("索引reader刷新成功");
+        }
+
         Ok(())
     }
 
