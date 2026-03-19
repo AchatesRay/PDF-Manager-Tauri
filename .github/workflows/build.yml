@@ -3,9 +3,14 @@ name: Build Windows Release
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -20,46 +25,40 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspaces: './src-tauri -> target'
 
-      - name: Cache node modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: npm install
+
+      - name: Download pdfium.dll
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7734/pdfium-win-x64.tgz" -OutFile "pdfium.tgz"
+          tar -xzf pdfium.tgz
+          Copy-Item -Path "bin/pdfium.dll" -Destination "src-tauri/pdfium.dll"
+          Write-Host "pdfium.dll copied to src-tauri"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'PDF Manager v__VERSION__'
+          tagName: ${{ github.ref_name }}
+          releaseName: 'PDF Manager ${{ github.ref_name }}'
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
-          args: --target x86_64-pc-windows-msvc
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pdf-manager-windows
+          name: PDF-Manager-Windows
           path: |
-            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/
+          retention-days: 30

@@ -33,6 +33,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "pdfium.dll": "pdfium.dll"
+    },
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
