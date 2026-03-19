@@ -3,64 +3,50 @@
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
-  // 当前匹配项索引（在展开后的所有匹配项中）
-  let currentMatchIndex = 0;
+  // 当前选中的结果索引
+  let currentIndex = 0;
 
-  // 展开后的匹配项列表：每个关键词匹配作为一个独立的导航目标
-  interface MatchItem {
-    result: SearchResult;
-    matchIndex: number; // 在该页面中的第几个匹配 (1-based)
-  }
-
-  // 将搜索结果展开为所有匹配项
-  $: expandedMatches = $searchResults.flatMap((result: SearchResult) => {
-    const count = result.match_count || 1;
-    return Array.from({ length: count }, (_, i) => ({
-      result,
-      matchIndex: i + 1
-    }));
-  }) as MatchItem[];
-
-  // 当前显示的匹配项
-  $: currentMatch = expandedMatches.length > 0 ? expandedMatches[currentMatchIndex] : null;
+  // 计算匹配总数
+  $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
 
   // 当搜索结果变化时重置索引
-  $: if (expandedMatches.length > 0) {
-    currentMatchIndex = Math.min(currentMatchIndex, expandedMatches.length - 1);
+  $: if ($searchResults.length > 0) {
+    currentIndex = Math.min(currentIndex, $searchResults.length - 1);
+    // 自动跳转到第一个结果
+    navigateToResult(0);
   }
 
-  async function navigateToMatch(index: number) {
-    const matchItem = expandedMatches[index];
-    if (!matchItem) return;
+  async function navigateToResult(index: number) {
+    const result = $searchResults[index];
+    if (!result) return;
 
-    currentMatchIndex = index;
+    currentIndex = index;
     try {
-      const detail = await getPdfDetail(matchItem.result.pdf_id);
-      selectedPdfId.set(matchItem.result.pdf_id);
+      const detail = await getPdfDetail(result.pdf_id);
+      selectedPdfId.set(result.pdf_id);
       selectedPdfPath.set(detail.storage_path);
       selectedPdfPageCount.set(detail.page_count);
-      jumpToPage.set(matchItem.result.page_number);
+      jumpToPage.set(result.page_number);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
       alert('该PDF文件可能已被删除，请重新搜索');
     }
   }
 
-  async function navigateMatch(direction: 'prev' | 'next') {
-    if (expandedMatches.length === 0) return;
-
-    if (direction === 'prev') {
-      currentMatchIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : expandedMatches.length - 1;
-    } else {
-      currentMatchIndex = currentMatchIndex < expandedMatches.length - 1 ? currentMatchIndex + 1 : 0;
-    }
-
-    await navigateToMatch(currentMatchIndex);
+  async function handleResultClick(index: number) {
+    await navigateToResult(index);
   }
 
-  // 初始化：跳转到第一个匹配项
-  $: if (expandedMatches.length > 0 && currentMatchIndex === 0) {
-    navigateToMatch(0);
+  async function navigatePrev() {
+    if ($searchResults.length === 0) return;
+    const newIndex = currentIndex > 0 ? currentIndex - 1 : $searchResults.length - 1;
+    await navigateToResult(newIndex);
+  }
+
+  async function navigateNext() {
+    if ($searchResults.length === 0) return;
+    const newIndex = currentIndex < $searchResults.length - 1 ? currentIndex + 1 : 0;
+    await navigateToResult(newIndex);
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
@@ -88,25 +74,28 @@
     {#if $searchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>内容搜索结果 ({$searchResults.length}页, {expandedMatches.length}处匹配)</h4>
+          <h4>内容搜索结果 ({$searchResults.length}页, {totalMatchCount}处匹配)</h4>
           <div class="nav-buttons">
-            <button on:click={() => navigateMatch('prev')} title="上一个匹配">↑ 上一个</button>
-            <span class="index-info">{currentMatchIndex + 1}/{expandedMatches.length}</span>
-            <button on:click={() => navigateMatch('next')} title="下一个匹配">下一个 ↓</button>
+            <button on:click={navigatePrev} title="上一个">↑ 上一个</button>
+            <span class="index-info">{currentIndex + 1}/{$searchResults.length}</span>
+            <button on:click={navigateNext} title="下一个">下一个 ↓</button>
           </div>
         </div>
-        <div class="match-list">
-          {#if currentMatch}
-            <div class="match-item active">
-              <span class="filename" title={currentMatch.result.filename}>{currentMatch.result.filename}</span>
-              <span class="page">P{currentMatch.result.page_number}</span>
-              <span class="match-index">#{currentMatch.matchIndex}/{currentMatch.result.match_count}</span>
+        <ul class="result-list">
+          {#each $searchResults as result, index}
+            <li
+              class:active={index === currentIndex}
+              on:click={() => handleResultClick(index)}
+            >
+              <span class="filename" title={result.filename}>{result.filename}</span>
+              <span class="page">P{result.page_number}</span>
+              <span class="match-count">{result.match_count}处</span>
               <span class="snippet">
-                {@html renderSnippet(currentMatch.result.snippet)}
+                {@html renderSnippet(result.snippet)}
               </span>
-            </div>
-          {/if}
-        </div>
+            </li>
+          {/each}
+        </ul>
       </div>
     {:else}
       <div class="no-results">
@@ -119,7 +108,7 @@
         <div class="header-row">
           <h4>文件名搜索结果 ({$filenameSearchResults.length})</h4>
         </div>
-        <ul>
+        <ul class="result-list">
           {#each $filenameSearchResults as pdf}
             <li on:click={() => handleFilenameResultClick(pdf)}>
               <span class="filename">{pdf.filename}</span>
@@ -140,8 +129,7 @@
   .search-results {
     background: #fff;
     border-top: 1px solid #ddd;
-    max-height: 300px;
-    overflow-y: auto;
+    max-height: 250px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -151,7 +139,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px;
+    padding: 8px 10px;
     background: #f5f5f5;
     border-bottom: 1px solid #ddd;
     position: sticky;
@@ -162,18 +150,18 @@
 
   h4 {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     color: #333;
   }
 
   .nav-buttons {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .nav-buttons button {
-    padding: 4px 10px;
+    padding: 3px 8px;
     background: #e0e0e0;
     border: none;
     border-radius: 4px;
@@ -188,57 +176,69 @@
   .index-info {
     font-size: 12px;
     color: #666;
-    min-width: 40px;
+    min-width: 35px;
     text-align: center;
   }
 
-  .match-list {
-    padding: 10px;
-    flex: 1;
+  .result-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    overflow-y: auto;
+    max-height: 200px;
   }
 
-  .match-item {
-    padding: 10px;
+  li {
+    padding: 6px 10px;
     cursor: pointer;
     border-radius: 4px;
+    margin: 4px 6px;
     background: #f9f9f9;
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    border: 2px solid #2196f3;
+    gap: 8px;
+    font-size: 12px;
+    border: 2px solid transparent;
+  }
+
+  li:hover {
+    background: #f0f0f0;
+  }
+
+  li.active {
+    border-color: #2196f3;
     background: #e3f2fd;
   }
 
   .filename {
     font-weight: 500;
     flex-shrink: 0;
-    max-width: 150px;
+    max-width: 100px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .page {
-    font-size: 12px;
+    font-size: 11px;
     color: #2196f3;
     flex-shrink: 0;
-    background: #bbdefb;
-    padding: 2px 6px;
+    background: #e3f2fd;
+    padding: 1px 5px;
     border-radius: 3px;
   }
 
-  .match-index {
-    font-size: 12px;
-    color: #9c27b0;
+  .match-count {
+    font-size: 11px;
+    color: #ff9800;
     flex-shrink: 0;
-    background: #f3e5f5;
-    padding: 2px 6px;
+    background: #fff3e0;
+    padding: 1px 5px;
     border-radius: 3px;
   }
 
   .meta {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
     flex-shrink: 0;
   }
@@ -258,35 +258,13 @@
     border-radius: 2px;
   }
 
-  ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  li {
-    padding: 8px 10px;
-    cursor: pointer;
-    border-radius: 4px;
-    margin-bottom: 5px;
-    background: #f9f9f9;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    border: 2px solid transparent;
-  }
-
-  li:hover {
-    background: #f0f0f0;
-  }
-
   .no-results {
-    padding: 20px;
+    padding: 15px;
     text-align: center;
     color: #666;
     background: #fff;
     border-top: 1px solid #ddd;
     flex-shrink: 0;
+    font-size: 13px;
   }
 </style>
