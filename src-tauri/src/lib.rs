@@ -3,7 +3,8 @@ pub mod db;
 pub mod models;
 pub mod services;
 
-use tauri::Manager;
+use tauri::{Manager, WebviewWindowBuilder};
+use tauri::utils::config::WebviewUrl;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -24,8 +25,48 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             info!("开始初始化应用");
+
+            // 设置 WebView2 数据目录
+            // data_directory 指定父目录，Tauri 会在其中自动创建 EBWebView 子目录
+            // 所以我们直接使用安装目录，最终 WebView 数据会在 安装目录/EBWebView
+            info!("WebView2 数据目录: {:?}", exe_dir.join("EBWebView"));
+
+            // 关闭默认窗口（如果存在）
+            if let Some(window) = app.get_webview_window("main") {
+                info!("关闭默认窗口，准备使用自定义数据目录重新创建");
+                let _ = window.close();
+            }
+
+            // 使用自定义数据目录创建窗口
+            match WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::App("index.html".into())
+            )
+            .title("PDF Manager")
+            .inner_size(1200.0, 800.0)
+            .resizable(true)
+            .data_directory(exe_dir.clone())
+            .build()
+            {
+                Ok(_) => info!("窗口创建成功"),
+                Err(e) => {
+                    error!("创建窗口失败: {}", e);
+                    // 如果失败，尝试不设置数据目录创建窗口
+                    warn!("尝试使用默认设置创建窗口...");
+                    let _ = WebviewWindowBuilder::new(
+                        app,
+                        "main",
+                        WebviewUrl::App("index.html".into())
+                    )
+                    .title("PDF Manager")
+                    .inner_size(1200.0, 800.0)
+                    .resizable(true)
+                    .build();
+                }
+            }
 
             // 初始化数据库
             debug!("初始化数据库...");
@@ -221,10 +262,6 @@ fn init_early_logging(exe_dir: &std::path::Path) {
     use time::macros::format_description;
     use time::OffsetDateTime;
 
-    // 设置 WebView2 数据目录到安装目录下
-    let webview_data_dir = exe_dir.join("EBWebView");
-    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview_data_dir);
-
     let log_dir = exe_dir.join("logs");
 
     // 创建日志目录
@@ -280,5 +317,4 @@ fn init_early_logging(exe_dir: &std::path::Path) {
         .try_init();
 
     info!("早期日志系统初始化成功，日志文件: {:?}", log_path);
-    info!("WebView2 数据目录已设置为: {:?}", webview_data_dir);
 }
