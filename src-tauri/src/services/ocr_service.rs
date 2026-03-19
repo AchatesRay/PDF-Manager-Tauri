@@ -63,10 +63,28 @@ impl OcrService {
         }
 
         // 2. 检查 Tesseract 安装目录下的 tessdata (Windows 常见路径)
-        if cfg!(target_os = "windows") {
+        #[cfg(target_os = "windows")]
+        {
             if let Ok(output) = Command::new(tesseract_path)
                 .arg("--list-langs")
                 .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("chi_sim") {
+                    info!("系统 Tesseract 包含中文语言包");
+                    return None; // 使用系统默认
+                } else {
+                    warn!("系统 Tesseract 不包含中文语言包，可用语言: {}", stdout);
+                }
+            }
+        }
+
+        // 非 Windows 平台检查
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(output) = Command::new(tesseract_path)
+                .arg("--list-langs")
                 .output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);

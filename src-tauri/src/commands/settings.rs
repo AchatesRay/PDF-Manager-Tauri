@@ -1,6 +1,5 @@
 use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, default_data_dir};
-use rusqlite::Connection;
-use tauri::{Manager, State};
+use tauri::State;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn};
@@ -42,7 +41,7 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
 
 /// 设置数据目录
 #[tauri::command]
-pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn set_data_dir(db: State<'_, Db>, _app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
     info!("开始设置数据目录: {}", path);
 
     // 验证路径

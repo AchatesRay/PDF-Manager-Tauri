@@ -3,7 +3,8 @@ pub mod db;
 pub mod models;
 pub mod services;
 
-use tauri::Manager;
+use tauri::{Manager, WebviewWindowBuilder};
+use tauri::utils::config::WebviewUrl;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -16,6 +17,46 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             info!("开始初始化应用");
+
+            // 获取可执行文件所在目录作为默认数据目录
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| {
+                    app.path()
+                        .app_data_dir()
+                        .expect("Failed to get app data directory")
+                });
+
+            // 配置 WebView2 数据目录到安装目录下
+            let webview_data_dir = exe_dir.join("EBWebView");
+            debug!("WebView2 数据目录: {:?}", webview_data_dir);
+
+            // 关闭默认窗口，创建新窗口使用自定义数据目录
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.close();
+            }
+
+            // 创建新窗口
+            let _window = WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::App("index.html".into())
+            )
+            .title("PDF Manager")
+            .inner_size(1200.0, 800.0)
+            .resizable(true)
+            .data_directory(webview_data_dir)
+            .build()
+            .map_err(|e| {
+                error!("创建窗口失败: {}", e);
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("创建窗口失败: {}", e)
+                ))
+            })?;
+
+            info!("窗口创建成功");
 
             // 初始化数据库
             debug!("初始化数据库...");

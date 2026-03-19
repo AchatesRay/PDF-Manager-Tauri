@@ -112,6 +112,58 @@ impl SearchService {
         })
     }
 
+    /// 清理 OCR 文本中的多余空格
+    /// OCR 输出的中文文本通常每个字符之间都有空格，如 "奇 安 信 集 团"
+    /// 需要去除中文字符之间的空格，同时保留英文单词之间的空格
+    fn clean_ocr_text(text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        let mut result = String::with_capacity(text.len());
+        let mut i = 0;
+
+        while i < chars.len() {
+            let c = chars[i];
+
+            // 如果当前字符是空格
+            if c == ' ' {
+                // 检查空格前后是否都是中文字符
+                let prev_is_chinese = if i > 0 {
+                    Self::is_chinese(chars[i - 1])
+                } else {
+                    false
+                };
+
+                let next_is_chinese = if i + 1 < chars.len() {
+                    Self::is_chinese(chars[i + 1])
+                } else {
+                    false
+                };
+
+                // 如果空格两边都是中文字符，跳过这个空格
+                if prev_is_chinese && next_is_chinese {
+                    i += 1;
+                    continue;
+                }
+
+                // 否则保留空格（英文单词之间、数字之间等）
+                result.push(c);
+            } else {
+                result.push(c);
+            }
+
+            i += 1;
+        }
+
+        result
+    }
+
+    /// 判断字符是否为中文字符
+    fn is_chinese(c: char) -> bool {
+        // CJK Unified Ideographs range: U+4E00 to U+9FFF
+        // CJK Unified Ideographs Extension A: U+3400 to U+4DBF
+        // CJK Unified Ideographs Extension B-F: U+20000 to U+2CEAF
+        matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
+    }
+
     pub fn index_page(
         &mut self,
         page_id: u64,
@@ -140,9 +192,15 @@ impl SearchService {
         let content_field = self.schema.get_field("content").unwrap();
         let raw_content_field = self.schema.get_field("raw_content").unwrap();
 
+        // 清理 OCR 文本中的多余空格
+        let cleaned_content = Self::clean_ocr_text(content);
+
         // 中文分词
-        let tokens: Vec<String> = self.jieba.cut(content, true).into_iter().map(|s| s.to_string()).collect();
-        info!("分词完成: {} tokens, 内容前100字符: {:?}", tokens.len(), &content.chars().take(100).collect::<String>());
+        let tokens: Vec<String> = self.jieba.cut(&cleaned_content, true).into_iter().map(|s| s.to_string()).collect();
+        info!("分词完成: {} tokens, 原始内容前100字符: {:?}, 清理后前100字符: {:?}",
+            tokens.len(),
+            &content.chars().take(100).collect::<String>(),
+            &cleaned_content.chars().take(100).collect::<String>());
         debug!("分词结果前20个: {:?}", tokens.iter().take(20).collect::<Vec<_>>());
 
         let mut doc = TantivyDocument::default();
@@ -160,8 +218,8 @@ impl SearchService {
             doc.add_text(content_field, token);
         }
 
-        // 保存原始内容用于生成 snippet
-        doc.add_text(raw_content_field, content);
+        // 保存清理后的内容用于生成 snippet
+        doc.add_text(raw_content_field, &cleaned_content);
 
         match writer.add_document(doc) {
             Ok(_) => debug!("文档添加成功"),
@@ -331,24 +389,35 @@ impl SearchService {
 
     fn generate_snippet(content: &str, query: &str, max_len: usize) -> String {
         // 在原始内容中查找查询词的位置
-        if let Some(pos) = content.find(query) {
+        // 使用字符索引而不是字节索引来正确处理 UTF-8
+        let content_chars: Vec<char> = content.chars().collect();
+        let query_chars: Vec<char> = query.chars().collect();
+
+        // 在字符数组中查找查询词
+        let mut found_pos = None;
+        'outer: for i in 0..content_chars.len().saturating_sub(query_chars.len()) {
+            for j in 0..query_chars.len() {
+                if content_chars[i + j] != query_chars[j] {
+                    continue 'outer;
+                }
+            }
+            found_pos = Some(i);
+            break;
+        }
+
+        if let Some(pos) = found_pos {
             let start = pos.saturating_sub(30);
-            let end = (pos + query.len() + 30).min(content.len());
-            let snippet: String = content.chars().skip(start).take(end - start).collect();
+            let end = (pos + query_chars.len() + 30).min(content_chars.len());
+
+            let snippet: String = content_chars[start..end].iter().collect();
 
             // 高亮显示匹配的关键词
-            let query_in_snippet = if start > 0 {
-                // 如果有偏移，需要计算查询词在 snippet 中的位置
-                &snippet[pos - start..pos - start + query.len()]
-            } else {
-                query
-            };
-
-            let highlighted = snippet.replace(query_in_snippet, &format!("**{}**", query_in_snippet));
+            let query_in_snippet: String = query_chars.iter().collect();
+            let highlighted = snippet.replace(&query_in_snippet, &format!("**{}**", query_in_snippet));
             format!("...{}...", highlighted)
         } else {
-            let end = max_len.min(content.len());
-            format!("{}...", content.chars().take(end).collect::<String>())
+            let end = max_len.min(content_chars.len());
+            format!("{}...", content_chars[..end].iter().collect::<String>())
         }
     }
 }
