@@ -4,26 +4,28 @@
   import { getPdfDetail } from '../api';
 
   async function handleContentResultClick(result: SearchResult) {
-    selectedPdfId.set(result.pdf_id);
-    jumpToPage.set(result.page_number);
     try {
       const detail = await getPdfDetail(result.pdf_id);
+      selectedPdfId.set(result.pdf_id);
       selectedPdfPath.set(detail.storage_path);
       selectedPdfPageCount.set(detail.page_count);
+      jumpToPage.set(result.page_number);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
+      alert('该PDF文件可能已被删除，请重新搜索');
     }
   }
 
   async function handleFilenameResultClick(pdf: PdfInfo) {
-    selectedPdfId.set(pdf.id);
-    jumpToPage.set(null);
     try {
       const detail = await getPdfDetail(pdf.id);
+      selectedPdfId.set(pdf.id);
       selectedPdfPath.set(detail.storage_path);
       selectedPdfPageCount.set(detail.page_count);
+      jumpToPage.set(null);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
+      alert('该PDF文件可能已被删除，请重新搜索');
     }
   }
 
@@ -42,11 +44,11 @@
         <ul>
           {#each $searchResults as result}
             <li on:click={() => handleContentResultClick(result)}>
-              <div class="filename">{result.filename}</div>
-              <div class="page">第 {result.page_number} 页</div>
-              <div class="snippet">
+              <span class="filename">{result.filename}</span>
+              <span class="page">P{result.page_number}</span>
+              <span class="snippet">
                 {@html renderSnippet(result.snippet)}
-              </div>
+              </span>
             </li>
           {/each}
         </ul>
@@ -63,8 +65,8 @@
         <ul>
           {#each $filenameSearchResults as pdf}
             <li on:click={() => handleFilenameResultClick(pdf)}>
-              <div class="filename">{pdf.filename}</div>
-              <div class="meta">{pdf.page_count} 页</div>
+              <span class="filename">{pdf.filename}</span>
+              <span class="meta">{pdf.page_count} 页</span>
             </li>
           {/each}
         </ul>
@@ -100,11 +102,15 @@
   }
 
   li {
-    padding: 10px;
+    padding: 8px 10px;
     cursor: pointer;
     border-radius: 4px;
     margin-bottom: 5px;
     background: #f9f9f9;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
   }
 
   li:hover {
@@ -113,21 +119,35 @@
 
   .filename {
     font-weight: 500;
-    margin-bottom: 4px;
+    flex-shrink: 0;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .page, .meta {
+  .page {
     font-size: 12px;
     color: #2196f3;
-    margin-bottom: 4px;
+    flex-shrink: 0;
+    background: #e3f2fd;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .meta {
+    font-size: 12px;
+    color: #666;
+    flex-shrink: 0;
   }
 
   .snippet {
-    font-size: 13px;
+    flex: 1;
     color: #666;
-    line-height: 1.4;
-    word-break: break-word;
-    white-space: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .snippet :global(mark) {
