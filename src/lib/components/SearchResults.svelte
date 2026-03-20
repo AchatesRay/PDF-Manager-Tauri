@@ -113,12 +113,12 @@
     // 当前页：第 inPageIndex 个高亮用橙色，其他用黄色
     let highlightIndex = 0;
     return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
-      if (highlightIndex === inPageIndex) {
-        highlightIndex++;
-        return `<mark class="current-match">${text}</mark>`;
-      }
+      const idx = highlightIndex;
       highlightIndex++;
-      return `<mark>${text}</mark>`;
+      if (idx === inPageIndex) {
+        return `<mark class="current-match" data-index="${idx}">${text}</mark>`;
+      }
+      return `<mark data-index="${idx}">${text}</mark>`;
     });
   }
 
@@ -139,9 +139,33 @@
     }
   }
 
-  // 当结果索引变化时滚动到当前项
+  // 滚动 snippet 到当前高亮的关键字
+  function scrollSnippetToCurrentMatch() {
+    if (!resultListElement) return;
+    const activeItem = resultListElement.querySelector('li.active');
+    if (!activeItem) return;
+
+    const snippetEl = activeItem.querySelector('.snippet') as HTMLElement;
+    const currentMatch = activeItem.querySelector(`mark[data-index="${currentInPageIndex}"]`) as HTMLElement;
+
+    if (snippetEl && currentMatch) {
+      // 计算滚动位置，让当前关键字居中显示
+      const snippetWidth = snippetEl.clientWidth;
+      const matchLeft = currentMatch.offsetLeft;
+      const matchWidth = currentMatch.offsetWidth;
+      const scrollLeft = matchLeft - (snippetWidth / 2) + (matchWidth / 2);
+
+      snippetEl.scrollTo({
+        left: Math.max(0, scrollLeft),
+        behavior: 'smooth'
+      });
+    }
+  }
+
+  // 当结果索引或页内索引变化时滚动
   $: if (currentResultIndex >= 0) {
     setTimeout(scrollToCurrentResult, 50);
+    setTimeout(scrollSnippetToCurrentMatch, 50);
   }
 </script>
 
@@ -322,10 +346,14 @@
   .snippet {
     flex: 1;
     color: #666;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-x: auto;
     white-space: nowrap;
     min-width: 0;
+    scrollbar-width: none;
+  }
+
+  .snippet::-webkit-scrollbar {
+    display: none;
   }
 
   .snippet :global(mark) {
