@@ -157,7 +157,10 @@
   }
 
   // 当结果索引或页内索引变化时滚动
-  $: if (currentResultIndex >= 0) {
+  // 显式引用 currentInPageIndex 以确保 Svelte 追踪其变化
+  $: if (currentResultIndex >= 0 && resultListElement) {
+    // currentInPageIndex 变化也需要触发滚动
+    void currentInPageIndex;
     setTimeout(scrollToCurrent, 50);
   }
 </script>
