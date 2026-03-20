@@ -144,14 +144,11 @@
     const currentMatch = activeItem.querySelector(`mark[data-index="${currentInPageIndex}"]`) as HTMLElement;
 
     if (snippetEl && currentMatch) {
-      const snippetWidth = snippetEl.clientWidth;
-      const matchLeft = currentMatch.offsetLeft;
-      const matchWidth = currentMatch.offsetWidth;
-      const scrollLeft = matchLeft - (snippetWidth / 2) + (matchWidth / 2);
-
-      snippetEl.scrollTo({
-        left: Math.max(0, scrollLeft),
-        behavior: 'smooth'
+      // 使用 scrollIntoView 让关键字在snippet中居中显示
+      currentMatch.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest'
       });
     }
   }
@@ -161,7 +158,8 @@
   $: if (currentResultIndex >= 0 && resultListElement) {
     // currentInPageIndex 变化也需要触发滚动
     void currentInPageIndex;
-    setTimeout(scrollToCurrent, 50);
+    // 增加延迟确保DOM更新完成
+    setTimeout(scrollToCurrent, 100);
   }
 </script>
 
