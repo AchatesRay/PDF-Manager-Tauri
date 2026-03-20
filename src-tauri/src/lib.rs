@@ -41,13 +41,12 @@ pub fn run() {
             };
             app.manage(std::sync::Mutex::new(db));
 
-            // 初始化日志系统 (使用配置的数据目录)
+            // 获取数据目录
             debug!("获取配置的数据目录...");
             let data_dir = db::get_configured_data_dir(
                 &app.state::<std::sync::Mutex<rusqlite::Connection>>().lock().unwrap(),
                 app.handle()
             );
-            init_logging(&data_dir);
 
             // 初始化 PDF 服务
             debug!("初始化PDF服务...");
@@ -151,58 +150,65 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn init_logging(_data_dir: &std::path::Path) {
-    // 只输出到控制台，不生成日志文件
+/// 初始化早期日志（生成日志文件）
+fn init_early_logging(exe_dir: &std::path::Path) {
     use tracing_subscriber::fmt::time::LocalTime;
     use time::macros::format_description;
+    use time::OffsetDateTime;
 
-    // 从环境变量获取日志级别，默认为info
-    let log_level = std::env::var("RUST_LOG")
-        .unwrap_or_else(|_| "info".to_string());
+    let log_dir = exe_dir.join("logs");
 
+    // 创建日志目录
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    // 日志文件名
+    let today = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let date_str = today.format(format_description!("[year]-[month]-[day]")).unwrap_or("unknown".to_string());
+    let log_filename = format!("{}-pdf-ocr.log", date_str);
+    let log_path = log_dir.join(&log_filename);
+
+    // 尝试创建日志文件
+    let file_appender = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(_) => {
+            // 如果无法创建文件，只输出到控制台
+            eprintln!("无法创建日志文件，仅输出到控制台");
+            let _ = tracing_subscriber::fmt()
+                .with_target(true)
+                .with_line_number(true)
+                .with_timer(LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]")))
+                .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+                .try_init();
+            return;
+        }
+    };
+
+    // 初始化日志系统，同时输出到文件和控制台
     let timer = LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"));
 
-    match tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(file_appender))
+                .with_ansi(false)
+                .with_target(true)
+                .with_line_number(true)
+                .with_timer(timer.clone())
+        )
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
                 .with_ansi(false)
                 .with_target(true)
-                .with_thread_ids(false)
                 .with_line_number(true)
                 .with_timer(timer)
         )
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level))
-        )
-        .try_init()
-    {
-        Ok(_) => {
-            info!("日志系统初始化成功（仅控制台输出）");
-            info!("日志级别: {}", log_level);
-        }
-        Err(e) => {
-            eprintln!("日志系统初始化失败: {}", e);
-        }
-    }
-}
-
-/// 初始化早期日志（仅控制台输出）
-fn init_early_logging(_exe_dir: &std::path::Path) {
-    use tracing_subscriber::fmt::time::LocalTime;
-    use time::macros::format_description;
-
-    let timer = LocalTime::new(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"));
-
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .with_target(true)
-        .with_line_number(true)
-        .with_timer(timer)
-        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+        .with(tracing_subscriber::EnvFilter::new("info"))
         .try_init();
 
-    info!("早期日志系统初始化成功（仅控制台输出）");
+    info!("日志系统初始化成功，日志文件: {:?}", log_path);
 }
