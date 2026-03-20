@@ -44,7 +44,6 @@
   async function navigateToMatch(globalIndex: number) {
     const { resultIndex, inPageIndex } = findMatchPosition(globalIndex);
     const result = $searchResults[resultIndex];
-    console.log('navigateToMatch: globalIndex=', globalIndex, 'resultIndex=', resultIndex, 'inPageIndex=', inPageIndex, 'pageNumber=', result?.page_number);
     if (!result) return;
 
     currentMatchIndex = globalIndex;
@@ -69,14 +68,12 @@
   async function navigatePrev() {
     if (totalMatchCount === 0) return;
     const newIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : totalMatchCount - 1;
-    console.log('navigatePrev: currentMatchIndex=', currentMatchIndex, '-> newIndex=', newIndex, 'totalMatchCount=', totalMatchCount);
     await navigateToMatch(newIndex);
   }
 
   async function navigateNext() {
     if (totalMatchCount === 0) return;
     const newIndex = currentMatchIndex < totalMatchCount - 1 ? currentMatchIndex + 1 : 0;
-    console.log('navigateNext: currentMatchIndex=', currentMatchIndex, '-> newIndex=', newIndex, 'totalMatchCount=', totalMatchCount);
     await navigateToMatch(newIndex);
   }
 
@@ -95,17 +92,30 @@
 
   // 解析高亮的 snippet
   // isCurrentResult: 当前结果是否被选中
-  function renderSnippet(snippet: string, isCurrentResult: boolean): string {
+  // inPageIndex: 当前选中的是第几个匹配（从0开始）
+  function renderSnippet(snippet: string, isCurrentResult: boolean, inPageIndex: number): string {
     // 将 **text** 转换为高亮标记
-    // 当前页的高亮用橙色，其他页用黄色
-    if (isCurrentResult) {
-      return snippet.replace(/\*\*(.+?)\*\*/g, '<mark class="current-match">$1</mark>');
+    if (!isCurrentResult) {
+      // 非当前页：所有高亮用黄色
+      return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
     }
-    return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
+
+    // 当前页：第 inPageIndex 个高亮用橙色，其他用黄色
+    let highlightIndex = 0;
+    return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
+      if (highlightIndex === inPageIndex) {
+        highlightIndex++;
+        return `<mark class="current-match">${text}</mark>`;
+      }
+      highlightIndex++;
+      return `<mark>${text}</mark>`;
+    });
   }
 
-  // 获取当前匹配所在的结果索引
-  $: currentResultIndex = findMatchPosition(currentMatchIndex).resultIndex;
+  // 获取当前匹配所在的结果索引和页内索引
+  $: currentMatchPosition = findMatchPosition(currentMatchIndex);
+  $: currentResultIndex = currentMatchPosition.resultIndex;
+  $: currentInPageIndex = currentMatchPosition.inPageIndex;
 </script>
 
 {#if $showSearchResults}
@@ -130,7 +140,7 @@
               <span class="page">P{result.page_number}</span>
               <span class="match-count">{result.match_count}处</span>
               <span class="snippet">
-                {@html renderSnippet(result.snippet, index === currentResultIndex)}
+                {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
               </span>
             </li>
           {/each}
