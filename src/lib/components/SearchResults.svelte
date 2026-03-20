@@ -41,21 +41,31 @@
     navigateToMatch(0);
   }
 
+  // 当前显示的PDF ID和页码（用于判断是否需要切换页面）
+  let currentPdfId: number | null = null;
+  let currentPageNumber: number | null = null;
+
   async function navigateToMatch(globalIndex: number) {
     const { resultIndex, inPageIndex } = findMatchPosition(globalIndex);
     const result = $searchResults[resultIndex];
     if (!result) return;
 
     currentMatchIndex = globalIndex;
-    try {
-      const detail = await getPdfDetail(result.pdf_id);
-      selectedPdfId.set(result.pdf_id);
-      selectedPdfPath.set(detail.storage_path);
-      selectedPdfPageCount.set(detail.page_count);
-      jumpToPage.set(result.page_number);
-    } catch (e) {
-      console.error('Failed to get PDF detail:', e);
-      alert('该PDF文件可能已被删除，请重新搜索');
+
+    // 只有当PDF或页码变化时才重新加载
+    if (currentPdfId !== result.pdf_id || currentPageNumber !== result.page_number) {
+      currentPdfId = result.pdf_id;
+      currentPageNumber = result.page_number;
+      try {
+        const detail = await getPdfDetail(result.pdf_id);
+        selectedPdfId.set(result.pdf_id);
+        selectedPdfPath.set(detail.storage_path);
+        selectedPdfPageCount.set(detail.page_count);
+        jumpToPage.set(result.page_number);
+      } catch (e) {
+        console.error('Failed to get PDF detail:', e);
+        alert('该PDF文件可能已被删除，请重新搜索');
+      }
     }
   }
 
@@ -116,6 +126,23 @@
   $: currentMatchPosition = findMatchPosition(currentMatchIndex);
   $: currentResultIndex = currentMatchPosition.resultIndex;
   $: currentInPageIndex = currentMatchPosition.inPageIndex;
+
+  // 结果列表元素引用（用于滚动）
+  let resultListElement: HTMLUListElement | null = null;
+
+  // 滚动到当前选中的结果
+  function scrollToCurrentResult() {
+    if (!resultListElement) return;
+    const activeItem = resultListElement.querySelector('li.active');
+    if (activeItem) {
+      activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  // 当结果索引变化时滚动到当前项
+  $: if (currentResultIndex >= 0) {
+    setTimeout(scrollToCurrentResult, 50);
+  }
 </script>
 
 {#if $showSearchResults}
@@ -130,7 +157,7 @@
             <button on:click={navigateNext} title="下一个">下一个</button>
           </div>
         </div>
-        <ul class="result-list">
+        <ul class="result-list" bind:this={resultListElement}>
           {#each $searchResults as result, index}
             <li
               class:active={index === currentResultIndex}
