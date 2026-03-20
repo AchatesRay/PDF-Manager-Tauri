@@ -32,9 +32,11 @@
     return { resultIndex: 0, inPageIndex: 0 };
   }
 
-  // 当搜索结果变化时重置索引
-  $: if ($searchResults.length > 0) {
-    currentMatchIndex = Math.min(currentMatchIndex, totalMatchCount - 1);
+  // 当搜索结果变化时重置索引并跳转
+  let lastSearchResultsLength = 0;
+  $: if ($searchResults.length > 0 && $searchResults.length !== lastSearchResultsLength) {
+    lastSearchResultsLength = $searchResults.length;
+    currentMatchIndex = 0;
     // 自动跳转到第一个结果
     navigateToMatch(0);
   }
@@ -89,21 +91,18 @@
   }
 
   // 解析高亮的 snippet
-  // 当前页的结果用特殊样式高亮
+  // isCurrentResult: 当前结果是否被选中
   function renderSnippet(snippet: string, isCurrentResult: boolean): string {
     // 将 **text** 转换为高亮标记
-    // 当前页的高亮用橙色，其他用黄色
-    return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
-      if (isCurrentResult) {
-        return `<mark class="current-match">${text}</mark>`;
-      }
-      return `<mark>${text}</mark>`;
-    });
+    // 当前页的高亮用橙色，其他页用黄色
+    if (isCurrentResult) {
+      return snippet.replace(/\*\*(.+?)\*\*/g, '<mark class="current-match">$1</mark>');
+    }
+    return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
   }
 
   // 获取当前匹配所在的结果索引
-  $: currentMatchPosition = findMatchPosition(currentMatchIndex);
-  $: currentResultIndex = currentMatchPosition.resultIndex;
+  $: currentResultIndex = findMatchPosition(currentMatchIndex).resultIndex;
 </script>
 
 {#if $showSearchResults}
