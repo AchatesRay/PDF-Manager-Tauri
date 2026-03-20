@@ -130,26 +130,20 @@
   // 结果列表元素引用（用于滚动）
   let resultListElement: HTMLUListElement | null = null;
 
-  // 滚动到当前选中的结果
-  function scrollToCurrentResult() {
-    if (!resultListElement) return;
-    const activeItem = resultListElement.querySelector('li.active');
-    if (activeItem) {
-      activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }
-
-  // 滚动 snippet 到当前高亮的关键字
-  function scrollSnippetToCurrentMatch() {
+  // 滚动到当前选中的结果和关键字
+  function scrollToCurrent() {
     if (!resultListElement) return;
     const activeItem = resultListElement.querySelector('li.active');
     if (!activeItem) return;
 
+    // 滚动列表项
+    activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // 滚动 snippet 到当前关键字
     const snippetEl = activeItem.querySelector('.snippet') as HTMLElement;
     const currentMatch = activeItem.querySelector(`mark[data-index="${currentInPageIndex}"]`) as HTMLElement;
 
     if (snippetEl && currentMatch) {
-      // 计算滚动位置，让当前关键字居中显示
       const snippetWidth = snippetEl.clientWidth;
       const matchLeft = currentMatch.offsetLeft;
       const matchWidth = currentMatch.offsetWidth;
@@ -164,8 +158,7 @@
 
   // 当结果索引或页内索引变化时滚动
   $: if (currentResultIndex >= 0) {
-    setTimeout(scrollToCurrentResult, 50);
-    setTimeout(scrollSnippetToCurrentMatch, 50);
+    setTimeout(scrollToCurrent, 50);
   }
 </script>
 
