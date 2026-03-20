@@ -428,10 +428,16 @@ impl SearchService {
 
         let match_count = match_positions.len() as u32;
 
-        // 生成 snippet：包含第一个匹配位置附近的内容
-        let snippet = if let Some(&first_pos) = match_positions.first() {
+        // 生成 snippet：包含所有匹配位置
+        let snippet = if !match_positions.is_empty() {
+            // 计算包含所有匹配的范围
+            let first_pos = *match_positions.first().unwrap();
+            let last_pos = *match_positions.last().unwrap();
+            let query_len = query_chars.len();
+
+            // 从第一个匹配前30字符开始，到最后一个匹配结束+30字符
             let start = first_pos.saturating_sub(30);
-            let end = (first_pos + query_chars.len() + 30).min(content_chars.len());
+            let end = (last_pos + query_len + 30).min(content_chars.len());
 
             let snippet_str: String = content_chars[start..end].iter().collect();
 
