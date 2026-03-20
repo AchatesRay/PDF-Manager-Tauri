@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { searchQuery, searchResults, isLoading, showSearchResults, searchMode, filenameSearchResults } from '../../stores';
-  import { search, searchFilename } from '../../api';
+  import { searchQuery, searchResults, isLoading, showSearchResults, searchMode, filenameSearchResults } from '../stores';
+  import { search, searchFilename } from '../api';
 
   async function handleSearch() {
     if ($searchQuery.trim()) {

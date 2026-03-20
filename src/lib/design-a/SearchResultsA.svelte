@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount } from '../../stores';
-  import type { SearchResult, PdfInfo } from '../../api';
-  import { getPdfDetail } from '../../api';
+  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount } from '../stores';
+  import type { SearchResult, PdfInfo } from '../api';
+  import { getPdfDetail } from '../api';
 
   let currentMatchIndex = 0;
 

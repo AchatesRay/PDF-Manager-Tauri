@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders } from '../../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
-  import type { OcrProgress } from '../../stores';
+  import type { OcrProgress } from '../stores';
 
   onMount(async () => {
     await loadPdfs();
