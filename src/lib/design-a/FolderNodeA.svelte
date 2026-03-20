@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { selectedFolderId } from '../../stores';
-  import type { Folder } from '../../api';
+  import { selectedFolderId } from '../stores';
+  import type { Folder } from '../api';
 
   interface TreeNode extends Folder {
     children: TreeNode[];

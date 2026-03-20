@@ -1,10 +1,10 @@
 <script lang="ts">
   import { open, confirm } from '@tauri-apps/plugin-dialog';
-  import { folders, selectedFolderId, isLoading, pdfList } from '../../stores';
-  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader } from '../../api';
+  import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
+  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader } from '../api';
   import { onMount } from 'svelte';
   import FolderNodeA from './FolderNodeA.svelte';
-  import type { Folder, AppSettings } from '../../api';
+  import type { Folder, AppSettings } from '../api';
 
   interface TreeNode extends Folder {
     children: TreeNode[];

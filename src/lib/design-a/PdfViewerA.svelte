@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { renderPdfPage } from '../../api';
-  import { selectedPdfId, jumpToPage } from '../../stores';
+  import { renderPdfPage } from '../api';
+  import { selectedPdfId, jumpToPage } from '../stores';
   import { onMount, tick } from 'svelte';
 
   export let pdfPath: string | null = null;
