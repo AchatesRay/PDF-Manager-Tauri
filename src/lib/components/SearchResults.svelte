@@ -42,8 +42,9 @@
   }
 
   async function navigateToMatch(globalIndex: number) {
-    const { resultIndex } = findMatchPosition(globalIndex);
+    const { resultIndex, inPageIndex } = findMatchPosition(globalIndex);
     const result = $searchResults[resultIndex];
+    console.log('navigateToMatch: globalIndex=', globalIndex, 'resultIndex=', resultIndex, 'inPageIndex=', inPageIndex, 'pageNumber=', result?.page_number);
     if (!result) return;
 
     currentMatchIndex = globalIndex;
@@ -68,12 +69,14 @@
   async function navigatePrev() {
     if (totalMatchCount === 0) return;
     const newIndex = currentMatchIndex > 0 ? currentMatchIndex - 1 : totalMatchCount - 1;
+    console.log('navigatePrev: currentMatchIndex=', currentMatchIndex, '-> newIndex=', newIndex, 'totalMatchCount=', totalMatchCount);
     await navigateToMatch(newIndex);
   }
 
   async function navigateNext() {
     if (totalMatchCount === 0) return;
     const newIndex = currentMatchIndex < totalMatchCount - 1 ? currentMatchIndex + 1 : 0;
+    console.log('navigateNext: currentMatchIndex=', currentMatchIndex, '-> newIndex=', newIndex, 'totalMatchCount=', totalMatchCount);
     await navigateToMatch(newIndex);
   }
 
