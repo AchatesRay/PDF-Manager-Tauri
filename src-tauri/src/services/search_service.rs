@@ -41,7 +41,7 @@ impl SearchService {
     fn create_schema() -> Schema {
         let mut builder = Schema::builder();
         builder.add_u64_field("page_id", INDEXED | STORED);
-        builder.add_u64_field("pdf_id", STORED);
+        builder.add_u64_field("pdf_id", INDEXED | STORED);
         builder.add_u64_field("folder_id", STORED);
         builder.add_u64_field("page_number", STORED);
         builder.add_text_field("filename", TEXT | STORED);
