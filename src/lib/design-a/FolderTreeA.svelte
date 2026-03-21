@@ -340,13 +340,13 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px;
+    padding: 10px;
     border-bottom: 1px solid var(--border-light, #f3f4f6);
     flex-shrink: 0;
   }
 
   .panel-header h3 {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary, #6b7280);
     text-transform: uppercase;
@@ -356,15 +356,15 @@
 
   .header-actions {
     display: flex;
-    gap: 6px;
+    gap: 4px;
   }
 
   .icon-btn {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: var(--bg-tertiary, #f5f7f9);
-    border-radius: 6px;
+    border-radius: 5px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -378,24 +378,24 @@
   }
 
   .icon-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
 
   .folder-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 6px;
   }
 
   .folder-item {
     display: flex;
     align-items: center;
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
-    margin-bottom: 2px;
+    margin-bottom: 1px;
   }
 
   .folder-item:hover {
@@ -416,15 +416,15 @@
   }
 
   .folder-icon {
-    width: 18px;
-    height: 18px;
-    margin-right: 10px;
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
     color: var(--text-muted, #9ca3af);
     flex-shrink: 0;
   }
 
   .folder-name {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #1f2937);
     white-space: nowrap;
     overflow: hidden;
@@ -433,11 +433,11 @@
   }
 
   .folder-count {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-tertiary, #f5f7f9);
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 

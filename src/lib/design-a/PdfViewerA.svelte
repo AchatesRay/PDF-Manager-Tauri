@@ -214,43 +214,46 @@
   }
 
   .placeholder svg {
-    width: 48px;
-    height: 48px;
-    margin-bottom: 12px;
+    width: 40px;
+    height: 40px;
+    margin-bottom: 10px;
     opacity: 0.4;
   }
 
   .placeholder p {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 16px;
+    padding: 8px 12px;
     background: #1f2937;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .nav {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
 
   .nav-btn {
-    width: 32px;
-    height: 32px;
+    width: 26px;
+    height: 26px;
     background: #4b5563;
     color: #e5e7eb;
     border: none;
-    border-radius: 6px;
+    border-radius: 5px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.15s;
+    flex-shrink: 0;
   }
 
   .nav-btn:hover:not(:disabled) {
@@ -264,33 +267,35 @@
   }
 
   .nav-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
 
   .page-info {
     color: #e5e7eb;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
-    min-width: 60px;
+    min-width: 50px;
     text-align: center;
   }
 
   .zoom {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    flex-wrap: wrap;
   }
 
   .zoom-btn {
-    padding: 6px 10px;
+    padding: 5px 8px;
     background: #4b5563;
     color: #e5e7eb;
     border: none;
-    border-radius: 6px;
-    font-size: 12px;
+    border-radius: 5px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.15s;
+    flex-shrink: 0;
   }
 
   .zoom-btn:hover {
@@ -304,8 +309,8 @@
 
   .zoom-level {
     color: #9ca3af;
-    font-size: 12px;
-    min-width: 45px;
+    font-size: 11px;
+    min-width: 40px;
     text-align: center;
   }
 
@@ -321,7 +326,7 @@
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding: 24px;
+    padding: 20px;
     min-height: 100%;
   }
 
@@ -335,13 +340,13 @@
   }
 
   .spinner {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border: 3px solid #4b5563;
     border-top-color: var(--accent, #3b82f6);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
 
   @keyframes spin {
@@ -354,8 +359,8 @@
   }
 
   .error svg {
-    width: 32px;
-    height: 32px;
-    margin-bottom: 8px;
+    width: 28px;
+    height: 28px;
+    margin-bottom: 6px;
   }
 </style>

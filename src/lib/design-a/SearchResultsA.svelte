@@ -226,7 +226,7 @@
   .search-results {
     background: var(--bg-secondary, #ffffff);
     border-top: 1px solid var(--border, #e5e7eb);
-    max-height: 280px;
+    max-height: 240px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -236,7 +236,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 8px 12px;
     background: var(--bg-tertiary, #f5f7f9);
     border-bottom: 1px solid var(--border, #e5e7eb);
     flex-shrink: 0;
@@ -245,37 +245,37 @@
   .header-info {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   h4 {
     margin: 0;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
   }
 
   .match-count {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-secondary, #ffffff);
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 1px 6px;
+    border-radius: 3px;
   }
 
   .nav-buttons {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .nav-btn {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     padding: 0;
     background: var(--bg-secondary, #ffffff);
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 6px;
+    border-radius: 5px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -289,14 +289,14 @@
   }
 
   .nav-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
   }
 
   .index-info {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #6b7280);
-    min-width: 45px;
+    min-width: 40px;
     text-align: center;
     font-weight: 500;
   }
@@ -306,11 +306,11 @@
     padding: 0;
     margin: 0;
     overflow-y: auto;
-    max-height: 220px;
+    max-height: 180px;
   }
 
   li {
-    padding: 10px 16px;
+    padding: 6px 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border-light, #f3f4f6);
     transition: background 0.15s;
@@ -323,59 +323,56 @@
   li.active {
     background: var(--accent-soft, #eff6ff);
     border-left: 3px solid var(--accent, #3b82f6);
-    padding-left: 13px;
+    padding-left: 9px;
   }
 
   .result-main {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
+    gap: 8px;
+    margin-bottom: 3px;
   }
 
   .filename {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 200px;
+    max-width: 180px;
   }
 
   .page-badge {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--accent, #3b82f6);
     background: var(--accent-soft, #eff6ff);
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 
   .match-badge {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--warning, #f59e0b);
     background: #fffbeb;
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 
   .snippet {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #6b7280);
-    overflow-x: auto;
+    overflow: hidden;
     white-space: nowrap;
-    scrollbar-width: none;
-  }
-
-  .snippet::-webkit-scrollbar {
-    display: none;
+    text-overflow: ellipsis;
+    max-width: 100%;
   }
 
   .snippet :global(mark) {
     background-color: #fef08a;
-    padding: 1px 3px;
+    padding: 0 2px;
     border-radius: 2px;
     color: inherit;
   }
@@ -388,25 +385,25 @@
   .filename-list li {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   .filename-list svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     color: var(--text-muted, #9ca3af);
     flex-shrink: 0;
   }
 
   .meta {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #9ca3af);
     flex-shrink: 0;
     margin-left: auto;
   }
 
   .no-results {
-    padding: 20px;
+    padding: 16px;
     text-align: center;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-secondary, #ffffff);
@@ -415,16 +412,16 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .no-results svg {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     opacity: 0.5;
   }
 
   .no-results span {
-    font-size: 13px;
+    font-size: 12px;
   }
 </style>
