@@ -226,21 +226,21 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 8px 12px;
     flex-shrink: 0;
   }
 
   .list-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .count {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 400;
     color: var(--text-muted, #9ca3af);
   }
@@ -248,12 +248,12 @@
   .add-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 7px 14px;
+    gap: 4px;
+    padding: 5px 10px;
     background: var(--bg-secondary, #ffffff);
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 6px;
-    font-size: 12px;
+    border-radius: 5px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
     cursor: pointer;
@@ -266,13 +266,13 @@
   }
 
   .add-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
   }
 
   .list {
     list-style: none;
-    padding: 0 12px 12px;
+    padding: 0 8px 8px;
     margin: 0;
     flex: 1;
     overflow-y: auto;
@@ -281,12 +281,12 @@
   .pdf-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
+    gap: 8px;
+    padding: 8px 10px;
     background: var(--bg-secondary, #ffffff);
     border: 1px solid var(--border-light, #f3f4f6);
-    border-radius: 8px;
-    margin-bottom: 8px;
+    border-radius: 6px;
+    margin-bottom: 4px;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -303,7 +303,7 @@
 
   .filename {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
     white-space: nowrap;
@@ -313,7 +313,7 @@
   }
 
   .meta {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted, #9ca3af);
     white-space: nowrap;
     flex-shrink: 0;
@@ -326,13 +326,13 @@
   .status-indicator {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
+    gap: 4px;
+    font-size: 11px;
   }
 
   .status-dot {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     flex-shrink: 0;
   }
@@ -348,18 +348,18 @@
 
   .actions {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     flex-shrink: 0;
-    margin-left: 8px;
+    margin-left: 6px;
   }
 
   .ocr-btn {
-    padding: 5px 10px;
+    padding: 4px 8px;
     background: var(--success, #10b981);
     color: white;
     border: none;
-    border-radius: 5px;
-    font-size: 11px;
+    border-radius: 4px;
+    font-size: 10px;
     font-weight: 500;
     cursor: pointer;
     transition: background 0.15s;
@@ -375,18 +375,18 @@
   }
 
   .spinner-small {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     color: var(--warning, #f59e0b);
     animation: spin 1s linear infinite;
   }
 
   .delete-btn {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     background: none;
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 5px;
+    border-radius: 4px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -402,8 +402,8 @@
   }
 
   .delete-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
   }
 
   .loading-state, .empty-state {
@@ -413,7 +413,7 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted, #9ca3af);
-    gap: 12px;
+    gap: 10px;
   }
 
   .loading-state {
@@ -421,8 +421,8 @@
   }
 
   .spinner {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border: 2px solid var(--border, #e5e7eb);
     border-top-color: var(--accent, #3b82f6);
     border-radius: 50%;
@@ -434,18 +434,18 @@
   }
 
   .empty-state svg {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     opacity: 0.4;
   }
 
   .empty-state p {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-secondary, #6b7280);
   }
 
   .empty-state span {
-    font-size: 12px;
+    font-size: 11px;
   }
 </style>

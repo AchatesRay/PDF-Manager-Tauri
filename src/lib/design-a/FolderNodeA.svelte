@@ -87,11 +87,11 @@
   .folder-node {
     display: flex;
     align-items: center;
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
-    margin-bottom: 2px;
+    margin-bottom: 1px;
   }
 
   .folder-node:hover {
@@ -116,14 +116,14 @@
   }
 
   .expand-area {
-    width: 16px;
-    margin-right: 6px;
+    width: 14px;
+    margin-right: 4px;
     flex-shrink: 0;
   }
 
   .expand-btn {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border: none;
     background: none;
     cursor: pointer;
@@ -135,8 +135,8 @@
   }
 
   .expand-icon {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     transition: transform 0.15s ease;
   }
 
@@ -145,19 +145,19 @@
   }
 
   .expand-placeholder {
-    width: 16px;
+    width: 14px;
   }
 
   .folder-icon {
-    width: 18px;
-    height: 18px;
-    margin-right: 10px;
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
     color: var(--text-muted, #9ca3af);
     flex-shrink: 0;
   }
 
   .folder-name {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #1f2937);
     white-space: nowrap;
     overflow: hidden;
@@ -166,29 +166,29 @@
   }
 
   .folder-count {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-tertiary, #f5f7f9);
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 8px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
     flex-shrink: 0;
   }
 
   .node-actions {
     display: flex;
-    gap: 4px;
-    margin-left: 8px;
+    gap: 3px;
+    margin-left: 6px;
     opacity: 0;
     transition: opacity 0.15s;
   }
 
   .action-btn {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border: none;
     background: var(--bg-tertiary, #f5f7f9);
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -197,8 +197,8 @@
   }
 
   .action-btn svg {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
   }
 
   .action-btn.add {

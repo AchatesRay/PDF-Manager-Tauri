@@ -73,19 +73,19 @@
 <style>
   .search-bar {
     display: flex;
-    gap: 10px;
-    padding: 16px;
+    gap: 8px;
+    padding: 10px;
     background: var(--bg-secondary, #ffffff);
     border-bottom: 1px solid var(--border, #e5e7eb);
     flex-shrink: 0;
   }
 
   .mode-select {
-    padding: 10px 14px;
+    padding: 6px 10px;
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--bg-secondary, #ffffff);
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-primary, #1f2937);
     cursor: pointer;
     outline: none;
@@ -98,10 +98,10 @@
 
   input {
     flex: 1;
-    padding: 10px 14px;
+    padding: 6px 10px;
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 8px;
-    font-size: 13px;
+    border-radius: 6px;
+    font-size: 12px;
     outline: none;
     transition: all 0.15s;
     color: var(--text-primary, #1f2937);
@@ -113,14 +113,14 @@
 
   input:focus {
     border-color: var(--accent, #3b82f6);
-    box-shadow: 0 0 0 3px var(--accent-soft, #eff6ff);
+    box-shadow: 0 0 0 2px var(--accent-soft, #eff6ff);
   }
 
   .search-btn, .clear-btn {
-    width: 42px;
-    height: 42px;
+    width: 32px;
+    height: 32px;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -143,8 +143,8 @@
   }
 
   .search-btn svg, .clear-btn svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
 
   .clear-btn {
@@ -157,8 +157,8 @@
   }
 
   .spinner {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     animation: spin 1s linear infinite;
   }
 
