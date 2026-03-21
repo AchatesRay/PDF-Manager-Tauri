@@ -224,12 +224,23 @@
     }
   }
 
-  // 计算每个文件夹的PDF数量
+  // 计算每个文件夹的PDF数量 (响应式)
+  $: folderPdfCounts = (() => {
+    const counts: Record<number, number> = {};
+    const allCount = $pdfList.length;
+    for (const pdf of $pdfList) {
+      if (pdf.folder_id !== null && pdf.folder_id !== undefined) {
+        counts[pdf.folder_id] = (counts[pdf.folder_id] || 0) + 1;
+      }
+    }
+    return { counts, allCount };
+  })();
+
   function getPdfCount(folderId: number | null): number {
     if (folderId === null) {
-      return $pdfList.length;
+      return folderPdfCounts.allCount;
     }
-    return $pdfList.filter(p => p.folder_id === folderId).length;
+    return folderPdfCounts.counts[folderId] || 0;
   }
 </script>
 

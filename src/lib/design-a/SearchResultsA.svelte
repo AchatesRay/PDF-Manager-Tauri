@@ -370,13 +370,14 @@
     background-color: #fef08a;
     padding: 0 2px;
     border-radius: 2px;
-    color: var(--text-primary, #1f2937);
+    color: #1f2937 !important;
   }
 
   .snippet :global(mark.current-match) {
-    background-color: var(--warning, #f59e0b);
+    background-color: #f59e0b !important;
     color: #ffffff !important;
-    font-weight: 500;
+    font-weight: 600;
+    text-shadow: none;
   }
 
   .filename-list li {

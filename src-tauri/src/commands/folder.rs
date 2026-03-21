@@ -1,4 +1,4 @@
-use crate::db::{Db, get_setting, SETTING_DATA_DIR};
+use crate::db::{Db, get_setting, SETTING_DATA_DIR, default_data_dir};
 use crate::models::Folder;
 use chrono::Utc;
 use rusqlite::params;
@@ -127,17 +127,9 @@ pub fn create_folder(
     }
 
     // 获取数据目录作为默认存储路径
-    let default_data_dir = get_setting(&conn, SETTING_DATA_DIR)
-        .unwrap_or_else(|| {
-            app_handle
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data directory")
-                .join("data")
-                .to_string_lossy()
-                .to_string()
-        });
-    let default_pdfs_dir = PathBuf::from(&default_data_dir).join("pdfs");
+    let default_pdfs_dir = get_setting(&conn, SETTING_DATA_DIR)
+        .map(|p| PathBuf::from(p).join("pdfs"))
+        .unwrap_or_else(|| default_data_dir(&app_handle).join("pdfs"));
 
     // 获取父文件夹的 storage_path
     let parent_storage_path: Option<String> = if let Some(pid) = parent_id {
