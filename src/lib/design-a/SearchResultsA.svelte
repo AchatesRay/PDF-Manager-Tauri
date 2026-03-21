@@ -358,12 +358,12 @@
 
   .snippet {
     font-size: 11px;
-    color: var(--text-secondary, #6b7280);
+    color: #6b7280;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
     flex: 1;
-    min-width: 0;
+    min-width: 100px;
   }
 
   .snippet :global(mark) {
@@ -371,13 +371,13 @@
     padding: 0 2px;
     border-radius: 2px;
     color: #1f2937 !important;
+    font-weight: 500;
   }
 
   .snippet :global(mark.current-match) {
     background-color: #f59e0b !important;
     color: #ffffff !important;
     font-weight: 600;
-    text-shadow: none;
   }
 
   .filename-list li {
