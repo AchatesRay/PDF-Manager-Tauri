@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open, confirm } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
-  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader } from '../api';
+  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, getPdfList } from '../api';
   import { onMount } from 'svelte';
   import FolderNodeA from './FolderNodeA.svelte';
   import type { Folder, AppSettings } from '../api';
@@ -22,7 +22,9 @@
 
   onMount(async () => {
     try {
-      folders.set(await getFolders());
+      const [folderList, pdfs] = await Promise.all([getFolders(), getPdfList()]);
+      folders.set(folderList);
+      pdfList.set(pdfs);
       settings = await getSettings();
     } catch (e) {
       console.error('Failed to load folders:', e);

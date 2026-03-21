@@ -167,14 +167,12 @@
               class:active={index === currentResultIndex}
               on:click={() => handleResultClick(index)}
             >
-              <div class="result-main">
-                <span class="filename" title={result.filename}>{result.filename}</span>
-                <span class="page-badge">P{result.page_number}</span>
-                <span class="match-badge">{result.match_count} 处</span>
-              </div>
-              <div class="snippet">
+              <span class="filename" title={result.filename}>{result.filename}</span>
+              <span class="page-badge">P{result.page_number}</span>
+              <span class="match-badge">{result.match_count}处</span>
+              <span class="snippet">
                 {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
-              </div>
+              </span>
             </li>
           {/each}
         </ul>
@@ -310,6 +308,9 @@
   }
 
   li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 6px 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border-light, #f3f4f6);
@@ -326,13 +327,6 @@
     padding-left: 9px;
   }
 
-  .result-main {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 3px;
-  }
-
   .filename {
     font-size: 12px;
     font-weight: 500;
@@ -340,7 +334,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 180px;
+    max-width: 120px;
+    flex-shrink: 0;
   }
 
   .page-badge {
@@ -367,19 +362,21 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    max-width: 100%;
+    flex: 1;
+    min-width: 0;
   }
 
   .snippet :global(mark) {
     background-color: #fef08a;
     padding: 0 2px;
     border-radius: 2px;
-    color: inherit;
+    color: var(--text-primary, #1f2937);
   }
 
   .snippet :global(mark.current-match) {
     background-color: var(--warning, #f59e0b);
-    color: white;
+    color: #ffffff !important;
+    font-weight: 500;
   }
 
   .filename-list li {
