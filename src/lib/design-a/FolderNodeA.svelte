@@ -11,9 +11,17 @@
   export let onDelete: (id: number) => void;
   export let onAddSubfolder: (parentId: number) => void;
   export let getPdfCount: (folderId: number | null) => number;
+  export let newFolderParentId: number | null = null;
+  export let newFolderName: string = '';
+  export let selectedStoragePath: string | null = null;
+  export let onCreateFolder: () => void;
+  export let onCancelFolder: () => void;
+  export let onSelectDirectory: () => void;
+  export let onNewFolderNameChange: (value: string) => void;
 
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
+  $: showNewFolderHere = newFolderParentId === node.id;
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -27,6 +35,14 @@
   function handleAddSubfolder(e: MouseEvent) {
     e.stopPropagation();
     onAddSubfolder(node.id);
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      onCreateFolder();
+    } else if (e.key === 'Escape') {
+      onCancelFolder();
+    }
   }
 </script>
 
@@ -79,8 +95,40 @@
       {onDelete}
       {onAddSubfolder}
       {getPdfCount}
+      {newFolderParentId}
+      {newFolderName}
+      {selectedStoragePath}
+      {onCreateFolder}
+      {onCancelFolder}
+      {onSelectDirectory}
+      {onNewFolderNameChange}
     />
   {/each}
+{/if}
+
+{#if showNewFolderHere}
+  <li class="new-folder-item" style="padding-left: {12 + (level + 1) * 16}px">
+    <div class="new-folder-inline">
+      <input
+        type="text"
+        placeholder="子文件夹名称"
+        value={newFolderName}
+        on:input={(e) => onNewFolderNameChange(e.currentTarget.value)}
+        on:keydown={handleKeydown}
+      />
+      <button class="inline-btn cancel" on:click={onCancelFolder} title="取消">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+      <button class="inline-btn confirm" on:click={onCreateFolder} title="确定">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </button>
+    </div>
+  </li>
 {/if}
 
 <style>
@@ -217,5 +265,69 @@
   .action-btn.delete:hover {
     background: var(--error, #ef4444);
     color: white;
+  }
+
+  .new-folder-item {
+    display: flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-bottom: 1px;
+  }
+
+  .new-folder-inline {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex: 1;
+    background: var(--bg-tertiary, #f5f7f9);
+    padding: 3px 6px;
+    border-radius: 4px;
+    border: 1px dashed var(--accent, #3b82f6);
+    min-width: 0;
+  }
+
+  .new-folder-inline input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 11px;
+    outline: none;
+    min-width: 60px;
+  }
+
+  .inline-btn {
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+
+  .inline-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .inline-btn.cancel {
+    background: transparent;
+    color: var(--text-muted, #9ca3af);
+  }
+
+  .inline-btn.cancel:hover {
+    color: var(--error, #ef4444);
+  }
+
+  .inline-btn.confirm {
+    background: var(--success, #10b981);
+    color: white;
+  }
+
+  .inline-btn.confirm:hover {
+    background: #059669;
   }
 </style>

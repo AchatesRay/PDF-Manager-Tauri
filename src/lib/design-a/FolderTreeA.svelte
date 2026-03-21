@@ -2,7 +2,7 @@
   import { open, confirm } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
   import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, getPdfList } from '../api';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import FolderNodeA from './FolderNodeA.svelte';
   import type { Folder, AppSettings } from '../api';
 
@@ -16,7 +16,7 @@
   let selectedStoragePath: string | null = null;
   let showSettings = false;
   let settings: AppSettings | null = null;
-  let parentFolderName: string | null = null;
+  let newFolderInput: HTMLInputElement;
 
   $: treeNodes = buildTree($folders);
 
@@ -57,11 +57,6 @@
     return roots;
   }
 
-  function getFolderNameById(id: number): string | null {
-    const folder = $folders.find(f => f.id === id);
-    return folder?.name ?? null;
-  }
-
   async function selectDirectory() {
     const selected = await open({
       directory: true,
@@ -75,21 +70,20 @@
   }
 
   function handleAddClick() {
-    if (showNewFolder) {
-      handleCreate();
-    } else {
-      newFolderParentId = null;
-      parentFolderName = null;
-      showNewFolder = true;
-    }
+    newFolderParentId = null;
+    newFolderName = '';
+    selectedStoragePath = null;
+    showNewFolder = true;
+    tick().then(() => {
+      newFolderInput?.focus();
+    });
   }
 
   function handleAddSubfolder(parentId: number) {
     newFolderParentId = parentId;
-    parentFolderName = getFolderNameById(parentId);
-    showNewFolder = true;
     newFolderName = '';
     selectedStoragePath = null;
+    showNewFolder = true;
   }
 
   async function handleCreate() {
@@ -112,12 +106,19 @@
     newFolderName = '';
     showNewFolder = false;
     newFolderParentId = null;
-    parentFolderName = null;
     selectedStoragePath = null;
   }
 
   function handleCancel() {
     resetNewFolder();
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      handleCreate();
+    } else if (e.key === 'Escape') {
+      handleCancel();
+    }
   }
 
   async function handleDelete(id: number) {
@@ -144,14 +145,6 @@
 
   function selectFolder(id: number | null) {
     selectedFolderId.set(id);
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      handleCreate();
-    } else if (e.key === 'Escape') {
-      handleCancel();
-    }
   }
 
   async function selectDataDir() {
@@ -242,6 +235,8 @@
     }
     return folderPdfCounts.counts[folderId] || 0;
   }
+
+  $: showNewFolderAtRoot = showNewFolder && newFolderParentId === null;
 </script>
 
 <div class="folder-tree">
@@ -293,34 +288,6 @@
     </div>
   {/if}
 
-  {#if showNewFolder}
-    <div class="new-folder-panel">
-      {#if parentFolderName}
-        <div class="parent-hint">在 "{parentFolderName}" 下创建</div>
-      {/if}
-      <div class="new-folder-input">
-        <input
-          type="text"
-          bind:value={newFolderName}
-          placeholder="文件夹名称"
-          on:keydown={handleKeydown}
-        />
-        {#if !newFolderParentId}
-          <button class="path-btn" on:click={selectDirectory} title="选择存储目录">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            </svg>
-          </button>
-        {/if}
-        <button class="cancel-btn" on:click={handleCancel}>取消</button>
-        <button class="confirm-btn" on:click={handleCreate}>确定</button>
-      </div>
-      {#if !newFolderParentId && selectedStoragePath}
-        <div class="selected-path">{selectedStoragePath}</div>
-      {/if}
-    </div>
-  {/if}
-
   <div class="folder-list">
     <div
       class="folder-item"
@@ -333,9 +300,59 @@
       <span class="folder-name">全部文件</span>
       <span class="folder-count">{getPdfCount(null)}</span>
     </div>
+
     {#each treeNodes as node}
-      <FolderNodeA {node} level={0} onDelete={handleDelete} onAddSubfolder={handleAddSubfolder} {getPdfCount} />
+      <FolderNodeA
+        {node}
+        level={0}
+        onDelete={handleDelete}
+        onAddSubfolder={handleAddSubfolder}
+        {getPdfCount}
+        newFolderParentId={newFolderParentId}
+        newFolderName={newFolderName}
+        {selectedStoragePath}
+        onCreateFolder={handleCreate}
+        onCancelFolder={handleCancel}
+        onSelectDirectory={selectDirectory}
+        onNewFolderNameChange={(v) => newFolderName = v}
+      />
     {/each}
+
+    <!-- 根目录新建文件夹输入框 -->
+    {#if showNewFolderAtRoot}
+      <li class="new-folder-item">
+        <div class="new-folder-inline">
+          <input
+            type="text"
+            bind:this={newFolderInput}
+            placeholder="文件夹名称"
+            bind:value={newFolderName}
+            on:keydown={handleKeydown}
+          />
+          <button class="path-btn" on:click={selectDirectory} title="选择存储目录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <button class="inline-btn cancel" on:click={handleCancel} title="取消">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <button class="inline-btn confirm" on:click={handleCreate} title="确定">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </button>
+        </div>
+      </li>
+      {#if selectedStoragePath}
+        <li class="selected-path-item">
+          <span class="selected-path">{selectedStoragePath}</span>
+        </li>
+      {/if}
+    {/if}
   </div>
 </div>
 
@@ -399,6 +416,8 @@
     flex: 1;
     overflow-y: auto;
     padding: 6px;
+    list-style: none;
+    margin: 0;
   }
 
   .folder-item {
@@ -522,48 +541,46 @@
     margin: 12px 0;
   }
 
-  .new-folder-panel {
-    background: var(--bg-tertiary, #f5f7f9);
-    border-bottom: 1px solid var(--border, #e5e7eb);
-    padding: 12px;
-  }
-
-  .parent-hint {
-    font-size: 11px;
-    color: var(--text-secondary, #6b7280);
-    margin-bottom: 8px;
-  }
-
-  .new-folder-input {
+  .new-folder-item {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    padding: 2px 8px;
+    margin-bottom: 1px;
+    list-style: none;
   }
 
-  .new-folder-input input {
+  .new-folder-inline {
+    display: flex;
+    align-items: center;
+    gap: 3px;
     flex: 1;
-    padding: 8px 12px;
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 6px;
-    font-size: 13px;
-    outline: none;
-    transition: all 0.15s;
+    background: var(--bg-tertiary, #f5f7f9);
+    padding: 3px 6px;
+    border-radius: 4px;
+    border: 1px dashed var(--accent, #3b82f6);
+    min-width: 0;
   }
 
-  .new-folder-input input:focus {
-    border-color: var(--accent, #3b82f6);
-    box-shadow: 0 0 0 3px var(--accent-soft, #eff6ff);
+  .new-folder-inline input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 11px;
+    outline: none;
+    min-width: 60px;
   }
 
   .path-btn {
-    width: 36px;
-    height: 36px;
+    width: 18px;
+    height: 18px;
     border: 1px solid var(--border, #e5e7eb);
     background: var(--bg-secondary, #ffffff);
-    border-radius: 6px;
+    border-radius: 3px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     transition: all 0.15s;
   }
 
@@ -573,43 +590,54 @@
   }
 
   .path-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 10px;
+    height: 10px;
   }
 
-  .cancel-btn, .confirm-btn {
-    padding: 8px 14px;
+  .inline-btn {
+    width: 18px;
+    height: 18px;
     border: none;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
+    border-radius: 3px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
     transition: all 0.15s;
   }
 
-  .cancel-btn {
-    background: var(--bg-secondary, #ffffff);
-    border: 1px solid var(--border, #e5e7eb);
-    color: var(--text-secondary, #6b7280);
+  .inline-btn svg {
+    width: 10px;
+    height: 10px;
   }
 
-  .cancel-btn:hover {
-    border-color: var(--text-muted, #9ca3af);
+  .inline-btn.cancel {
+    background: transparent;
+    color: var(--text-muted, #9ca3af);
   }
 
-  .confirm-btn {
-    background: var(--accent, #3b82f6);
+  .inline-btn.cancel:hover {
+    color: var(--error, #ef4444);
+  }
+
+  .inline-btn.confirm {
+    background: var(--success, #10b981);
     color: white;
   }
 
-  .confirm-btn:hover {
-    background: #2563eb;
+  .inline-btn.confirm:hover {
+    background: #059669;
+  }
+
+  .selected-path-item {
+    list-style: none;
+    padding: 0 8px 4px;
   }
 
   .selected-path {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #9ca3af);
-    margin-top: 6px;
     word-break: break-all;
   }
 </style>
