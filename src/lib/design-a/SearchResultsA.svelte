@@ -330,7 +330,7 @@
   .filename {
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-primary, #1f2937);
+    color: #1f2937;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -340,8 +340,8 @@
 
   .page-badge {
     font-size: 10px;
-    color: var(--accent, #3b82f6);
-    background: var(--accent-soft, #eff6ff);
+    color: #3b82f6;
+    background: #eff6ff;
     padding: 1px 5px;
     border-radius: 3px;
     flex-shrink: 0;
@@ -349,7 +349,7 @@
 
   .match-badge {
     font-size: 10px;
-    color: var(--warning, #f59e0b);
+    color: #f59e0b;
     background: #fffbeb;
     padding: 1px 5px;
     border-radius: 3px;

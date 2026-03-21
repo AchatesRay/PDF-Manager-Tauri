@@ -218,16 +218,20 @@
   }
 
   // 计算每个文件夹的PDF数量 (响应式)
-  $: folderPdfCounts = (() => {
+  // 注意：这是一个响应式语句，当 $pdfList 变化时会自动重新计算
+  $: folderPdfCounts = calculateFolderPdfCounts($pdfList);
+
+  function calculateFolderPdfCounts(pdfs: typeof $pdfList) {
     const counts: Record<number, number> = {};
-    const allCount = $pdfList.length;
-    for (const pdf of $pdfList) {
+    let allCount = 0;
+    for (const pdf of pdfs) {
+      allCount++;
       if (pdf.folder_id !== null && pdf.folder_id !== undefined) {
         counts[pdf.folder_id] = (counts[pdf.folder_id] || 0) + 1;
       }
     }
     return { counts, allCount };
-  })();
+  }
 
   function getPdfCount(folderId: number | null): number {
     if (folderId === null) {
