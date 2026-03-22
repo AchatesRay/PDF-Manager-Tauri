@@ -167,14 +167,12 @@
               class:active={index === currentResultIndex}
               on:click={() => handleResultClick(index)}
             >
-              <div class="result-main">
-                <span class="filename" title={result.filename}>{result.filename}</span>
-                <span class="page-badge">P{result.page_number}</span>
-                <span class="match-badge">{result.match_count} 处</span>
-              </div>
-              <div class="snippet">
+              <span class="filename" title={result.filename}>{result.filename}</span>
+              <span class="page-badge">P{result.page_number}</span>
+              <span class="match-badge">{result.match_count}处</span>
+              <span class="snippet">
                 {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
-              </div>
+              </span>
             </li>
           {/each}
         </ul>
@@ -306,11 +304,14 @@
     padding: 0;
     margin: 0;
     overflow-y: auto;
-    max-height: 220px;
+    max-height: 180px;
   }
 
   li {
-    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border-light, #f3f4f6);
     transition: background 0.15s;
@@ -323,59 +324,51 @@
   li.active {
     background: var(--accent-soft, #eff6ff);
     border-left: 3px solid var(--accent, #3b82f6);
-    padding-left: 13px;
-  }
-
-  .result-main {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
+    padding-left: 9px;
   }
 
   .filename {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-primary, #1f2937);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 200px;
+    max-width: 120px;
+    flex-shrink: 0;
   }
 
   .page-badge {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--accent, #3b82f6);
     background: var(--accent-soft, #eff6ff);
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 
   .match-badge {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--warning, #f59e0b);
     background: #fffbeb;
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     flex-shrink: 0;
   }
 
   .snippet {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #6b7280);
-    overflow-x: auto;
+    overflow: hidden;
     white-space: nowrap;
-    scrollbar-width: none;
-  }
-
-  .snippet::-webkit-scrollbar {
-    display: none;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 100px;
   }
 
   .snippet :global(mark) {
     background-color: #fef08a;
-    padding: 1px 3px;
+    padding: 0 2px;
     border-radius: 2px;
     color: inherit;
   }
