@@ -96,14 +96,8 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  .app-a {
-    display: flex;
-    height: 100vh;
-    width: 100vw;
-    overflow: hidden;
-    background: var(--bg-primary, #fafbfc);
-
-    /* CSS Variables for Design A */
+  /* CSS Variables for Design A - defined globally so child components can access them */
+  :global(:root) {
     --bg-primary: #fafbfc;
     --bg-secondary: #ffffff;
     --bg-tertiary: #f5f7f9;
@@ -117,6 +111,14 @@
     --success: #10b981;
     --warning: #f59e0b;
     --error: #ef4444;
+  }
+
+  .app-a {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    background: var(--bg-primary);
   }
 
   .panel-left {
