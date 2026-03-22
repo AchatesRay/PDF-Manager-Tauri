@@ -167,12 +167,14 @@
               class:active={index === currentResultIndex}
               on:click={() => handleResultClick(index)}
             >
-              <span class="filename" title={result.filename}>{result.filename}</span>
-              <span class="page-badge">P{result.page_number}</span>
-              <span class="match-badge">{result.match_count}处</span>
-              <span class="snippet">
+              <div class="result-main">
+                <span class="filename" title={result.filename}>{result.filename}</span>
+                <span class="page-badge">P{result.page_number}</span>
+                <span class="match-badge">{result.match_count} 处</span>
+              </div>
+              <div class="snippet">
                 {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
-              </span>
+              </div>
             </li>
           {/each}
         </ul>
@@ -304,14 +306,11 @@
     padding: 0;
     margin: 0;
     overflow-y: auto;
-    max-height: 180px;
+    max-height: 220px;
   }
 
   li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
+    padding: 10px 16px;
     cursor: pointer;
     border-bottom: 1px solid var(--border-light, #f3f4f6);
     transition: background 0.15s;
@@ -324,60 +323,66 @@
   li.active {
     background: var(--accent-soft, #eff6ff);
     border-left: 3px solid var(--accent, #3b82f6);
-    padding-left: 9px;
+    padding-left: 13px;
+  }
+
+  .result-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
   }
 
   .filename {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
-    color: #1f2937;
+    color: var(--text-primary, #1f2937);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px;
-    flex-shrink: 0;
+    max-width: 200px;
   }
 
   .page-badge {
-    font-size: 10px;
-    color: #3b82f6;
-    background: #eff6ff;
-    padding: 1px 5px;
-    border-radius: 3px;
+    font-size: 11px;
+    color: var(--accent, #3b82f6);
+    background: var(--accent-soft, #eff6ff);
+    padding: 2px 6px;
+    border-radius: 4px;
     flex-shrink: 0;
   }
 
   .match-badge {
-    font-size: 10px;
-    color: #f59e0b;
+    font-size: 11px;
+    color: var(--warning, #f59e0b);
     background: #fffbeb;
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
     flex-shrink: 0;
   }
 
   .snippet {
-    font-size: 11px;
-    color: #6b7280;
-    overflow: hidden;
+    font-size: 12px;
+    color: var(--text-secondary, #6b7280);
+    overflow-x: auto;
     white-space: nowrap;
-    text-overflow: ellipsis;
-    flex: 1;
-    min-width: 100px;
+    scrollbar-width: none;
+  }
+
+  .snippet::-webkit-scrollbar {
+    display: none;
   }
 
   .snippet :global(mark) {
     background-color: #fef08a;
-    padding: 0 2px;
+    padding: 1px 3px;
     border-radius: 2px;
-    color: #1f2937 !important;
-    font-weight: 500;
+    color: inherit;
   }
 
   .snippet :global(mark.current-match) {
-    background-color: #f59e0b !important;
-    color: #ffffff !important;
-    font-weight: 600;
+    background-color: var(--warning, #f59e0b);
+    color: white;
   }
 
   .filename-list li {
