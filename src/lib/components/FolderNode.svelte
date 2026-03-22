@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedFolderId } from '../stores';
+  import { selectedFolderId, pdfList } from '../stores';
   import type { Folder } from '../api';
 
   export let node: Folder & { children: (Folder & { children: Folder[] })[] };
@@ -9,6 +9,23 @@
 
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
+
+  // 递归收集所有子文件夹ID（包括当前文件夹）
+  function getAllFolderIds(folderNode: typeof node): number[] {
+    const ids = [folderNode.id];
+    if (folderNode.children) {
+      for (const child of folderNode.children) {
+        ids.push(...getAllFolderIds(child));
+      }
+    }
+    return ids;
+  }
+
+  // 计算文件夹及其子文件夹的文件总数
+  $: fileCount = (() => {
+    const folderIds = getAllFolderIds(node);
+    return $pdfList.filter(pdf => folderIds.includes(pdf.folder_id ?? 0)).length;
+  })();
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -39,6 +56,7 @@
   {/if}
   <span class="folder-icon">📁</span>
   <span class="name">{node.name}</span>
+  <span class="file-count">({fileCount})</span>
   <button class="add-btn" on:click={handleAddSubfolder} title="添加子文件夹">+</button>
   <button class="delete-btn" on:click|stopPropagation={() => onDelete(node.id)} title="删除">×</button>
 </li>
@@ -99,6 +117,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .file-count {
+    font-size: 11px;
+    color: #888;
+    flex-shrink: 0;
   }
 
   .add-btn {
