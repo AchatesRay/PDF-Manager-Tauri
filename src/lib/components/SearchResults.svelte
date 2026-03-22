@@ -176,7 +176,7 @@
           </div>
         </div>
         <ul class="result-list" bind:this={resultListElement}>
-          {#each $searchResults as result, index}
+          {#each $searchResults as result, index (result.page_id)}
             <li
               class:active={index === currentResultIndex}
               on:click={() => handleResultClick(index)}
@@ -342,7 +342,7 @@
     color: #666;
     overflow-x: auto;
     white-space: nowrap;
-    min-width: 0;
+    min-width: 100px;
     scrollbar-width: none;
   }
 
@@ -354,6 +354,7 @@
     background-color: #fff176;
     padding: 0 2px;
     border-radius: 2px;
+    color: #333;
   }
 
   .snippet :global(mark.current-match) {

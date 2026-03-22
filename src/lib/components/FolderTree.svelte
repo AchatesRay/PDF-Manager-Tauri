@@ -1,6 +1,6 @@
 <script lang="ts">
   import { open, confirm } from '@tauri-apps/plugin-dialog';
-  import { folders, selectedFolderId, isLoading } from '../stores';
+  import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
   import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, openPdfExternally } from '../api';
   import { onMount } from 'svelte';
   import FolderNode from './FolderNode.svelte';
@@ -298,6 +298,7 @@
     >
       <span class="folder-icon">📚</span>
       <span class="name">全部文件</span>
+      <span class="file-count">({$pdfList.length})</span>
     </li>
     {#each treeNodes as node}
       <FolderNode {node} level={0} onDelete={handleDelete} onAddSubfolder={handleAddSubfolder} />
@@ -375,6 +376,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .file-count {
+    font-size: 11px;
+    color: #888;
+    flex-shrink: 0;
   }
 
   .new-folder {
