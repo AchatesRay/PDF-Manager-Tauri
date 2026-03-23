@@ -134,9 +134,19 @@
     }
   }
 
+  // 递归获取文件夹及其所有子文件夹的 ID
+  function getAllFolderIds(folderId: number): number[] {
+    const ids = [folderId];
+    const children = $folders.filter(f => f.parent_id === folderId);
+    for (const child of children) {
+      ids.push(...getAllFolderIds(child.id));
+    }
+    return ids;
+  }
+
   $: filteredPdfs = $selectedFolderId === null
     ? $pdfList
-    : $pdfList.filter(p => p.folder_id === $selectedFolderId);
+    : $pdfList.filter(p => getAllFolderIds($selectedFolderId!).includes(p.folder_id ?? 0));
 </script>
 
 <div class="pdf-list">
