@@ -134,29 +134,10 @@
     return ids;
   }
 
-  // 预计算每个文件夹的文件数量（响应式）
-  $: folderPdfCounts = (() => {
-    const counts = new Map<number | null, { total: number; ocrDone: number }>();
-    // 全部文件
-    const allPdfs = $pdfList;
-    counts.set(null, {
-      total: allPdfs.length,
-      ocrDone: allPdfs.filter(p => p.status === 'done').length
-    });
-    // 每个文件夹
-    for (const folder of $folders) {
-      const ids = getAllFolderIds(folder.id);
-      const folderPdfs = $pdfList.filter(p => ids.includes(p.folder_id ?? 0));
-      counts.set(folder.id, {
-        total: folderPdfs.length,
-        ocrDone: folderPdfs.filter(p => p.status === 'done').length
-      });
-    }
-    return counts;
-  })();
-
-  function getPdfCount(folderId: number | null): { total: number; ocrDone: number } {
-    return folderPdfCounts.get(folderId) ?? { total: 0, ocrDone: 0 };
+  // 获取文件夹的文件数量（包括子文件夹）
+  function getPdfCount(folderId: number | null): number {
+    const ids = getAllFolderIds(folderId);
+    return $pdfList.filter(p => ids.includes(p.folder_id ?? 0)).length;
   }
 
   async function handleDelete(id: number) {
@@ -180,8 +161,6 @@
       }
     }
   }
-
-  $: allCountInfo = getPdfCount(null);
 
   function selectFolder(id: number | null) {
     selectedFolderId.set(id);
@@ -319,11 +298,7 @@
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
       </svg>
       <span class="folder-name">全部文件</span>
-      <span class="folder-count">
-        <span class="ocr-count">{allCountInfo.ocrDone}</span>
-        <span class="count-sep">/</span>
-        <span class="total-count">{allCountInfo.total}</span>
-      </span>
+      <span class="folder-count">{getPdfCount(null)}</span>
     </li>
 
     {#each treeNodes as node}
@@ -501,19 +476,6 @@
     font-variant-numeric: tabular-nums;
     min-width: 32px;
     text-align: center;
-  }
-
-  .folder-count .ocr-count {
-    color: var(--success, #10b981);
-    font-weight: 500;
-  }
-
-  .folder-count .count-sep {
-    margin: 0 1px;
-  }
-
-  .folder-count .total-count {
-    color: var(--text-secondary, #6b7280);
   }
 
   .settings-panel {

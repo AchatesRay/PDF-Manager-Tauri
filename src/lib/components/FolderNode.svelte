@@ -10,7 +10,7 @@
   export let level = 0;
   export let onDelete: (id: number) => void;
   export let onAddSubfolder: (parentId: number) => void;
-  export let getPdfCount: (folderId: number | null) => { total: number; ocrDone: number };
+  export let getPdfCount: (folderId: number | null) => number;
   export let newFolderParentId: number | null = null;
   export let newFolderName: string = '';
   export let selectedStoragePath: string | null = null;
@@ -22,8 +22,6 @@
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
-
-  $: countInfo = getPdfCount(node.id);
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -72,13 +70,9 @@
 
   <span class="folder-name">{node.name}</span>
 
-  <div class="right-area">
-    <span class="folder-count">
-      <span class="ocr-count">{countInfo.ocrDone}</span>
-      <span class="count-sep">/</span>
-      <span class="total-count">{countInfo.total}</span>
-    </span>
-    <div class="node-actions">
+  <span class="folder-count">{getPdfCount(node.id)}</span>
+
+  <div class="node-actions">
       <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -92,7 +86,6 @@
         </svg>
       </button>
     </div>
-  </div>
 </li>
 
 {#if hasChildren && isExpanded}
@@ -222,36 +215,14 @@
     min-width: 0;
   }
 
-  .right-area {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-    margin-left: auto;
-  }
-
   .folder-count {
     font-size: 10px;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-tertiary, #f5f7f9);
     padding: 1px 5px;
     border-radius: 3px;
-    font-variant-numeric: tabular-nums;
-    min-width: 32px;
-    text-align: center;
-  }
-
-  .ocr-count {
-    color: var(--success, #10b981);
-    font-weight: 500;
-  }
-
-  .count-sep {
-    margin: 0 1px;
-  }
-
-  .total-count {
-    color: var(--text-secondary, #6b7280);
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .node-actions {
