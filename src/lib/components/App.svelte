@@ -1,9 +1,9 @@
 <script lang="ts">
-  import FolderTreeA from './FolderTreeA.svelte';
-  import PdfListA from './PdfListA.svelte';
-  import SearchBarA from './SearchBarA.svelte';
-  import SearchResultsA from './SearchResultsA.svelte';
-  import PdfViewerA from './PdfViewerA.svelte';
+  import FolderTree from './FolderTree.svelte';
+  import PdfList from './PdfList.svelte';
+  import SearchBar from './SearchBar.svelte';
+  import SearchResults from './SearchResults.svelte';
+  import PdfViewer from './PdfViewer.svelte';
   import { selectedPdfPath, selectedPdfPageCount } from '../stores';
 
   // 面板宽度状态
@@ -54,10 +54,10 @@
 
 <svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
 
-<main class="app-a">
+<main class="app">
   <!-- 左侧面板 -->
   <div class="panel-left" style="width: {leftWidth}px">
-    <FolderTreeA />
+    <FolderTree />
   </div>
 
   <!-- 左侧分隔条 -->
@@ -65,9 +65,9 @@
 
   <!-- 中间面板 -->
   <div class="panel-center">
-    <SearchBarA />
-    <PdfListA />
-    <SearchResultsA />
+    <SearchBar />
+    <PdfList />
+    <SearchResults />
   </div>
 
   <!-- 右侧分隔条 -->
@@ -75,7 +75,7 @@
 
   <!-- 右侧面板 -->
   <div class="panel-right" style="width: {rightWidth}px">
-    <PdfViewerA pdfPath={$selectedPdfPath} pageCount={$selectedPdfPageCount} />
+    <PdfViewer pdfPath={$selectedPdfPath} pageCount={$selectedPdfPageCount} />
   </div>
 </main>
 
@@ -113,7 +113,7 @@
     --error: #ef4444;
   }
 
-  .app-a {
+  .app {
     display: flex;
     height: 100vh;
     width: 100vw;
