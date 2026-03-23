@@ -120,6 +120,38 @@
     }
   }
 
+  // 递归获取文件夹及其所有子文件夹的 ID
+  function getAllFolderIds(folderId: number | null): number[] {
+    if (folderId === null) {
+      return $folders.map(f => f.id);
+    }
+
+    const ids = [folderId];
+    const children = $folders.filter(f => f.parent_id === folderId);
+    for (const child of children) {
+      ids.push(...getAllFolderIds(child.id));
+    }
+    return ids;
+  }
+
+  // 预计算每个文件夹的文件数量（响应式）
+  $: folderPdfCounts = (() => {
+    const counts = new Map<number | null, number>();
+    // 全部文件
+    counts.set(null, $pdfList.length);
+    // 每个文件夹
+    for (const folder of $folders) {
+      const ids = getAllFolderIds(folder.id);
+      const count = $pdfList.filter(p => ids.includes(p.folder_id ?? 0)).length;
+      counts.set(folder.id, count);
+    }
+    return counts;
+  })();
+
+  function getPdfCount(folderId: number | null): number {
+    return folderPdfCounts.get(folderId) ?? 0;
+  }
+
   async function handleDelete(id: number) {
     const folder = $folders.find(f => f.id === id);
     const folderName = folder?.name || '此文件夹';
@@ -214,13 +246,6 @@
         alert('清除失败: ' + e);
       }
     }
-  }
-
-  function getPdfCount(folderId: number | null): number {
-    if (folderId === null) {
-      return $pdfList.length;
-    }
-    return $pdfList.filter(p => p.folder_id === folderId).length;
   }
 
   $: showNewFolderAtRoot = showNewFolder && newFolderParentId === null;
