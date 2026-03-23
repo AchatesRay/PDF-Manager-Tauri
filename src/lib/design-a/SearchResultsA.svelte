@@ -359,11 +359,15 @@
   .snippet {
     font-size: 11px;
     color: var(--text-secondary, #6b7280);
-    overflow: hidden;
+    overflow-x: auto;
     white-space: nowrap;
-    text-overflow: ellipsis;
     flex: 1;
-    min-width: 100px;
+    min-width: 0;
+    scrollbar-width: none;
+  }
+
+  .snippet::-webkit-scrollbar {
+    display: none;
   }
 
   .snippet :global(mark) {
