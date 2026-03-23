@@ -147,6 +147,7 @@
     cursor: pointer;
     transition: all 0.15s ease;
     margin-bottom: 1px;
+    position: relative;
   }
 
   .folder-node:hover {
@@ -229,6 +230,7 @@
     border-radius: 3px;
     margin-left: auto;
     flex-shrink: 0;
+    margin-right: 24px;
   }
 
   .folder-count.completed {
@@ -239,9 +241,14 @@
   .node-actions {
     display: flex;
     gap: 3px;
-    margin-left: 6px;
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
     opacity: 0;
     transition: opacity 0.15s;
+    background: var(--bg-secondary, #ffffff);
+    padding-left: 4px;
   }
 
   .action-btn {
