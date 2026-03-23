@@ -10,7 +10,7 @@
   export let level = 0;
   export let onDelete: (id: number) => void;
   export let onAddSubfolder: (parentId: number) => void;
-  export let getPdfCount: (folderId: number | null) => number;
+  export let getPdfCount: (folderId: number | null) => { total: number; ocrDone: number };
   export let newFolderParentId: number | null = null;
   export let newFolderName: string = '';
   export let selectedStoragePath: string | null = null;
@@ -22,6 +22,8 @@
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
+
+  $: countInfo = getPdfCount(node.id);
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -69,21 +71,27 @@
   </svg>
 
   <span class="folder-name">{node.name}</span>
-  <span class="folder-count">{getPdfCount(node.id)}</span>
 
-  <div class="node-actions">
-    <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="12" y1="5" x2="12" y2="19"/>
-        <line x1="5" y1="12" x2="19" y2="12"/>
-      </svg>
-    </button>
-    <button class="action-btn delete" on:click|stopPropagation={() => onDelete(node.id)} title="删除">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="3 6 5 6 21 6"/>
-        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-      </svg>
-    </button>
+  <div class="right-area">
+    <span class="folder-count">
+      <span class="ocr-count">{countInfo.ocrDone}</span>
+      <span class="count-sep">/</span>
+      <span class="total-count">{countInfo.total}</span>
+    </span>
+    <div class="node-actions">
+      <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+      <button class="action-btn delete" on:click|stopPropagation={() => onDelete(node.id)} title="删除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
+      </button>
+    </div>
   </div>
 </li>
 
@@ -211,6 +219,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
+    min-width: 0;
+  }
+
+  .right-area {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-left: auto;
   }
 
   .folder-count {
@@ -219,8 +236,22 @@
     background: var(--bg-tertiary, #f5f7f9);
     padding: 1px 5px;
     border-radius: 3px;
-    margin-left: 6px;
-    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    min-width: 32px;
+    text-align: center;
+  }
+
+  .ocr-count {
+    color: var(--success, #10b981);
+    font-weight: 500;
+  }
+
+  .count-sep {
+    margin: 0 1px;
+  }
+
+  .total-count {
+    color: var(--text-secondary, #6b7280);
   }
 
   .node-actions {
