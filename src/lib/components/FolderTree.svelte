@@ -140,6 +140,16 @@
     return $pdfList.filter(p => ids.includes(p.folder_id ?? 0)).length;
   }
 
+  // 获取文件夹的OCR统计（包括子文件夹）
+  function getFolderOcrStats(folderId: number | null): { ocrCount: number; totalCount: number } {
+    const ids = getAllFolderIds(folderId);
+    const pdfs = $pdfList.filter(p => ids.includes(p.folder_id ?? 0));
+    return {
+      ocrCount: pdfs.filter(p => p.status === 'done').length,
+      totalCount: pdfs.length
+    };
+  }
+
   async function handleDelete(id: number) {
     const folder = $folders.find(f => f.id === id);
     const folderName = folder?.name || '此文件夹';
@@ -236,6 +246,8 @@
     }
   }
 
+  $: allStats = getFolderOcrStats(null);
+
   $: showNewFolderAtRoot = showNewFolder && newFolderParentId === null;
 </script>
 
@@ -298,7 +310,9 @@
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
       </svg>
       <span class="folder-name">全部文件</span>
-      <span class="folder-count">{getPdfCount(null)}</span>
+      <span class="folder-count" class:completed={allStats.ocrCount === allStats.totalCount && allStats.totalCount > 0}>
+        {allStats.ocrCount}/{allStats.totalCount}
+      </span>
     </li>
 
     {#each treeNodes as node}
@@ -308,6 +322,7 @@
         onDelete={handleDelete}
         onAddSubfolder={handleAddSubfolder}
         {getPdfCount}
+        {getFolderOcrStats}
         newFolderParentId={newFolderParentId}
         newFolderName={newFolderName}
         {selectedStoragePath}
@@ -476,6 +491,11 @@
     font-variant-numeric: tabular-nums;
     min-width: 32px;
     text-align: center;
+  }
+
+  .folder-count.completed {
+    background: #dcfce7;
+    color: #16a34a;
   }
 
   .settings-panel {
