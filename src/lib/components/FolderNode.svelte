@@ -73,11 +73,11 @@
 
   <span class="folder-name">{node.name}</span>
 
-  <span class="folder-count" class:completed={stats.ocrCount === stats.totalCount && stats.totalCount > 0}>
-    {stats.ocrCount}/{stats.totalCount}
-  </span>
-
-  <div class="node-actions">
+  <div class="right-area">
+    <span class="folder-count" class:completed={stats.ocrCount === stats.totalCount && stats.totalCount > 0}>
+      {stats.ocrCount}/{stats.totalCount}
+    </span>
+    <div class="node-actions">
       <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -91,6 +91,7 @@
         </svg>
       </button>
     </div>
+  </div>
 </li>
 
 {#if hasChildren && isExpanded}
@@ -147,7 +148,6 @@
     cursor: pointer;
     transition: all 0.15s ease;
     margin-bottom: 1px;
-    position: relative;
   }
 
   .folder-node:hover {
@@ -222,15 +222,20 @@
     min-width: 0;
   }
 
+  .right-area {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
   .folder-count {
     font-size: 10px;
     color: var(--text-muted, #9ca3af);
     background: var(--bg-tertiary, #f5f7f9);
     padding: 1px 5px;
     border-radius: 3px;
-    margin-left: auto;
     flex-shrink: 0;
-    margin-right: 24px;
   }
 
   .folder-count.completed {
@@ -241,14 +246,9 @@
   .node-actions {
     display: flex;
     gap: 3px;
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
+    margin-left: 4px;
     opacity: 0;
     transition: opacity 0.15s;
-    background: var(--bg-secondary, #ffffff);
-    padding-left: 4px;
   }
 
   .action-btn {
