@@ -11,35 +11,31 @@
   let isLoading = false;
   let error: string | null = null;
   let scale = 1.0;
-  let fitToWidth = true; // 默认适应窗口
-  let containerWidth = 800; // 默认宽度
-  let imageWidth = 2480; // 默认图片宽度
+  let fitToWidth = true;
+  let containerWidth = 800;
+  let imageWidth = 2480;
   let imageHeight = 3508;
   let contentElement: HTMLElement;
   let resizeObserver: ResizeObserver;
-  let pendingJumpPage: number | null = null; // 待跳转页码
-  let lastLoadedPdfId: number | null = null; // 上次加载的PDF ID
+  let pendingJumpPage: number | null = null;
+  let lastLoadedPdfId: number | null = null;
 
-  // 监听 jumpToPage 变化，记录待跳转页码
   $: if ($jumpToPage !== null && $jumpToPage >= 1) {
     pendingJumpPage = $jumpToPage;
     jumpToPage.set(null);
   }
 
-  // 当 pageCount 变化且有待跳转页码时执行跳转
   $: if (pendingJumpPage !== null && pageCount > 0 && pendingJumpPage <= pageCount) {
     currentPage = pendingJumpPage;
     loadPage(currentPage);
     pendingJumpPage = null;
   }
 
-  // 新PDF加载时重置到第一页
   $: if ($selectedPdfId && $selectedPdfId !== lastLoadedPdfId && pageCount > 0 && pendingJumpPage === null) {
     currentPage = 1;
     loadPage(currentPage);
   }
 
-  // 响应式计算缩放比例
   $: currentScale = fitToWidth && containerWidth > 0 && imageWidth > 0
     ? containerWidth / imageWidth
     : scale;
@@ -48,25 +44,20 @@
     const img = e.target as HTMLImageElement;
     imageWidth = img.naturalWidth;
     imageHeight = img.naturalHeight;
-    console.log('Image loaded:', imageWidth, 'x', imageHeight, 'container:', containerWidth, 'scale:', currentScale);
   }
 
-  // 更新容器宽度
   function updateContainerWidth() {
     if (contentElement) {
       const newWidth = contentElement.clientWidth - 40;
       if (newWidth > 0 && newWidth !== containerWidth) {
         containerWidth = newWidth;
-        console.log('Container width updated:', containerWidth);
       }
     }
   }
 
   onMount(() => {
-    // 初始化容器宽度
     updateContainerWidth();
 
-    // 监听窗口大小变化
     resizeObserver = new ResizeObserver(() => {
       updateContainerWidth();
     });
@@ -91,7 +82,6 @@
 
     try {
       imageSrc = await renderPdfPage($selectedPdfId!, page);
-      // 图片加载后更新容器宽度
       await tick();
       updateContainerWidth();
     } catch (e) {
@@ -140,27 +130,35 @@
 <div class="pdf-viewer">
   {#if !pdfPath}
     <div class="placeholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
       <p>选择PDF文件预览</p>
     </div>
   {:else}
     <div class="toolbar">
       <div class="nav">
-        <button on:click={prevPage} disabled={currentPage <= 1 || isLoading}>
-          &#8592; 上一页
+        <button class="nav-btn" on:click={prevPage} disabled={currentPage <= 1 || isLoading}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
         </button>
         <span class="page-info">
           {currentPage} / {pageCount}
         </span>
-        <button on:click={nextPage} disabled={currentPage >= pageCount || isLoading}>
-          下一页 &#8594;
+        <button class="nav-btn" on:click={nextPage} disabled={currentPage >= pageCount || isLoading}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
         </button>
       </div>
       <div class="zoom">
-        <button on:click={zoomOut} title="缩小">-</button>
+        <button class="zoom-btn" on:click={zoomOut} title="缩小">−</button>
         <span class="zoom-level">{Math.round(currentScale * 100)}%</span>
-        <button on:click={zoomIn} title="放大">+</button>
-        <button on:click={resetZoom} title="100%">100%</button>
-        <button on:click={fitWidth} class:active={fitToWidth} title="适应窗口">适应</button>
+        <button class="zoom-btn" on:click={zoomIn} title="放大">+</button>
+        <button class="zoom-btn" on:click={resetZoom} title="100%">100%</button>
+        <button class="zoom-btn fit" class:active={fitToWidth} on:click={fitWidth} title="适应窗口">适应</button>
       </div>
     </div>
 
@@ -172,6 +170,11 @@
         </div>
       {:else if error}
         <div class="error">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
           <p>{error}</p>
         </div>
       {:else if imageSrc}
@@ -198,7 +201,7 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: #f0f0f0;
+    background: #374151;
   }
 
   .placeholder, .loading, .error {
@@ -207,70 +210,107 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: #666;
+    color: #9ca3af;
+  }
+
+  .placeholder svg {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 10px;
+    opacity: 0.4;
+  }
+
+  .placeholder p {
+    font-size: 13px;
   }
 
   .toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 16px;
-    background: #fff;
-    border-bottom: 1px solid #ddd;
+    padding: 8px 12px;
+    background: #1f2937;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .nav {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
   }
 
-  .nav button {
-    padding: 6px 12px;
-    background: #2196f3;
-    color: white;
+  .nav-btn {
+    width: 26px;
+    height: 26px;
+    background: #4b5563;
+    color: #e5e7eb;
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    flex-shrink: 0;
   }
 
-  .nav button:disabled {
-    background: #ccc;
+  .nav-btn:hover:not(:disabled) {
+    background: #6b7280;
+  }
+
+  .nav-btn:disabled {
+    background: #374151;
     cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .nav-btn svg {
+    width: 14px;
+    height: 14px;
   }
 
   .page-info {
+    color: #e5e7eb;
+    font-size: 12px;
     font-weight: 500;
-    min-width: 60px;
+    min-width: 50px;
     text-align: center;
   }
 
   .zoom {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
+    flex-wrap: wrap;
   }
 
-  .zoom button {
-    padding: 4px 8px;
-    background: #e0e0e0;
+  .zoom-btn {
+    padding: 5px 8px;
+    background: #4b5563;
+    color: #e5e7eb;
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
+    font-size: 11px;
     cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
   }
 
-  .zoom button:hover {
-    background: #d0d0d0;
+  .zoom-btn:hover {
+    background: #6b7280;
   }
 
-  .zoom button.active {
-    background: #2196f3;
+  .zoom-btn.active {
+    background: var(--accent, #3b82f6);
     color: white;
   }
 
   .zoom-level {
-    min-width: 50px;
+    color: #9ca3af;
+    font-size: 11px;
+    min-width: 40px;
     text-align: center;
   }
 
@@ -279,7 +319,7 @@
     overflow: auto;
     display: flex;
     justify-content: center;
-    background: #525659;
+    background: #374151;
   }
 
   .image-container {
@@ -291,16 +331,22 @@
   }
 
   .image-container img {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    border-radius: 4px;
+  }
+
+  .loading {
+    background: #374151;
   }
 
   .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid #ddd;
-    border-top-color: #2196f3;
+    width: 28px;
+    height: 28px;
+    border: 3px solid #4b5563;
+    border-top-color: var(--accent, #3b82f6);
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 10px;
   }
 
   @keyframes spin {
@@ -308,6 +354,13 @@
   }
 
   .error {
-    color: #f44336;
+    color: #f87171;
+    background: #374151;
+  }
+
+  .error svg {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 6px;
   }
 </style>

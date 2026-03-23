@@ -3,13 +3,10 @@
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
-  // 当前全局匹配索引（从0开始）
   let currentMatchIndex = 0;
 
-  // 计算总匹配数（用于导航和显示）
   $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
 
-  // 计算每个结果的累计匹配数量
   $: cumulativeMatches = (() => {
     const arr: number[] = [];
     let cum = 0;
@@ -20,7 +17,6 @@
     return arr;
   })();
 
-  // 根据全局匹配索引找到对应的结果索引和页内匹配索引
   function findMatchPosition(globalIndex: number): { resultIndex: number; inPageIndex: number } {
     for (let i = 0; i < $searchResults.length; i++) {
       const cum = cumulativeMatches[i];
@@ -32,16 +28,13 @@
     return { resultIndex: 0, inPageIndex: 0 };
   }
 
-  // 当搜索结果变化时重置索引并跳转
   let lastSearchResultsLength = 0;
   $: if ($searchResults.length > 0 && $searchResults.length !== lastSearchResultsLength) {
     lastSearchResultsLength = $searchResults.length;
     currentMatchIndex = 0;
-    // 自动跳转到第一个结果
     navigateToMatch(0);
   }
 
-  // 当前显示的PDF ID和页码（用于判断是否需要切换页面）
   let currentPdfId: number | null = null;
   let currentPageNumber: number | null = null;
 
@@ -52,7 +45,6 @@
 
     currentMatchIndex = globalIndex;
 
-    // 只有当PDF或页码变化时才重新加载
     if (currentPdfId !== result.pdf_id || currentPageNumber !== result.page_number) {
       currentPdfId = result.pdf_id;
       currentPageNumber = result.page_number;
@@ -70,7 +62,6 @@
   }
 
   async function handleResultClick(index: number) {
-    // 点击结果时跳转到该结果的第一个匹配
     const globalIndex = cumulativeMatches[index];
     await navigateToMatch(globalIndex);
   }
@@ -100,17 +91,11 @@
     }
   }
 
-  // 解析高亮的 snippet
-  // isCurrentResult: 当前结果是否被选中
-  // inPageIndex: 当前选中的是第几个匹配（从0开始）
   function renderSnippet(snippet: string, isCurrentResult: boolean, inPageIndex: number): string {
-    // 将 **text** 转换为高亮标记
     if (!isCurrentResult) {
-      // 非当前页：所有高亮用黄色
       return snippet.replace(/\*\*(.+?)\*\*/g, '<mark>$1</mark>');
     }
 
-    // 当前页：第 inPageIndex 个高亮用橙色，其他用黄色
     let highlightIndex = 0;
     return snippet.replace(/\*\*(.+?)\*\*/g, (match, text) => {
       const idx = highlightIndex;
@@ -122,29 +107,23 @@
     });
   }
 
-  // 获取当前匹配所在的结果索引和页内索引
   $: currentMatchPosition = findMatchPosition(currentMatchIndex);
   $: currentResultIndex = currentMatchPosition.resultIndex;
   $: currentInPageIndex = currentMatchPosition.inPageIndex;
 
-  // 结果列表元素引用（用于滚动）
   let resultListElement: HTMLUListElement | null = null;
 
-  // 滚动到当前选中的结果和关键字
   function scrollToCurrent() {
     if (!resultListElement) return;
     const activeItem = resultListElement.querySelector('li.active');
     if (!activeItem) return;
 
-    // 滚动列表项
     activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-    // 滚动 snippet 到当前关键字
     const snippetEl = activeItem.querySelector('.snippet') as HTMLElement;
     const currentMatch = activeItem.querySelector(`mark[data-index="${currentInPageIndex}"]`) as HTMLElement;
 
     if (snippetEl && currentMatch) {
-      // 使用 scrollIntoView 让关键字在snippet中居中显示
       currentMatch.scrollIntoView({
         behavior: 'smooth',
         inline: 'center',
@@ -153,12 +132,8 @@
     }
   }
 
-  // 当结果索引或页内索引变化时滚动
-  // 显式引用 currentInPageIndex 以确保 Svelte 追踪其变化
   $: if (currentResultIndex >= 0 && resultListElement) {
-    // currentInPageIndex 变化也需要触发滚动
     void currentInPageIndex;
-    // 增加延迟确保DOM更新完成
     setTimeout(scrollToCurrent, 100);
   }
 </script>
@@ -168,11 +143,22 @@
     {#if $searchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>内容搜索结果 ({totalMatchCount}处匹配)</h4>
+          <div class="header-info">
+            <h4>内容搜索结果</h4>
+            <span class="match-count">{totalMatchCount} 处匹配</span>
+          </div>
           <div class="nav-buttons">
-            <button on:click={navigatePrev} title="上一个">上一个</button>
-            <span class="index-info">{currentMatchIndex + 1}/{totalMatchCount}</span>
-            <button on:click={navigateNext} title="下一个">下一个</button>
+            <button class="nav-btn" on:click={navigatePrev} title="上一个">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <span class="index-info">{currentMatchIndex + 1} / {totalMatchCount}</span>
+            <button class="nav-btn" on:click={navigateNext} title="下一个">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
           </div>
         </div>
         <ul class="result-list" bind:this={resultListElement}>
@@ -182,8 +168,8 @@
               on:click={() => handleResultClick(index)}
             >
               <span class="filename" title={result.filename}>{result.filename}</span>
-              <span class="page">P{result.page_number}</span>
-              <span class="match-count">{result.match_count}处</span>
+              <span class="page-badge">P{result.page_number}</span>
+              <span class="match-badge">{result.match_count}处</span>
               <span class="snippet">
                 {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
               </span>
@@ -193,18 +179,29 @@
       </div>
     {:else}
       <div class="no-results">
-        未找到匹配的内容
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span>未找到匹配的内容</span>
       </div>
     {/if}
   {:else}
     {#if $filenameSearchResults.length > 0}
       <div class="search-results">
         <div class="header-row">
-          <h4>文件名搜索结果 ({$filenameSearchResults.length})</h4>
+          <div class="header-info">
+            <h4>文件名搜索结果</h4>
+            <span class="match-count">{$filenameSearchResults.length} 个文件</span>
+          </div>
         </div>
-        <ul class="result-list">
+        <ul class="result-list filename-list">
           {#each $filenameSearchResults as pdf}
             <li on:click={() => handleFilenameResultClick(pdf)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
               <span class="filename">{pdf.filename}</span>
               <span class="meta">{pdf.page_count} 页</span>
             </li>
@@ -213,7 +210,11 @@
       </div>
     {:else}
       <div class="no-results">
-        未找到匹配的文件名
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span>未找到匹配的文件名</span>
       </div>
     {/if}
   {/if}
@@ -221,9 +222,9 @@
 
 <style>
   .search-results {
-    background: #fff;
-    border-top: 1px solid #ddd;
-    max-height: 250px;
+    background: var(--bg-secondary, #ffffff);
+    border-top: 1px solid var(--border, #e5e7eb);
+    max-height: 240px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -233,19 +234,31 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 10px;
-    background: #f5f5f5;
-    border-bottom: 1px solid #ddd;
-    position: sticky;
-    top: 0;
-    z-index: 10;
+    padding: 8px 12px;
+    background: var(--bg-tertiary, #f5f7f9);
+    border-bottom: 1px solid var(--border, #e5e7eb);
     flex-shrink: 0;
+  }
+
+  .header-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   h4 {
     margin: 0;
-    font-size: 13px;
-    color: #333;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary, #1f2937);
+  }
+
+  .match-count {
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+    background: var(--bg-secondary, #ffffff);
+    padding: 1px 6px;
+    border-radius: 3px;
   }
 
   .nav-buttons {
@@ -254,24 +267,36 @@
     gap: 6px;
   }
 
-  .nav-buttons button {
-    padding: 3px 8px;
-    background: #e0e0e0;
-    border: none;
-    border-radius: 4px;
+  .nav-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: var(--bg-secondary, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 5px;
     cursor: pointer;
-    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
   }
 
-  .nav-buttons button:hover {
-    background: #bddef7;
+  .nav-btn:hover {
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+
+  .nav-btn svg {
+    width: 12px;
+    height: 12px;
   }
 
   .index-info {
-    font-size: 12px;
-    color: #666;
-    min-width: 35px;
+    font-size: 11px;
+    color: var(--text-secondary, #6b7280);
+    min-width: 40px;
     text-align: center;
+    font-weight: 500;
   }
 
   .result-list {
@@ -279,69 +304,64 @@
     padding: 0;
     margin: 0;
     overflow-y: auto;
-    max-height: 200px;
+    max-height: 180px;
   }
 
   li {
-    padding: 6px 10px;
-    cursor: pointer;
-    border-radius: 4px;
-    margin: 4px 6px;
-    background: #f9f9f9;
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12px;
-    border: 2px solid transparent;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-light, #f3f4f6);
+    transition: background 0.15s;
   }
 
   li:hover {
-    background: #f0f0f0;
+    background: var(--bg-tertiary, #f5f7f9);
   }
 
   li.active {
-    border-color: #2196f3;
-    background: #e3f2fd;
+    background: var(--accent-soft, #eff6ff);
+    border-left: 3px solid var(--accent, #3b82f6);
+    padding-left: 9px;
   }
 
   .filename {
+    font-size: 12px;
     font-weight: 500;
-    flex-shrink: 0;
-    max-width: 100px;
+    color: var(--text-primary, #1f2937);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 120px;
+    flex-shrink: 0;
   }
 
-  .page {
-    font-size: 11px;
-    color: #2196f3;
-    flex-shrink: 0;
-    background: #e3f2fd;
+  .page-badge {
+    font-size: 10px;
+    color: var(--accent, #3b82f6);
+    background: var(--accent-soft, #eff6ff);
     padding: 1px 5px;
     border-radius: 3px;
+    flex-shrink: 0;
   }
 
-  .match-count {
-    font-size: 11px;
-    color: #ff9800;
-    flex-shrink: 0;
-    background: #fff3e0;
+  .match-badge {
+    font-size: 10px;
+    color: var(--warning, #f59e0b);
+    background: #fffbeb;
     padding: 1px 5px;
     border-radius: 3px;
-  }
-
-  .meta {
-    font-size: 11px;
-    color: #666;
     flex-shrink: 0;
   }
 
   .snippet {
-    flex: 1;
-    color: #666;
+    font-size: 11px;
+    color: var(--text-secondary, #6b7280);
     overflow-x: auto;
     white-space: nowrap;
+    flex: 1;
     min-width: 0;
     scrollbar-width: none;
   }
@@ -351,23 +371,57 @@
   }
 
   .snippet :global(mark) {
-    background-color: #fff176;
+    background-color: #fef08a;
     padding: 0 2px;
     border-radius: 2px;
+    color: inherit;
   }
 
   .snippet :global(mark.current-match) {
-    background-color: #ff9800;
+    background-color: var(--warning, #f59e0b);
     color: white;
   }
 
-  .no-results {
-    padding: 15px;
-    text-align: center;
-    color: #666;
-    background: #fff;
-    border-top: 1px solid #ddd;
+  .filename-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .filename-list svg {
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted, #9ca3af);
     flex-shrink: 0;
-    font-size: 13px;
+  }
+
+  .meta {
+    font-size: 10px;
+    color: var(--text-muted, #9ca3af);
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .no-results {
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted, #9ca3af);
+    background: var(--bg-secondary, #ffffff);
+    border-top: 1px solid var(--border, #e5e7eb);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .no-results svg {
+    width: 28px;
+    height: 28px;
+    opacity: 0.5;
+  }
+
+  .no-results span {
+    font-size: 12px;
   }
 </style>
