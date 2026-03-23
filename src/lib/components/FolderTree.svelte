@@ -309,8 +309,8 @@
     </div>
   {/if}
 
-  <div class="folder-list">
-    <div
+  <ul class="folder-list">
+    <li
       class="folder-item"
       class:active={$selectedFolderId === null}
       on:click={() => selectFolder(null)}
@@ -324,7 +324,7 @@
         <span class="count-sep">/</span>
         <span class="total-count">{allCountInfo.total}</span>
       </span>
-    </div>
+    </li>
 
     {#each treeNodes as node}
       <FolderNode
@@ -378,7 +378,7 @@
         </li>
       {/if}
     {/if}
-  </div>
+  </ul>
 </div>
 
 <style>
