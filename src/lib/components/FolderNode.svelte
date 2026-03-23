@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedFolderId } from '../stores';
+  import { selectedFolderId, pdfList, folders } from '../stores';
   import type { Folder } from '../api';
 
   interface TreeNode extends Folder {
@@ -23,7 +23,8 @@
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
-  $: stats = getFolderOcrStats(node.id);
+  // 显式依赖 $pdfList 和 $folders 确保响应式更新
+  $: stats = ($pdfList, $folders, getFolderOcrStats(node.id));
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();

@@ -246,7 +246,13 @@
     }
   }
 
-  $: allStats = getFolderOcrStats(null);
+  // 响应式计算 - 显式依赖 $pdfList 确保更新
+  $: allStats = (() => {
+    // 直接访问 $pdfList 确保响应式依赖
+    const pdfs = $pdfList;
+    const folders = $folders;
+    return getFolderOcrStats(null);
+  })();
 
   $: showNewFolderAtRoot = showNewFolder && newFolderParentId === null;
 </script>
