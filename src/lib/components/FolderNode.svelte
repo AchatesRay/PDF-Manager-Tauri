@@ -11,6 +11,7 @@
   export let onDelete: (id: number) => void;
   export let onAddSubfolder: (parentId: number) => void;
   export let getPdfCount: (folderId: number | null) => number;
+  export let getFolderOcrStats: (folderId: number | null) => { ocrCount: number; totalCount: number };
   export let newFolderParentId: number | null = null;
   export let newFolderName: string = '';
   export let selectedStoragePath: string | null = null;
@@ -22,6 +23,7 @@
   let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
+  $: stats = getFolderOcrStats(node.id);
 
   function toggleExpand(e: MouseEvent) {
     e.stopPropagation();
@@ -70,7 +72,9 @@
 
   <span class="folder-name">{node.name}</span>
 
-  <span class="folder-count">{getPdfCount(node.id)}</span>
+  <span class="folder-count" class:completed={stats.ocrCount === stats.totalCount && stats.totalCount > 0}>
+    {stats.ocrCount}/{stats.totalCount}
+  </span>
 
   <div class="node-actions">
       <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
@@ -96,6 +100,7 @@
       {onDelete}
       {onAddSubfolder}
       {getPdfCount}
+      {getFolderOcrStats}
       {newFolderParentId}
       {newFolderName}
       {selectedStoragePath}
@@ -223,6 +228,11 @@
     border-radius: 3px;
     margin-left: auto;
     flex-shrink: 0;
+  }
+
+  .folder-count.completed {
+    background: #dcfce7;
+    color: #16a34a;
   }
 
   .node-actions {
