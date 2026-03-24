@@ -496,7 +496,7 @@
     margin-left: auto;
     font-variant-numeric: tabular-nums;
     min-width: 32px;
-    text-align: center;
+    text-align: right;
   }
 
   .folder-count.completed {

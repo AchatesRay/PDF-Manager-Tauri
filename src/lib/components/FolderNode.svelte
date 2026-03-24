@@ -236,6 +236,9 @@
     padding: 1px 5px;
     border-radius: 3px;
     flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    min-width: 32px;
+    text-align: right;
   }
 
   .folder-count.completed {
