@@ -26,17 +26,19 @@
   }
 
   function toggleFolderExpand(folderId: number) {
-    if (expandedFolders.has(folderId)) {
-      expandedFolders.delete(folderId);
+    const newSet = new Set(expandedFolders);
+    if (newSet.has(folderId)) {
+      newSet.delete(folderId);
     } else {
-      expandedFolders.add(folderId);
+      newSet.add(folderId);
     }
-    expandedFolders = expandedFolders; // 触发响应式更新
+    expandedFolders = newSet; // 创建新的 Set 实例触发响应式更新
   }
 
   function expandFolder(folderId: number) {
-    expandedFolders.add(folderId);
-    expandedFolders = expandedFolders;
+    const newSet = new Set(expandedFolders);
+    newSet.add(folderId);
+    expandedFolders = newSet;
   }
 
   $: treeNodes = buildTree($folders);
