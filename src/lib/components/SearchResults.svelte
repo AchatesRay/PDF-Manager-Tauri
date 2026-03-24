@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount } from '../stores';
+  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount, folders } from '../stores';
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail } from '../api';
 
@@ -113,6 +113,53 @@
 
   let resultListElement: HTMLUListElement | null = null;
 
+  // Tooltip 状态
+  let tooltipText = '';
+  let tooltipVisible = false;
+  let tooltipX = 0;
+  let tooltipY = 0;
+
+  // 根据 folder_id 获取文件夹路径
+  function getFolderPath(folderId: number | null): string {
+    if (folderId === null) return '/';
+
+    const folderMap = new Map<number, { name: string; parent_id: number | null }>();
+    $folders.forEach(f => folderMap.set(f.id, { name: f.name, parent_id: f.parent_id }));
+
+    const path: string[] = [];
+    let currentId: number | null = folderId;
+
+    while (currentId !== null) {
+      const folder = folderMap.get(currentId);
+      if (folder) {
+        path.unshift(folder.name);
+        currentId = folder.parent_id;
+      } else {
+        break;
+      }
+    }
+
+    return '/' + path.join('/');
+  }
+
+  // 显示 tooltip
+  function showTooltip(e: MouseEvent, text: string) {
+    tooltipText = text;
+    tooltipVisible = true;
+    updateTooltipPosition(e);
+  }
+
+  // 更新 tooltip 位置
+  function updateTooltipPosition(e: MouseEvent) {
+    tooltipX = e.clientX + 10;
+    tooltipY = e.clientY + 10;
+  }
+
+  // 隐藏 tooltip
+  function hideTooltip() {
+    tooltipVisible = false;
+  }
+
   function scrollToCurrent() {
     if (!resultListElement) return;
     const activeItem = resultListElement.querySelector('li.active');
@@ -198,11 +245,15 @@
         <ul class="result-list filename-list">
           {#each $filenameSearchResults as pdf}
             <li on:click={() => handleFilenameResultClick(pdf)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
-              <span class="filename">{pdf.filename}</span>
+              <div class="file-info">
+                <span
+                  class="filename"
+                  on:mouseenter={(e) => showTooltip(e, pdf.filename)}
+                  on:mousemove={updateTooltipPosition}
+                  on:mouseleave={hideTooltip}
+                >{pdf.filename}</span>
+                <span class="folder-path">{getFolderPath(pdf.folder_id)}</span>
+              </div>
               <span class="meta">{pdf.page_count} 页</span>
             </li>
           {/each}
@@ -218,6 +269,18 @@
       </div>
     {/if}
   {/if}
+{/if}
+
+<!-- 自定义 Tooltip -->
+{#if tooltipVisible}
+  <div
+    class="custom-tooltip"
+    style="left: {tooltipX}px; top: {tooltipY}px;"
+    on:mouseenter={() => tooltipVisible = true}
+    on:mouseleave={hideTooltip}
+  >
+    {tooltipText}
+  </div>
 {/if}
 
 <style>
@@ -388,11 +451,8 @@
     gap: 8px;
   }
 
-  .filename-list svg {
-    width: 16px;
-    height: 16px;
-    color: var(--text-muted, #9ca3af);
-    flex-shrink: 0;
+  .filename-list .filename {
+    max-width: none;
   }
 
   .meta {
@@ -423,5 +483,37 @@
 
   .no-results span {
     font-size: 12px;
+  }
+
+  .file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .folder-path {
+    font-size: 10px;
+    color: var(--text-muted, #9ca3af);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .custom-tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-primary, #1f2937);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    max-width: 400px;
+    word-break: break-all;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+    user-select: text;
+    cursor: text;
   }
 </style>
