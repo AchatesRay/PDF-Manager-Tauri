@@ -74,9 +74,6 @@
   <span class="folder-name">{node.name}</span>
 
   <div class="right-area">
-    <span class="folder-count" class:completed={stats.ocrCount === stats.totalCount && stats.totalCount > 0}>
-      {stats.ocrCount}/{stats.totalCount}
-    </span>
     <div class="node-actions">
       <button class="action-btn add" on:click={handleAddSubfolder} title="添加子文件夹">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -91,6 +88,9 @@
         </svg>
       </button>
     </div>
+    <span class="folder-count" class:completed={stats.ocrCount === stats.totalCount && stats.totalCount > 0}>
+      {stats.ocrCount}/{stats.totalCount}
+    </span>
   </div>
 </li>
 
@@ -148,7 +148,6 @@
     cursor: pointer;
     transition: all 0.15s ease;
     margin-bottom: 1px;
-    position: relative;
   }
 
   .folder-node:hover {
@@ -226,9 +225,9 @@
   .right-area {
     display: flex;
     align-items: center;
-    position: absolute;
-    right: 8px;
+    margin-left: auto;
     flex-shrink: 0;
+    gap: 4px;
   }
 
   .folder-count {
@@ -251,7 +250,6 @@
   .node-actions {
     display: flex;
     gap: 3px;
-    margin-left: 4px;
     opacity: 0;
     transition: opacity 0.15s;
   }
