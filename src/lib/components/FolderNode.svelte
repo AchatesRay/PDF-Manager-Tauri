@@ -148,6 +148,7 @@
     cursor: pointer;
     transition: all 0.15s ease;
     margin-bottom: 1px;
+    position: relative;
   }
 
   .folder-node:hover {
@@ -225,7 +226,8 @@
   .right-area {
     display: flex;
     align-items: center;
-    margin-left: auto;
+    position: absolute;
+    right: 8px;
     flex-shrink: 0;
   }
 
