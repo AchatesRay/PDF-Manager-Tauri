@@ -4,7 +4,7 @@ use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
 use crate::services::search_service::SearchService;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::{Emitter, State};
 use tracing::{debug, error, info, warn};
 

@@ -35,24 +35,26 @@ pub struct ModelManager {
     cancel_flag: Arc<AtomicBool>,
 }
 
-/// 模型文件列表
-const MODEL_FILES: &[ModelFile] = &[
-    ModelFile {
-        name: "pp-ocrv5_mobile_det.onnx".to_string(),
-        url: "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx".to_string(),
-        size: 4_828_087, // ~4.6MB
-    },
-    ModelFile {
-        name: "pp-ocrv5_mobile_rec.onnx".to_string(),
-        url: "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx".to_string(),
-        size: 16_556_181, // ~15.8MB
-    },
-    ModelFile {
-        name: "ppocrv5_dict.txt".to_string(),
-        url: "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt".to_string(),
-        size: 5_682, // ~5KB
-    },
-];
+/// 获取模型文件列表（运行时创建）
+fn get_model_files() -> Vec<ModelFile> {
+    vec![
+        ModelFile {
+            name: String::from("pp-ocrv5_mobile_det.onnx"),
+            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx"),
+            size: 4_828_087, // ~4.6MB
+        },
+        ModelFile {
+            name: String::from("pp-ocrv5_mobile_rec.onnx"),
+            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
+            size: 16_556_181, // ~15.8MB
+        },
+        ModelFile {
+            name: String::from("ppocrv5_dict.txt"),
+            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
+            size: 5_682, // ~5KB
+        },
+    ]
+}
 
 impl ModelManager {
     pub fn new(models_dir: PathBuf) -> Self {
@@ -78,7 +80,8 @@ impl ModelManager {
     pub fn check_models(&self) -> ModelStatus {
         debug!("检查模型文件, 目录: {:?}", self.models_dir);
 
-        let missing_files: Vec<String> = MODEL_FILES
+        let model_files = get_model_files();
+        let missing_files: Vec<String> = model_files
             .iter()
             .filter(|model| !self.models_dir.join(&model.name).exists())
             .map(|model| model.name.clone())
@@ -99,13 +102,13 @@ impl ModelManager {
     }
 
     /// 获取所有模型文件信息
-    pub fn get_model_files() -> &'static [ModelFile] {
-        MODEL_FILES
+    pub fn get_model_files_static() -> Vec<ModelFile> {
+        get_model_files()
     }
 
     /// 获取手动下载指导
     pub fn get_download_guide() -> Vec<DownloadGuide> {
-        MODEL_FILES
+        get_model_files()
             .iter()
             .map(|model| DownloadGuide {
                 name: model.name.clone(),
@@ -142,8 +145,10 @@ impl ModelManager {
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
+        let model_files = get_model_files();
+
         // 下载缺失的文件
-        for model in MODEL_FILES {
+        for model in &model_files {
             // 检查是否取消
             if self.cancel_flag.load(Ordering::SeqCst) {
                 warn!("下载已取消");
@@ -171,7 +176,7 @@ impl ModelManager {
             );
 
             // 下载文件
-            match self.download_file(&client, &model.url, &file_path, &app_handle).await {
+            match self.download_file(&client, &model.url, &file_path, &model.name, &app_handle).await {
                 Ok(_) => {
                     info!("下载完成: {}", model.name);
                 }
@@ -204,8 +209,11 @@ impl ModelManager {
         client: &reqwest::Client,
         url: &str,
         path: &PathBuf,
+        file_name: &str,
         app_handle: &AppHandle,
     ) -> Result<(), String> {
+        use futures_util::StreamExt;
+
         let response = client
             .get(url)
             .send()
@@ -223,20 +231,17 @@ impl ModelManager {
         let mut file = std::fs::File::create(&temp_path)
             .map_err(|e| format!("创建文件失败: {}", e))?;
 
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-
         let mut stream = response.bytes_stream();
         let mut downloaded: u64 = 0;
 
-        while let Some(chunk) = stream.next().await {
+        while let Some(chunk_result) = stream.next().await {
             // 检查是否取消
             if self.cancel_flag.load(Ordering::SeqCst) {
                 let _ = std::fs::remove_file(&temp_path);
                 return Err("下载已取消".to_string());
             }
 
-            let chunk = chunk.map_err(|e| format!("读取数据失败: {}", e))?;
+            let chunk = chunk_result.map_err(|e| format!("读取数据失败: {}", e))?;
 
             use std::io::Write;
             file.write_all(&chunk)
@@ -249,7 +254,7 @@ impl ModelManager {
                 let _ = app_handle.emit(
                     "model-download-progress",
                     DownloadProgress {
-                        file: path.file_name().unwrap().to_string_lossy().to_string(),
+                        file: file_name.to_string(),
                         current: downloaded,
                         total: total_size,
                     },
