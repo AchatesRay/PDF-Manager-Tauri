@@ -113,12 +113,6 @@
 
   let resultListElement: HTMLUListElement | null = null;
 
-  // Tooltip 状态
-  let tooltipText = '';
-  let tooltipVisible = false;
-  let tooltipX = 0;
-  let tooltipY = 0;
-
   // 根据 folder_id 获取文件夹路径
   function getFolderPath(folderId: number | null): string {
     if (folderId === null) return '/';
@@ -140,24 +134,6 @@
     }
 
     return '/' + path.join('/');
-  }
-
-  // 显示 tooltip
-  function showTooltip(e: MouseEvent, text: string) {
-    tooltipText = text;
-    tooltipVisible = true;
-    updateTooltipPosition(e);
-  }
-
-  // 更新 tooltip 位置
-  function updateTooltipPosition(e: MouseEvent) {
-    tooltipX = e.clientX + 10;
-    tooltipY = e.clientY + 10;
-  }
-
-  // 隐藏 tooltip
-  function hideTooltip() {
-    tooltipVisible = false;
   }
 
   function scrollToCurrent() {
@@ -246,12 +222,7 @@
           {#each $filenameSearchResults as pdf}
             <li on:click={() => handleFilenameResultClick(pdf)}>
               <div class="file-info">
-                <span
-                  class="filename"
-                  on:mouseenter={(e) => showTooltip(e, pdf.filename)}
-                  on:mousemove={updateTooltipPosition}
-                  on:mouseleave={hideTooltip}
-                >{pdf.filename}</span>
+                <span class="filename" title={pdf.filename}>{pdf.filename}</span>
                 <span class="folder-path">{getFolderPath(pdf.folder_id)}</span>
               </div>
               <span class="meta">{pdf.page_count} 页</span>
@@ -269,18 +240,6 @@
       </div>
     {/if}
   {/if}
-{/if}
-
-<!-- 自定义 Tooltip -->
-{#if tooltipVisible}
-  <div
-    class="custom-tooltip"
-    style="left: {tooltipX}px; top: {tooltipY}px;"
-    on:mouseenter={() => tooltipVisible = true}
-    on:mouseleave={hideTooltip}
-  >
-    {tooltipText}
-  </div>
 {/if}
 
 <style>
@@ -499,21 +458,5 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .custom-tooltip {
-    position: fixed;
-    z-index: 1000;
-    background: var(--bg-primary, #1f2937);
-    color: white;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    max-width: 400px;
-    word-break: break-all;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    pointer-events: auto;
-    user-select: text;
-    cursor: text;
   }
 </style>
