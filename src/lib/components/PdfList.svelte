@@ -1,13 +1,22 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
+  import OcrModelSetup from './OcrModelSetup.svelte';
 
   onMount(async () => {
     await loadPdfs();
+
+    // 检查 OCR 模型状态
+    try {
+      const status = await getOcrStatus();
+      ocrModelStatus.set(status);
+    } catch (e) {
+      console.error('Failed to get OCR status:', e);
+    }
 
     const unlisten = await listen<OcrProgress>('ocr-progress', (event) => {
       const progress = event.payload;
@@ -163,6 +172,9 @@
       添加
     </button>
   </div>
+
+  <!-- OCR 模型设置 -->
+  <OcrModelSetup />
 
   {#if $isLoading}
     <div class="loading-state">

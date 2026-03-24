@@ -79,8 +79,6 @@ pub fn run() {
                         .expect("Failed to initialize OCR service")
                 }
             };
-            // 检查中文语言包
-            ocr_service.check_chinese_support();
             app.manage(std::sync::Mutex::new(ocr_service));
 
             // 确保数据目录存在
@@ -91,6 +89,7 @@ pub fn run() {
                 ("缩略图目录", &data_dir.join("thumbnails")),
                 ("索引目录", &data_dir.join("index")),
                 ("日志目录", &data_dir.join("logs")),
+                ("模型目录", &data_dir.join("models")),
             ];
 
             for (name, path) in &dirs {
@@ -139,6 +138,9 @@ pub fn run() {
             commands::search::search,
             commands::search::search_filename,
             commands::ocr::get_ocr_status,
+            commands::ocr::get_ocr_download_guide,
+            commands::ocr::download_ocr_models,
+            commands::ocr::cancel_ocr_download,
             commands::ocr::start_ocr,
             commands::settings::get_settings,
             commands::settings::set_data_dir,

@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Folder, PdfInfo, SearchResult } from '../api';
+import type { Folder, PdfInfo, SearchResult, OcrStatus, DownloadProgress } from '../api';
 
 export const selectedFolderId = writable<number | null>(null);
 export const folders = writable<Folder[]>([]);
@@ -28,6 +28,11 @@ export interface OcrProgress {
   status: string;
 }
 export const ocrProgress = writable<Map<number, OcrProgress>>(new Map());
+
+// OCR 模型状态
+export const ocrModelStatus = writable<OcrStatus | null>(null);
+export const ocrDownloadProgress = writable<DownloadProgress | null>(null);
+export const isDownloading = writable(false);
 
 export const filteredPdfList = derived(
   [pdfList, selectedFolderId],

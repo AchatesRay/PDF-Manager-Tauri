@@ -1,16 +1,19 @@
 use crate::db::Db;
+use crate::services::model_manager::{DownloadGuide, ModelManager};
 use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
 use crate::services::search_service::SearchService;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, State};
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrStatus {
     pub available: bool,
-    pub languages: Vec<String>,
+    pub models_ready: bool,
+    pub missing_files: Vec<String>,
+    pub models_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,15 +39,67 @@ pub fn get_ocr_status(
         }
     };
 
-    let available = svc.is_available();
-    let languages = svc.available_languages();
+    let status = svc.get_status();
 
-    debug!("OCR状态: available={}, languages={:?}", available, languages);
+    debug!(
+        "OCR状态: available={}, models_ready={}, missing={:?}",
+        status.available, status.models_ready, status.missing_files
+    );
 
     Ok(OcrStatus {
-        available,
-        languages,
+        available: status.available,
+        models_ready: status.models_ready,
+        missing_files: status.missing_files,
+        models_dir: status.models_dir,
     })
+}
+
+/// 获取下载指导
+#[tauri::command]
+pub fn get_ocr_download_guide() -> Vec<DownloadGuide> {
+    ModelManager::get_download_guide()
+}
+
+/// 下载 OCR 模型
+#[tauri::command]
+pub async fn download_ocr_models(
+    ocr_service: State<'_, Mutex<OcrService>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    info!("开始下载 OCR 模型");
+
+    let model_manager = {
+        let svc = ocr_service.lock().map_err(|e| {
+            error!("获取OCR服务锁失败: {}", e);
+            format!("OCR服务锁定失败: {}", e)
+        })?;
+        svc.model_manager()
+    };
+
+    model_manager.download_models(app_handle).await?;
+
+    info!("OCR 模型下载完成");
+    Ok(())
+}
+
+/// 取消模型下载
+#[tauri::command]
+pub fn cancel_ocr_download(
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Result<(), String> {
+    info!("取消 OCR 模型下载");
+
+    let model_manager = {
+        let svc = ocr_service.lock().map_err(|e| {
+            error!("获取OCR服务锁失败: {}", e);
+            format!("OCR服务锁定失败: {}", e)
+        })?;
+        svc.model_manager()
+    };
+
+    model_manager.cancel_download();
+
+    Ok(())
 }
 
 /// 开始 OCR 处理
@@ -84,9 +139,9 @@ pub async fn start_ocr(
 
     info!("PDF信息: filename={}, pages={}, storage={}", filename, page_count, storage_path);
 
-    // 检查OCR服务是否可用
+    // 检查 OCR 服务是否可用，如果模型未加载则尝试初始化
     {
-        let ocr_svc = match ocr_service.lock() {
+        let mut ocr_svc = match ocr_service.lock() {
             Ok(s) => s,
             Err(e) => {
                 error!("获取OCR服务锁失败: {}", e);
@@ -95,8 +150,16 @@ pub async fn start_ocr(
         };
 
         if !ocr_svc.is_available() {
+            // 尝试初始化 OCR 模型
+            if let Err(e) = ocr_svc.init_ocr() {
+                error!("OCR模型初始化失败: {}", e);
+                return Err(format!("OCR服务不可用: {}", e));
+            }
+        }
+
+        if !ocr_svc.is_available() {
             error!("OCR服务不可用");
-            return Err("OCR服务不可用，请检查Tesseract是否正确安装".to_string());
+            return Err("OCR服务不可用，请先下载模型文件".to_string());
         }
         drop(ocr_svc);
     }
@@ -131,11 +194,10 @@ pub async fn start_ocr(
         status: "processing".to_string(),
     });
 
-    let ocr_svc = match ocr_service.lock() {
+    let mut ocr_svc = match ocr_service.lock() {
         Ok(s) => s,
         Err(e) => {
             error!("获取OCR服务锁失败: {}", e);
-            // 恢复状态
             let _ = update_pdf_status(&db, pdf_id, "error", Some(&format!("OCR服务锁定失败: {}", e)));
             return Err(format!("OCR服务锁定失败: {}", e));
         }
@@ -169,7 +231,17 @@ pub async fn start_ocr(
     for page_num in 1..=page_count {
         info!("处理PDF页面: pdf_id={}, page={}/{}", pdf_id, page_num, page_count);
 
-        match process_page(&pdf_id, page_num, &storage_path, &ocr_svc, &pdf_svc, &db, &mut search_svc, &filename, folder_id) {
+        match process_page(
+            &pdf_id,
+            page_num,
+            &storage_path,
+            &mut ocr_svc,
+            &pdf_svc,
+            &db,
+            &mut search_svc,
+            &filename,
+            folder_id,
+        ) {
             Ok(_) => {
                 success_count += 1;
                 info!("页面处理成功: pdf_id={}, page={}", pdf_id, page_num);
@@ -250,7 +322,7 @@ fn process_page(
     pdf_id: &i64,
     page_num: i32,
     storage_path: &str,
-    ocr_service: &OcrService,
+    ocr_service: &mut OcrService,
     pdf_service: &PdfService,
     db: &State<'_, Db>,
     search_service: &mut SearchService,
