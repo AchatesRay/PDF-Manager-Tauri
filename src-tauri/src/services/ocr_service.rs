@@ -41,7 +41,7 @@ impl OcrService {
 
         // 确保模型目录存在
         if !models_dir.exists() {
-            if let Err(e) = std::fs::create_dir_all(&models_dir) {
+            if let Err(_e) = std::fs::create_dir_all(&models_dir) {
                 warn!("创建模型目录失败: {:?}", models_dir);
             }
         }

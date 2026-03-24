@@ -2,7 +2,7 @@ use crate::db::{Db, get_setting, SETTING_DATA_DIR, default_data_dir};
 use crate::models::Folder;
 use chrono::Utc;
 use rusqlite::params;
-use tauri::{Manager, State};
+use tauri::State;
 use tracing::{debug, error, info, warn};
 use std::path::PathBuf;
 
