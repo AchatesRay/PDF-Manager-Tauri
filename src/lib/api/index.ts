@@ -89,8 +89,39 @@ export async function searchFilename(query: string, folderId?: number): Promise<
 }
 
 // OCR API
-export async function getOcrStatus(): Promise<{ available: boolean; languages: string[] }> {
+export interface OcrStatus {
+  available: boolean;
+  models_ready: boolean;
+  missing_files: string[];
+  models_dir: string;
+}
+
+export interface DownloadGuide {
+  name: string;
+  url: string;
+  size: string;
+}
+
+export interface DownloadProgress {
+  file: string;
+  current: number;
+  total: number;
+}
+
+export async function getOcrStatus(): Promise<OcrStatus> {
   return invoke('get_ocr_status');
+}
+
+export async function getOcrDownloadGuide(): Promise<DownloadGuide[]> {
+  return invoke('get_ocr_download_guide');
+}
+
+export async function downloadOcrModels(): Promise<void> {
+  return invoke('download_ocr_models');
+}
+
+export async function cancelOcrDownload(): Promise<void> {
+  return invoke('cancel_ocr_download');
 }
 
 export async function startOcr(pdfId: number): Promise<void> {
