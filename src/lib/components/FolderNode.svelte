@@ -19,16 +19,18 @@
   export let onCancelFolder: () => void;
   export let onSelectDirectory: () => void;
   export let onNewFolderNameChange: (value: string) => void;
+  export let isFolderExpanded: (folderId: number) => boolean;
+  export let toggleFolderExpand: (folderId: number) => void;
 
-  let isExpanded = false;
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
+  $: isExpanded = isFolderExpanded(node.id);
   // 显式依赖 $pdfList 和 $folders 确保响应式更新
   $: stats = ($pdfList, $folders, getFolderOcrStats(node.id));
 
-  function toggleExpand(e: MouseEvent) {
+  function handleToggleExpand(e: MouseEvent) {
     e.stopPropagation();
-    isExpanded = !isExpanded;
+    toggleFolderExpand(node.id);
   }
 
   function selectFolder() {
@@ -57,7 +59,7 @@
 >
   <div class="expand-area">
     {#if hasChildren}
-      <button class="expand-btn" on:click={toggleExpand}>
+      <button class="expand-btn" on:click={handleToggleExpand}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="expand-icon" class:rotated={isExpanded}>
           <polyline points="9 18 15 12 9 6"/>
         </svg>
@@ -110,6 +112,8 @@
       {onCancelFolder}
       {onSelectDirectory}
       {onNewFolderNameChange}
+      {isFolderExpanded}
+      {toggleFolderExpand}
     />
   {/each}
 {/if}

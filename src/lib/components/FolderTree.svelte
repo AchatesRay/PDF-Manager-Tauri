@@ -18,6 +18,27 @@
   let settings: AppSettings | null = null;
   let newFolderInput: HTMLInputElement;
 
+  // 展开的文件夹 ID 集合
+  let expandedFolders = new Set<number>();
+
+  function isFolderExpanded(folderId: number): boolean {
+    return expandedFolders.has(folderId);
+  }
+
+  function toggleFolderExpand(folderId: number) {
+    if (expandedFolders.has(folderId)) {
+      expandedFolders.delete(folderId);
+    } else {
+      expandedFolders.add(folderId);
+    }
+    expandedFolders = expandedFolders; // 触发响应式更新
+  }
+
+  function expandFolder(folderId: number) {
+    expandedFolders.add(folderId);
+    expandedFolders = expandedFolders;
+  }
+
   $: treeNodes = buildTree($folders);
 
   onMount(async () => {
@@ -94,6 +115,10 @@
           selectedStoragePath ?? undefined
         );
         folders.set(await getFolders());
+        // 如果是创建子文件夹，展开父文件夹
+        if (newFolderParentId !== null) {
+          expandFolder(newFolderParentId);
+        }
         resetNewFolder();
       } catch (e) {
         alert('创建失败: ' + e);
@@ -336,6 +361,8 @@
         onCancelFolder={handleCancel}
         onSelectDirectory={selectDirectory}
         onNewFolderNameChange={(v) => newFolderName = v}
+        {isFolderExpanded}
+        {toggleFolderExpand}
       />
     {/each}
 
