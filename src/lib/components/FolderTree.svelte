@@ -449,6 +449,7 @@
     cursor: pointer;
     transition: all 0.15s ease;
     margin-bottom: 1px;
+    position: relative;
   }
 
   .folder-item:hover {
@@ -492,8 +493,8 @@
     background: var(--bg-tertiary, #f5f7f9);
     padding: 1px 5px;
     border-radius: 3px;
-    flex-shrink: 0;
-    margin-left: auto;
+    position: absolute;
+    right: 8px;
     font-variant-numeric: tabular-nums;
     min-width: 32px;
     text-align: right;
