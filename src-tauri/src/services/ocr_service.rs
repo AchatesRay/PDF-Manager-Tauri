@@ -76,7 +76,8 @@ pub struct OcrService {
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        Self::with_model_type(data_dir, ModelType::Mobile)
+        // 默认使用服务器版模型，精度更高
+        Self::with_model_type(data_dir, ModelType::Server)
     }
 
     /// 创建 OCR 服务（指定模型类型）

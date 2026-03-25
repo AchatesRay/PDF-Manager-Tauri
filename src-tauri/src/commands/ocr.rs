@@ -397,41 +397,37 @@ pub async fn start_ocr(
 
     info!("OCR处理完成: pdf_id={}, filename={}, 成功={}, 失败={}", pdf_id, filename, success_count, error_count);
 
-    // 智能内存管理：根据内存状态决定是否释放模型
-    {
-        let mem_info = crate::services::memory_monitor::get_system_memory_info();
-        const MEMORY_THRESHOLD: u64 = 3 * 1024 * 1024 * 1024; // 3GB
-
-        if mem_info.available < MEMORY_THRESHOLD {
-            info!("内存紧张 (可用: {:.1}GB)，释放 OCR 模型以节省内存",
-                mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0);
-            let mut ocr_svc = ocr_service.lock().map_err(|e| {
-                error!("获取OCR服务锁失败: {}", e);
-                format!("OCR服务锁定失败: {}", e)
-            })?;
-            ocr_svc.unload_ocr();
-        } else {
-            info!("内存充足 (可用: {:.1}GB)，保留 OCR 模型以加速后续识别",
-                mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0);
-        }
-    }
-
-    // 标记任务完成，开始下一个
-    {
+    // 标记任务完成，检查是否有排队任务
+    let has_queued_tasks = {
         let mut queue = task_queue.lock().map_err(|e| {
             error!("获取任务队列锁失败: {}", e);
             format!("任务队列锁定失败: {}", e)
         })?;
         queue.complete(pdf_id);
         let next_task = queue.get_next();
-        // 注意：这里简化处理，不自动启动下一个任务
-        // 用户需要手动点击下一个任务的 OCR 按钮
         if let Some(next) = next_task {
             info!("队列中有下一个任务: pdf_id={}", next.pdf_id);
             let _ = app_handle.emit("ocr-queued", serde_json::json!({
                 "pdf_id": next.pdf_id,
                 "position": 0
             }));
+            true
+        } else {
+            false
+        }
+    };
+
+    // 内存管理：如果没有排队任务，立即释放模型
+    {
+        if has_queued_tasks {
+            info!("有排队任务，保留 OCR 模型以加速后续处理");
+        } else {
+            info!("没有排队任务，立即释放 OCR 模型以节省内存");
+            let mut ocr_svc = ocr_service.lock().map_err(|e| {
+                error!("获取OCR服务锁失败: {}", e);
+                format!("OCR服务锁定失败: {}", e)
+            })?;
+            ocr_svc.unload_ocr();
         }
     }
 
