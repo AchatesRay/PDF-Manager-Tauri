@@ -1,14 +1,22 @@
-use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, default_data_dir};
+use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, SETTING_OCR_MAX_IMAGE_DIMENSION, default_data_dir};
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn};
+
+/// 默认最大图像尺寸
+pub const DEFAULT_OCR_MAX_IMAGE_DIMENSION: u32 = 2000;
+/// 最小允许值
+pub const MIN_OCR_MAX_IMAGE_DIMENSION: u32 = 500;
+/// 最大允许值
+pub const MAX_OCR_MAX_IMAGE_DIMENSION: u32 = 4000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub data_dir: String,
     pub log_dir: String,
     pub pdf_reader_path: Option<String>,
+    pub ocr_max_image_dimension: u32,
 }
 
 /// 获取应用设置
@@ -35,8 +43,13 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
 
     let pdf_reader_path = get_setting(&conn, SETTING_PDF_READER);
 
-    debug!("应用设置: data_dir={}, log_dir={}, pdf_reader_path={:?}", data_dir, log_dir, pdf_reader_path);
-    Ok(AppSettings { data_dir, log_dir, pdf_reader_path })
+    let ocr_max_image_dimension = get_setting(&conn, SETTING_OCR_MAX_IMAGE_DIMENSION)
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_OCR_MAX_IMAGE_DIMENSION);
+
+    debug!("应用设置: data_dir={}, log_dir={}, pdf_reader_path={:?}, ocr_max_image_dimension={}",
+           data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension);
+    Ok(AppSettings { data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension })
 }
 
 /// 设置数据目录
@@ -180,6 +193,36 @@ pub fn set_pdf_reader(db: State<'_, Db>, path: Option<String>) -> Result<(), Str
                     return Err(format!("清除设置失败: {}", e));
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// 设置 OCR 最大图像尺寸
+#[tauri::command]
+pub fn set_ocr_max_image_dimension(db: State<'_, Db>, dimension: u32) -> Result<(), String> {
+    info!("开始设置 OCR 最大图像尺寸: {}", dimension);
+
+    // 验证范围
+    if dimension < MIN_OCR_MAX_IMAGE_DIMENSION || dimension > MAX_OCR_MAX_IMAGE_DIMENSION {
+        warn!("OCR 最大图像尺寸超出范围: {}", dimension);
+        return Err(format!("尺寸必须在 {}-{} 之间", MIN_OCR_MAX_IMAGE_DIMENSION, MAX_OCR_MAX_IMAGE_DIMENSION));
+    }
+
+    let conn = match db.lock() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("获取数据库锁失败: {}", e);
+            return Err(format!("数据库锁定失败: {}", e));
+        }
+    };
+
+    match set_setting(&conn, SETTING_OCR_MAX_IMAGE_DIMENSION, &dimension.to_string()) {
+        Ok(_) => info!("OCR 最大图像尺寸已保存: {}", dimension),
+        Err(e) => {
+            error!("保存设置失败: {}", e);
+            return Err(format!("保存设置失败: {}", e));
         }
     }
 

@@ -133,6 +133,7 @@ export interface AppSettings {
   data_dir: string;
   log_dir: string;
   pdf_reader_path: string | null;
+  ocr_max_image_dimension: number;
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -149,6 +150,10 @@ export async function resetDataDir(): Promise<string> {
 
 export async function setPdfReader(path: string | null): Promise<void> {
   return invoke('set_pdf_reader', { path });
+}
+
+export async function setOcrMaxImageDimension(dimension: number): Promise<void> {
+  return invoke('set_ocr_max_image_dimension', { dimension });
 }
 
 export async function openPdfExternally(pdfPath: string): Promise<void> {

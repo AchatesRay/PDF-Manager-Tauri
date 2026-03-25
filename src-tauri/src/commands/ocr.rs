@@ -1,8 +1,9 @@
-use crate::db::Db;
+use crate::db::{Db, get_setting, SETTING_OCR_MAX_IMAGE_DIMENSION};
 use crate::services::model_manager::{DownloadGuide, ModelManager};
 use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
 use crate::services::search_service::SearchService;
+use crate::commands::settings::DEFAULT_OCR_MAX_IMAGE_DIMENSION;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
@@ -113,6 +114,21 @@ pub async fn start_ocr(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     info!("开始OCR处理: pdf_id={}", pdf_id);
+
+    // 获取 OCR 最大图像尺寸设置
+    let max_image_dimension: u32 = {
+        let conn = match db.lock() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("获取数据库锁失败: {}", e);
+                return Err(format!("数据库锁定失败: {}", e));
+            }
+        };
+        get_setting(&conn, SETTING_OCR_MAX_IMAGE_DIMENSION)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_OCR_MAX_IMAGE_DIMENSION)
+    };
+    info!("OCR 最大图像尺寸: {}", max_image_dimension);
 
     // 获取 PDF 信息
     let (storage_path, page_count, filename, folder_id): (String, i32, String, Option<i64>) = {
@@ -241,6 +257,7 @@ pub async fn start_ocr(
             &mut search_svc,
             &filename,
             folder_id,
+            max_image_dimension,
         ) {
             Ok(_) => {
                 success_count += 1;
@@ -328,6 +345,7 @@ fn process_page(
     search_service: &mut SearchService,
     filename: &str,
     folder_id: Option<i64>,
+    max_image_dimension: u32,
 ) -> Result<(), String> {
     debug!("渲染PDF页面: page={}, path={}", page_num, storage_path);
 
@@ -341,9 +359,9 @@ fn process_page(
 
     debug!("PDF页面渲染成功: page={}", page_num);
 
-    // OCR 识别
+    // OCR 识别（使用配置的最大图像尺寸限制）
     let text = ocr_service
-        .recognize(&image)
+        .recognize_with_limit(&image, max_image_dimension)
         .map_err(|e| {
             error!("OCR识别失败: page={}, 错误: {}", page_num, e);
             format!("OCR识别失败: {}", e)

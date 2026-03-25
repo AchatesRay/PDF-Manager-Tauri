@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open, confirm } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
-  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader } from '../api';
+  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, setOcrMaxImageDimension } from '../api';
   import { onMount, tick } from 'svelte';
   import FolderNode from './FolderNode.svelte';
   import type { Folder, AppSettings } from '../api';
@@ -17,6 +17,7 @@
   let showSettings = false;
   let settings: AppSettings | null = null;
   let newFolderInput: HTMLInputElement;
+  let ocrDimensionInput: string = '';
 
   // 展开的文件夹 ID 集合
   let expandedFolders = new Set<number>();
@@ -273,6 +274,25 @@
     }
   }
 
+  async function saveOcrDimension() {
+    const dimension = parseInt(ocrDimensionInput, 10);
+    if (isNaN(dimension) || dimension < 500 || dimension > 4000) {
+      alert('请输入 500-4000 之间的数字');
+      return;
+    }
+    try {
+      await setOcrMaxImageDimension(dimension);
+      settings = await getSettings();
+      alert('OCR 图像尺寸已保存');
+    } catch (e) {
+      alert('保存失败: ' + e);
+    }
+  }
+
+  $: if (settings && !ocrDimensionInput) {
+    ocrDimensionInput = settings.ocr_max_image_dimension.toString();
+  }
+
   // 响应式计算 - 显式依赖 $pdfList 确保更新
   $: allStats = (() => {
     // 直接访问 $pdfList 确保响应式依赖
@@ -328,6 +348,22 @@
           {#if settings?.pdf_reader_path}
             <button class="secondary-btn" on:click={clearPdfReader}>清除</button>
           {/if}
+        </div>
+      </div>
+      <div class="settings-divider"></div>
+      <div class="settings-title">OCR 设置</div>
+      <div class="settings-item">
+        <label>最大图像尺寸 (像素)</label>
+        <div class="settings-hint">控制 OCR 处理时的图像大小，较小值可减少内存占用。范围: 500-4000</div>
+        <div class="settings-row">
+          <input
+            type="number"
+            min="500"
+            max="4000"
+            bind:value={ocrDimensionInput}
+            placeholder="2000"
+          />
+          <button on:click={saveOcrDimension}>保存</button>
         </div>
       </div>
     </div>
@@ -599,6 +635,47 @@
     height: 1px;
     background: var(--border, #e5e7eb);
     margin: 12px 0;
+  }
+
+  .settings-hint {
+    font-size: 10px;
+    color: var(--text-muted, #9ca3af);
+    margin-bottom: 6px;
+  }
+
+  .settings-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .settings-row input {
+    flex: 1;
+    padding: 5px 10px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 5px;
+    font-size: 11px;
+    background: var(--bg-secondary, #ffffff);
+  }
+
+  .settings-row input:focus {
+    outline: none;
+    border-color: var(--accent, #3b82f6);
+  }
+
+  .settings-row button {
+    padding: 5px 10px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+    background: var(--accent, #3b82f6);
+    color: white;
+    transition: background 0.15s;
+  }
+
+  .settings-row button:hover {
+    background: #2563eb;
   }
 
   .new-folder-item {

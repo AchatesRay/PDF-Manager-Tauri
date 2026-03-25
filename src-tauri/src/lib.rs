@@ -146,6 +146,7 @@ pub fn run() {
             commands::settings::set_data_dir,
             commands::settings::reset_data_dir,
             commands::settings::set_pdf_reader,
+            commands::settings::set_ocr_max_image_dimension,
             commands::settings::open_pdf_externally,
         ])
         .run(tauri::generate_context!())

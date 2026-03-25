@@ -109,6 +109,7 @@ fn check_custom_data_dir(default_dir: &PathBuf, _app_handle: &tauri::AppHandle) 
 /// 设置键名
 pub const SETTING_DATA_DIR: &str = "data_dir";
 pub const SETTING_PDF_READER: &str = "pdf_reader_path";
+pub const SETTING_OCR_MAX_IMAGE_DIMENSION: &str = "ocr_max_image_dimension";
 
 /// 获取设置值
 pub fn get_setting(conn: &Connection, key: &str) -> Option<String> {

@@ -1,5 +1,5 @@
 use crate::services::model_manager::ModelManager;
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb, imageops};
 use oar_ocr::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
@@ -26,6 +26,9 @@ pub struct OcrStatus {
     pub missing_files: Vec<String>,
     pub models_dir: String,
 }
+
+/// 默认最大图像尺寸
+const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 2000;
 
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
@@ -115,8 +118,50 @@ impl OcrService {
         Ok(())
     }
 
-    /// 执行 OCR 识别
+    /// 缩放图像以减少内存占用
+    fn resize_image_if_needed(image: &DynamicImage, max_dimension: u32) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+        let (width, height) = image.dimensions();
+        let max_pixels = max_dimension * max_dimension;
+        let pixels = width * height;
+
+        if width <= max_dimension && height <= max_dimension && pixels <= max_pixels {
+            debug!("图像尺寸适中，无需缩放: {}x{}", width, height);
+            return image.to_rgb8();
+        }
+
+        // 计算缩放比例
+        let scale_by_dimension = if width > max_dimension || height > max_dimension {
+            let scale_w = max_dimension as f64 / width as f64;
+            let scale_h = max_dimension as f64 / height as f64;
+            scale_w.min(scale_h)
+        } else {
+            1.0
+        };
+
+        let scale_by_pixels = if pixels > max_pixels {
+            (max_pixels as f64 / pixels as f64).sqrt()
+        } else {
+            1.0
+        };
+
+        let scale = scale_by_dimension.min(scale_by_pixels);
+        let new_width = (width as f64 * scale) as u32;
+        let new_height = (height as f64 * scale) as u32;
+
+        info!("缩放图像: {}x{} -> {}x{} (scale={:.2})", width, height, new_width, new_height, scale);
+
+        // 使用 image crate 的 resize 方法
+        image.resize(new_width, new_height, imageops::FilterType::Lanczos3)
+            .to_rgb8()
+    }
+
+    /// 执行 OCR 识别（使用默认尺寸限制）
     pub fn recognize(&mut self, image: &DynamicImage) -> Result<String, OcrError> {
+        self.recognize_with_limit(image, DEFAULT_MAX_IMAGE_DIMENSION)
+    }
+
+    /// 执行 OCR 识别（指定最大尺寸限制）
+    pub fn recognize_with_limit(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
         // 如果模型未加载，尝试加载
         if self.ocr.is_none() {
             self.init_ocr()?;
@@ -126,10 +171,12 @@ impl OcrService {
             OcrError::OcrFailed("OCR 模型未初始化".to_string())
         })?;
 
-        debug!("开始 OCR 识别, 图像大小: {}x{}", image.width(), image.height());
+        debug!("开始 OCR 识别, 图像大小: {}x{}, 最大尺寸限制: {}", image.width(), image.height(), max_dimension);
 
-        // 转换图像格式
-        let rgb_image = image.to_rgb8();
+        // 缩放图像以减少内存占用
+        let rgb_image = Self::resize_image_if_needed(image, max_dimension);
+
+        debug!("处理后图像大小: {}x{}", rgb_image.width(), rgb_image.height());
 
         // 执行识别
         let results = ocr.predict(vec![rgb_image]).map_err(|e| {
