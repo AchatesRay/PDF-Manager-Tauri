@@ -7,6 +7,8 @@ use tauri::Manager;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use services::task_queue::TaskQueue;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 尽早初始化日志系统（使用可执行文件目录）
@@ -120,6 +122,11 @@ pub fn run() {
             };
             app.manage(std::sync::Mutex::new(search_service));
 
+            // 初始化任务队列
+            debug!("初始化任务队列...");
+            let task_queue = TaskQueue::new();
+            app.manage(std::sync::Mutex::new(task_queue));
+
             info!("应用初始化完成, 数据目录: {:?}", data_dir);
             info!("日志文件位置: {:?}", data_dir.join("logs"));
 
@@ -142,6 +149,9 @@ pub fn run() {
             commands::ocr::download_ocr_models,
             commands::ocr::cancel_ocr_download,
             commands::ocr::start_ocr,
+            commands::ocr::get_ocr_queue_status,
+            commands::ocr::cancel_ocr_task,
+            commands::ocr::get_memory_info,
             commands::settings::get_settings,
             commands::settings::set_data_dir,
             commands::settings::reset_data_dir,

@@ -5,6 +5,9 @@ use std::path::Path;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+/// 默认最大渲染尺寸
+const DEFAULT_MAX_RENDER_DIMENSION: u32 = 2000;
+
 #[derive(Error, Debug)]
 pub enum PdfError {
     #[error("无法打开PDF: {0}")]
@@ -136,16 +139,29 @@ impl PdfService {
         Ok(metadata)
     }
 
-    /// 渲染 PDF 页面为图像
+    /// 渲染 PDF 页面为图像（使用默认尺寸）
     ///
     /// 参数:
     /// - pdf_path: PDF 文件路径
     /// - page_num: 页码 (1-indexed, 用户视角)
     ///
     /// 返回:
-    /// - 渲染后的图像 (约 300 DPI)
+    /// - 渲染后的图像
     pub fn render_page(&self, pdf_path: &Path, page_num: u32) -> Result<DynamicImage, PdfError> {
-        debug!("渲染PDF页面: page={}, path={:?}", page_num, pdf_path);
+        self.render_page_with_limit(pdf_path, page_num, DEFAULT_MAX_RENDER_DIMENSION)
+    }
+
+    /// 渲染 PDF 页面为图像（指定最大尺寸）
+    ///
+    /// 参数:
+    /// - pdf_path: PDF 文件路径
+    /// - page_num: 页码 (1-indexed, 用户视角)
+    /// - max_dimension: 最大尺寸限制（宽度或高度的最大值）
+    ///
+    /// 返回:
+    /// - 渲染后的图像
+    pub fn render_page_with_limit(&self, pdf_path: &Path, page_num: u32, max_dimension: u32) -> Result<DynamicImage, PdfError> {
+        debug!("渲染PDF页面: page={}, path={:?}, max_dimension={}", page_num, pdf_path, max_dimension);
 
         if !pdf_path.exists() {
             error!("PDF文件不存在: {:?}", pdf_path);
@@ -184,12 +200,29 @@ impl PdfService {
                 PdfError::RenderError(format!("无法获取页面 {}: {}", page_num, e))
             })?;
 
-        // 渲染配置: A4 @ 300 DPI (2480 x 3508 像素)
-        let render_config = PdfRenderConfig::new()
-            .set_target_width(2480)
-            .set_maximum_height(3508);
+        // 获取页面原始尺寸
+        let page_width = page.width().value as u32;
+        let page_height = page.height().value as u32;
 
-        debug!("开始渲染页面: page={}, config=2480x3508", page_num);
+        // 计算渲染尺寸，保持宽高比
+        let (render_width, render_height) = if page_width > page_height {
+            let scale = max_dimension as f64 / page_width as f64;
+            let width = max_dimension;
+            let height = (page_height as f64 * scale) as u32;
+            (width, height)
+        } else {
+            let scale = max_dimension as f64 / page_height as f64;
+            let height = max_dimension;
+            let width = (page_width as f64 * scale) as u32;
+            (width, height)
+        };
+
+        // 渲染配置
+        let render_config = PdfRenderConfig::new()
+            .set_target_width(render_width)
+            .set_maximum_height(render_height);
+
+        debug!("开始渲染页面: page={}, config={}x{}, max_dimension={}", page_num, render_width, render_height, max_dimension);
 
         // 渲染页面为位图
         let bitmap = page

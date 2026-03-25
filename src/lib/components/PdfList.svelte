@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
@@ -18,20 +18,43 @@
       console.error('Failed to get OCR status:', e);
     }
 
-    const unlisten = await listen<OcrProgress>('ocr-progress', (event) => {
+    // 监听 OCR 进度
+    const unlistenProgress = await listen<OcrProgress>('ocr-progress', (event) => {
       const progress = event.payload;
       ocrProgress.update(map => {
         map.set(progress.pdf_id, progress);
         return map;
       });
 
-      if (progress.status === 'done') {
+      if (progress.status === 'done' || progress.status === 'error') {
         loadPdfs();
       }
     });
 
-    return unlisten;
+    // 监听排队事件
+    const unlistenQueued = await listen<{ pdf_id: number; position: number }>('ocr-queued', (event) => {
+      console.log('OCR 任务已排队:', event.payload);
+      refreshQueueStatus();
+    });
+
+    // 定期刷新队列状态
+    const interval = setInterval(refreshQueueStatus, 3000);
+
+    return () => {
+      unlistenProgress();
+      unlistenQueued();
+      clearInterval(interval);
+    };
   });
+
+  async function refreshQueueStatus() {
+    try {
+      const status = await getOcrQueueStatus();
+      ocrQueue.set(status);
+    } catch (e) {
+      console.error('Failed to get queue status:', e);
+    }
+  }
 
   async function loadPdfs() {
     isLoading.set(true);
@@ -119,9 +142,29 @@
   async function handleStartOcr(id: number) {
     try {
       await startOcr(id);
+      await refreshQueueStatus();
     } catch (e) {
       alert('启动OCR失败: ' + e);
     }
+  }
+
+  async function handleCancelTask(id: number) {
+    try {
+      const cancelled = await cancelOcrTask(id);
+      if (cancelled) {
+        await refreshQueueStatus();
+      } else {
+        alert('无法取消正在运行的任务');
+      }
+    } catch (e) {
+      alert('取消任务失败: ' + e);
+    }
+  }
+
+  function getQueuePosition(pdfId: number): number | null {
+    if ($ocrQueue.current === pdfId) return 0;
+    const idx = $ocrQueue.pending.findIndex(t => t.pdf_id === pdfId);
+    return idx >= 0 ? idx + 1 : null;
   }
 
   function getStatusText(status: string): string {
@@ -214,7 +257,12 @@
           </div>
           <div class="actions">
             {#if pdf.status === 'pending'}
-              <button class="ocr-btn" on:click|stopPropagation={() => handleStartOcr(pdf.id)}>OCR</button>
+              {#if getQueuePosition(pdf.id) !== null}
+                <span class="queue-position">排队中 (#{getQueuePosition(pdf.id)})</span>
+                <button class="cancel-btn" on:click|stopPropagation={() => handleCancelTask(pdf.id)} title="取消排队">取消</button>
+              {:else}
+                <button class="ocr-btn" on:click|stopPropagation={() => handleStartOcr(pdf.id)}>OCR</button>
+              {/if}
             {:else if pdf.status === 'processing'}
               <span class="processing-indicator">
                 <svg class="spinner-small" viewBox="0 0 24 24">
@@ -389,6 +437,31 @@
 
   .ocr-btn:hover {
     background: #059669;
+  }
+
+  .queue-position {
+    padding: 4px 6px;
+    background: var(--bg-tertiary, #f3f4f6);
+    color: var(--text-secondary, #6b7280);
+    border-radius: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .cancel-btn {
+    padding: 4px 6px;
+    background: transparent;
+    color: var(--error, #ef4444);
+    border: 1px solid var(--error, #ef4444);
+    border-radius: 4px;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .cancel-btn:hover {
+    background: var(--error, #ef4444);
+    color: white;
   }
 
   .processing-indicator {

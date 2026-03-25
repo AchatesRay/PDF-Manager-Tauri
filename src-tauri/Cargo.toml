@@ -38,6 +38,9 @@ oar-ocr = "0.6"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 
+# 系统信息
+sysinfo = "0.33"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

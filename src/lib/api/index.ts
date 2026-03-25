@@ -128,6 +128,30 @@ export async function startOcr(pdfId: number): Promise<void> {
   return invoke('start_ocr', { pdfId });
 }
 
+// Queue API
+export interface QueueStatus {
+  current: number | null;
+  pending: Array<{ pdf_id: number; created_at: string }>;
+}
+
+export async function getOcrQueueStatus(): Promise<QueueStatus> {
+  return invoke('get_ocr_queue_status');
+}
+
+export async function cancelOcrTask(pdfId: number): Promise<boolean> {
+  return invoke('cancel_ocr_task', { pdfId });
+}
+
+export interface MemoryInfo {
+  total: number;
+  available: number;
+  used_percent: number;
+}
+
+export async function getMemoryInfo(): Promise<MemoryInfo> {
+  return invoke('get_memory_info');
+}
+
 // Settings API
 export interface AppSettings {
   data_dir: string;
