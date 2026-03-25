@@ -24,6 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] }
 time = { version = "0.3", features = ["local-offset"] }
 image = "0.25"
+imageproc = "0.24"
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2"
 lopdf = "0.34"

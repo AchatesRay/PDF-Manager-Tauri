@@ -5,6 +5,42 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
+/// 模型类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelType {
+    /// 移动版：快速、低内存（约 800MB）
+    Mobile,
+    /// 服务器版：高精度、高内存（约 2-3GB）
+    Server,
+}
+
+impl Default for ModelType {
+    fn default() -> Self {
+        Self::Mobile
+    }
+}
+
+impl std::fmt::Display for ModelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelType::Mobile => write!(f, "mobile"),
+            ModelType::Server => write!(f, "server"),
+        }
+    }
+}
+
+impl std::str::FromStr for ModelType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "mobile" => Ok(ModelType::Mobile),
+            "server" => Ok(ModelType::Server),
+            _ => Err(format!("未知的模型类型: {}", s)),
+        }
+    }
+}
+
 /// 模型文件信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelFile {
@@ -36,24 +72,43 @@ pub struct ModelManager {
 }
 
 /// 获取模型文件列表（运行时创建）
-fn get_model_files() -> Vec<ModelFile> {
-    vec![
-        ModelFile {
-            name: String::from("pp-ocrv5_mobile_det.onnx"),
-            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx"),
-            size: 4_828_087, // ~4.6MB
-        },
-        ModelFile {
-            name: String::from("pp-ocrv5_mobile_rec.onnx"),
-            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
-            size: 16_556_181, // ~15.8MB
-        },
-        ModelFile {
-            name: String::from("ppocrv5_dict.txt"),
-            url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
-            size: 5_682, // ~5KB
-        },
-    ]
+fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
+    match model_type {
+        ModelType::Mobile => vec![
+            ModelFile {
+                name: String::from("pp-ocrv5_mobile_det.onnx"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx"),
+                size: 4_828_087, // ~4.6MB
+            },
+            ModelFile {
+                name: String::from("pp-ocrv5_mobile_rec.onnx"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
+                size: 16_556_181, // ~15.8MB
+            },
+            ModelFile {
+                name: String::from("ppocrv5_dict.txt"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
+                size: 5_682, // ~5KB
+            },
+        ],
+        ModelType::Server => vec![
+            ModelFile {
+                name: String::from("pp-ocrv5_server_det.onnx"),
+                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/pp-ocrv5_server_det.onnx"),
+                size: 110_000_000, // ~110MB
+            },
+            ModelFile {
+                name: String::from("pp-ocrv5_server_rec.onnx"),
+                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/pp-ocrv5_server_rec.onnx"),
+                size: 200_000_000, // ~200MB
+            },
+            ModelFile {
+                name: String::from("ppocrv5_dict.txt"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
+                size: 5_682, // ~5KB
+            },
+        ],
+    }
 }
 
 impl ModelManager {
@@ -76,11 +131,11 @@ impl ModelManager {
         &self.models_dir
     }
 
-    /// 检查所有模型文件是否存在
-    pub fn check_models(&self) -> ModelStatus {
-        debug!("检查模型文件, 目录: {:?}", self.models_dir);
+    /// 检查指定类型模型文件是否存在
+    pub fn check_models(&self, model_type: ModelType) -> ModelStatus {
+        debug!("检查模型文件, 目录: {:?}, 类型: {}", self.models_dir, model_type);
 
-        let model_files = get_model_files();
+        let model_files = get_model_files(model_type);
         let missing_files: Vec<String> = model_files
             .iter()
             .filter(|model| !self.models_dir.join(&model.name).exists())
@@ -102,13 +157,13 @@ impl ModelManager {
     }
 
     /// 获取所有模型文件信息
-    pub fn get_model_files_static() -> Vec<ModelFile> {
-        get_model_files()
+    pub fn get_model_files_static(model_type: ModelType) -> Vec<ModelFile> {
+        get_model_files(model_type)
     }
 
     /// 获取手动下载指导
-    pub fn get_download_guide() -> Vec<DownloadGuide> {
-        get_model_files()
+    pub fn get_download_guide(model_type: ModelType) -> Vec<DownloadGuide> {
+        get_model_files(model_type)
             .iter()
             .map(|model| DownloadGuide {
                 name: model.name.clone(),
@@ -124,14 +179,14 @@ impl ModelManager {
         info!("已请求取消下载");
     }
 
-    /// 下载所有缺失的模型文件
-    pub async fn download_models(&self, app_handle: AppHandle) -> Result<(), String> {
-        info!("开始下载模型文件");
+    /// 下载指定类型的模型文件
+    pub async fn download_models(&self, app_handle: AppHandle, model_type: ModelType) -> Result<(), String> {
+        info!("开始下载模型文件, 类型: {}", model_type);
 
         // 重置取消标志
         self.cancel_flag.store(false, Ordering::SeqCst);
 
-        let status = self.check_models();
+        let status = self.check_models(model_type);
 
         if status.ready {
             info!("所有模型文件已存在，无需下载");
@@ -145,7 +200,7 @@ impl ModelManager {
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
-        let model_files = get_model_files();
+        let model_files = get_model_files(model_type);
 
         // 下载缺失的文件
         for model in &model_files {

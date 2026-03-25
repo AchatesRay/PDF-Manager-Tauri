@@ -1,6 +1,6 @@
 use crate::db::{Db, get_setting, SETTING_OCR_MAX_IMAGE_DIMENSION};
 use crate::services::memory_monitor::{can_start_task, estimate_task_memory, get_system_memory_info, MemoryInfo};
-use crate::services::model_manager::{DownloadGuide, ModelManager};
+use crate::services::model_manager::{DownloadGuide, ModelManager, ModelType};
 use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
 use crate::services::search_service::SearchService;
@@ -17,6 +17,7 @@ pub struct OcrStatus {
     pub models_ready: bool,
     pub missing_files: Vec<String>,
     pub models_dir: String,
+    pub model_type: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,10 +44,11 @@ pub fn get_ocr_status(
     };
 
     let status = svc.get_status();
+    let model_type = svc.model_type();
 
     debug!(
-        "OCR状态: available={}, models_ready={}, missing={:?}",
-        status.available, status.models_ready, status.missing_files
+        "OCR状态: available={}, models_ready={}, missing={:?}, model_type={}",
+        status.available, status.models_ready, status.missing_files, model_type
     );
 
     Ok(OcrStatus {
@@ -54,13 +56,38 @@ pub fn get_ocr_status(
         models_ready: status.models_ready,
         missing_files: status.missing_files,
         models_dir: status.models_dir,
+        model_type: model_type.to_string(),
     })
 }
 
 /// 获取下载指导
 #[tauri::command]
-pub fn get_ocr_download_guide() -> Vec<DownloadGuide> {
-    ModelManager::get_download_guide()
+pub fn get_ocr_download_guide(
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Vec<DownloadGuide> {
+    let model_type = ocr_service.lock()
+        .map(|s| s.model_type())
+        .unwrap_or(ModelType::Mobile);
+    ModelManager::get_download_guide(model_type)
+}
+
+/// 设置模型类型
+#[tauri::command]
+pub fn set_ocr_model_type(
+    model_type: String,
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Result<(), String> {
+    let model_type: ModelType = model_type.parse()
+        .map_err(|e| format!("无效的模型类型: {}", e))?;
+
+    let mut svc = ocr_service.lock().map_err(|e| {
+        error!("获取OCR服务锁失败: {}", e);
+        format!("OCR服务锁定失败: {}", e)
+    })?;
+
+    svc.set_model_type(model_type);
+    info!("模型类型已设置为: {}", model_type);
+    Ok(())
 }
 
 /// 下载 OCR 模型
@@ -71,15 +98,15 @@ pub async fn download_ocr_models(
 ) -> Result<(), String> {
     info!("开始下载 OCR 模型");
 
-    let model_manager = {
+    let (model_manager, model_type) = {
         let svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
         })?;
-        svc.model_manager()
+        (svc.model_manager(), svc.model_type())
     };
 
-    model_manager.download_models(app_handle).await?;
+    model_manager.download_models(app_handle, model_type).await?;
 
     info!("OCR 模型下载完成");
     Ok(())
@@ -369,6 +396,25 @@ pub async fn start_ocr(
     });
 
     info!("OCR处理完成: pdf_id={}, filename={}, 成功={}, 失败={}", pdf_id, filename, success_count, error_count);
+
+    // 智能内存管理：根据内存状态决定是否释放模型
+    {
+        let mem_info = crate::services::memory_monitor::get_system_memory_info();
+        const MEMORY_THRESHOLD: u64 = 3 * 1024 * 1024 * 1024; // 3GB
+
+        if mem_info.available < MEMORY_THRESHOLD {
+            info!("内存紧张 (可用: {:.1}GB)，释放 OCR 模型以节省内存",
+                mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0);
+            let mut ocr_svc = ocr_service.lock().map_err(|e| {
+                error!("获取OCR服务锁失败: {}", e);
+                format!("OCR服务锁定失败: {}", e)
+            })?;
+            ocr_svc.unload_ocr();
+        } else {
+            info!("内存充足 (可用: {:.1}GB)，保留 OCR 模型以加速后续识别",
+                mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0);
+        }
+    }
 
     // 标记任务完成，开始下一个
     {

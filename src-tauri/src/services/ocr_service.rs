@@ -1,4 +1,4 @@
-use crate::services::model_manager::ModelManager;
+use crate::services::model_manager::{ModelManager, ModelType};
 use image::{DynamicImage, GenericImageView, imageops};
 use oar_ocr::prelude::*;
 use std::path::Path;
@@ -39,15 +39,54 @@ const MIN_TILE_DIMENSION: u32 = 400;
 /// 内存不足时的最大重试次数
 const MAX_MEMORY_RETRIES: u32 = 3;
 
+/// 最低置信度阈值（0.0-1.0），低于此值的识别结果将被过滤
+const MIN_CONFIDENCE: f32 = 0.5;
+
+/// 预处理图像以提高 OCR 识别正确率
+///
+/// 包括：对比度增强、锐化处理
+fn preprocess_image(image: &DynamicImage) -> DynamicImage {
+    use image::{ImageBuffer, Luma, Pixel};
+    use imageproc::contrast::equalize_histogram;
+    use imageproc::filter::sharpen;
+
+    // 转换为灰度图进行处理
+    let gray = image.to_luma8();
+
+    // 1. 直方图均衡化（增强对比度）
+    let equalized = equalize_histogram(&gray);
+
+    // 2. 锐化处理
+    let sharpened = sharpen(&equalized);
+
+    // 转回 RGB
+    let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
+        sharpened.width(),
+        sharpened.height(),
+        |x, y| {
+            let luma = sharpened.get_pixel(x, y);
+            image::Rgb([luma[0], luma[0], luma[0]])
+        }
+    );
+
+    DynamicImage::ImageRgb8(rgb)
+}
+
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
+    model_type: ModelType,
 }
 
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        info!("初始化 OCR 服务, data_dir={:?}", data_dir);
+        Self::with_model_type(data_dir, ModelType::Mobile)
+    }
+
+    /// 创建 OCR 服务（指定模型类型）
+    pub fn with_model_type(data_dir: &Path, model_type: ModelType) -> Result<Self, OcrError> {
+        info!("初始化 OCR 服务, data_dir={:?}, model_type={}", data_dir, model_type);
 
         let models_dir = data_dir.join("models");
 
@@ -65,12 +104,28 @@ impl OcrService {
         Ok(Self {
             model_manager,
             ocr: None,
+            model_type,
         })
+    }
+
+    /// 设置模型类型（需要重新加载模型）
+    pub fn set_model_type(&mut self, model_type: ModelType) {
+        if self.model_type != model_type {
+            info!("切换模型类型: {} -> {}", self.model_type, model_type);
+            // 卸载当前模型
+            self.unload_ocr();
+            self.model_type = model_type;
+        }
+    }
+
+    /// 获取当前模型类型
+    pub fn model_type(&self) -> ModelType {
+        self.model_type
     }
 
     /// 获取 OCR 状态
     pub fn get_status(&self) -> OcrStatus {
-        let status = self.model_manager.check_models();
+        let status = self.model_manager.check_models(self.model_type);
 
         OcrStatus {
             available: self.ocr.is_some(),
@@ -87,7 +142,7 @@ impl OcrService {
 
     /// 检查模型文件是否存在
     pub fn check_models(&self) -> bool {
-        self.model_manager.check_models().ready
+        self.model_manager.check_models(self.model_type).ready
     }
 
     /// 初始化 OCR（加载模型）
@@ -97,7 +152,7 @@ impl OcrService {
             return Ok(());
         }
 
-        let status = self.model_manager.check_models();
+        let status = self.model_manager.check_models(self.model_type);
 
         if !status.ready {
             return Err(OcrError::ModelsMissing(format!(
@@ -108,11 +163,17 @@ impl OcrService {
 
         let models_dir = self.model_manager.models_dir();
 
-        let det_path = models_dir.join("pp-ocrv5_mobile_det.onnx");
-        let rec_path = models_dir.join("pp-ocrv5_mobile_rec.onnx");
+        let (det_name, rec_name) = match self.model_type {
+            ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx"),
+            ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx"),
+        };
+
+        let det_path = models_dir.join(det_name);
+        let rec_path = models_dir.join(rec_name);
         let dict_path = models_dir.join("ppocrv5_dict.txt");
 
-        info!("加载 OCR 模型: det={:?}, rec={:?}, dict={:?}", det_path, rec_path, dict_path);
+        info!("加载 OCR 模型: type={}, det={:?}, rec={:?}, dict={:?}",
+            self.model_type, det_path, rec_path, dict_path);
 
         let ocr = OAROCRBuilder::new(&det_path, &rec_path, &dict_path)
             .build()
@@ -153,6 +214,10 @@ impl OcrService {
             return self.recognize_with_tiling(image, max_dimension);
         }
 
+        // 小图像：应用预处理以提高识别正确率
+        let preprocessed = preprocess_image(image);
+        debug!("图像预处理完成");
+
         // 小图像直接处理，带有内存不足重试
         let mut current_tile_size = TILE_MAX_DIMENSION;
         let mut retry_count = 0;
@@ -165,9 +230,9 @@ impl OcrService {
                 let new_height = (height as f64 * scale) as u32;
                 info!("内存不足重试 #{}: 缩小图像 {}x{} -> {}x{}",
                     retry_count, width, height, new_width, new_height);
-                image.resize(new_width, new_height, imageops::FilterType::Lanczos3)
+                preprocessed.resize(new_width, new_height, imageops::FilterType::Lanczos3)
             } else {
-                image.clone()
+                preprocessed.clone()
             };
 
             let rgb_image = process_image.to_rgb8();
@@ -181,7 +246,14 @@ impl OcrService {
                             r.text_regions
                                 .iter()
                                 .filter_map(|region| region.text_with_confidence())
-                                .map(|(t, _)| t)
+                                .filter_map(|(t, conf)| {
+                                    if conf >= MIN_CONFIDENCE {
+                                        Some(t)
+                                    } else {
+                                        debug!("过滤低置信度文本: {} (置信度: {:.2})", t, conf);
+                                        None
+                                    }
+                                })
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         })
@@ -224,7 +296,7 @@ impl OcrService {
         let (width, height) = image.dimensions();
 
         // 先缩放到目标尺寸
-        let mut scaled = if width > max_dimension || height > max_dimension {
+        let scaled = if width > max_dimension || height > max_dimension {
             let scale = max_dimension as f64 / width.max(height) as f64;
             let new_width = (width as f64 * scale) as u32;
             let new_height = (height as f64 * scale) as u32;
@@ -236,23 +308,28 @@ impl OcrService {
 
         let (sw, sh) = scaled.dimensions();
 
-        // 计算分块数量
+        // 分块重叠比例（避免文字被截断）
+        const OVERLAP_RATIO: f32 = 0.15;
         let tile_size = TILE_MAX_DIMENSION;
-        let cols = ((sw + tile_size - 1) / tile_size) as usize;
-        let rows = ((sh + tile_size - 1) / tile_size) as usize;
+        let overlap = (tile_size as f32 * OVERLAP_RATIO) as u32;
+        let step = tile_size - overlap; // 实际步进距离
 
-        info!("分块处理: {}x{} 图像分为 {}x{} = {} 块", sw, sh, cols, rows, cols * rows);
+        // 计算分块数量（考虑重叠）
+        let cols = if sw > tile_size { ((sw - tile_size) / step + 1) as usize } else { 1 };
+        let rows = if sh > tile_size { ((sh - tile_size) / step + 1) as usize } else { 1 };
+
+        info!("分块处理: {}x{} 图像分为 {}x{} = {} 块 (重叠 {}px)", sw, sh, cols, rows, cols * rows, overlap);
 
         let mut all_texts: Vec<String> = Vec::new();
-        let mut current_tile_size = tile_size;
         let mut memory_retry_count = 0;
 
         for row in 0..rows {
             for col in 0..cols {
-                let x0 = (col as u32 * tile_size).min(sw);
-                let y0 = (row as u32 * tile_size).min(sh);
-                let x1 = ((col as u32 + 1) * tile_size).min(sw);
-                let y1 = ((row as u32 + 1) * tile_size).min(sh);
+                // 计算分块位置（带重叠）
+                let x0 = if col == 0 { 0 } else { (col as u32 * step).min(sw.saturating_sub(tile_size)) };
+                let y0 = if row == 0 { 0 } else { (row as u32 * step).min(sh.saturating_sub(tile_size)) };
+                let x1 = (x0 + tile_size).min(sw);
+                let y1 = (y0 + tile_size).min(sh);
 
                 if x0 >= x1 || y0 >= y1 {
                     continue;
@@ -273,7 +350,13 @@ impl OcrService {
                                 let tile_text: String = result.text_regions
                                     .iter()
                                     .filter_map(|region| region.text_with_confidence())
-                                    .map(|(t, _)| t)
+                                    .filter_map(|(t, conf)| {
+                                        if conf >= MIN_CONFIDENCE {
+                                            Some(t)
+                                        } else {
+                                            None
+                                        }
+                                    })
                                     .collect::<Vec<_>>()
                                     .join("\n");
 
@@ -315,7 +398,13 @@ impl OcrService {
                                             let tile_text: String = result.text_regions
                                                 .iter()
                                                 .filter_map(|region| region.text_with_confidence())
-                                                .map(|(t, _)| t)
+                                                .filter_map(|(t, conf)| {
+                                                    if conf >= MIN_CONFIDENCE {
+                                                        Some(t)
+                                                    } else {
+                                                        None
+                                                    }
+                                                })
                                                 .collect::<Vec<_>>()
                                                 .join("\n");
 
@@ -343,6 +432,10 @@ impl OcrService {
             }
         }
 
+        // 显式释放大图像内存
+        drop(scaled);
+        std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
+
         let text = all_texts.join("\n\n");
         info!("分块 OCR 完成: {} 字符", text.len());
         Ok(text)
@@ -365,5 +458,22 @@ impl OcrService {
     /// 兼容旧 API：检查中文支持
     pub fn check_chinese_support(&self) -> bool {
         self.check_models()
+    }
+
+    /// 释放 OCR 模型，释放内存
+    ///
+    /// 当内存紧张或不再需要 OCR 功能时调用此方法
+    /// 下次使用时会自动重新加载模型
+    pub fn unload_ocr(&mut self) {
+        if self.ocr.take().is_some() {
+            info!("OCR 模型已卸载，释放内存");
+            // 强制触发内存回收
+            std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// 检查模型是否已加载
+    pub fn is_model_loaded(&self) -> bool {
+        self.ocr.is_some()
     }
 }
