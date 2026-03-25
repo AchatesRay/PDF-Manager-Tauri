@@ -46,9 +46,7 @@ const MIN_CONFIDENCE: f32 = 0.5;
 ///
 /// 包括：对比度增强、锐化处理
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
-    use image::{ImageBuffer, Luma, Pixel};
     use imageproc::contrast::equalize_histogram;
-    use imageproc::filter::sharpen;
 
     // 转换为灰度图进行处理
     let gray = image.to_luma8();
@@ -56,15 +54,12 @@ fn preprocess_image(image: &DynamicImage) -> DynamicImage {
     // 1. 直方图均衡化（增强对比度）
     let equalized = equalize_histogram(&gray);
 
-    // 2. 锐化处理
-    let sharpened = sharpen(&equalized);
-
-    // 转回 RGB
+    // 转回 RGB（不使用锐化，因为 imageproc 0.24 的 sharpen 模块是私有的）
     let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
-        sharpened.width(),
-        sharpened.height(),
+        equalized.width(),
+        equalized.height(),
         |x, y| {
-            let luma = sharpened.get_pixel(x, y);
+            let luma = equalized.get_pixel(x, y);
             image::Rgb([luma[0], luma[0], luma[0]])
         }
     );
@@ -296,7 +291,7 @@ impl OcrService {
         let (width, height) = image.dimensions();
 
         // 先缩放到目标尺寸
-        let scaled = if width > max_dimension || height > max_dimension {
+        let mut scaled = if width > max_dimension || height > max_dimension {
             let scale = max_dimension as f64 / width.max(height) as f64;
             let new_width = (width as f64 * scale) as u32;
             let new_height = (height as f64 * scale) as u32;
