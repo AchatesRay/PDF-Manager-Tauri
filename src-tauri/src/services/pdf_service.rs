@@ -219,8 +219,8 @@ impl PdfService {
 
         // 渲染配置
         let render_config = PdfRenderConfig::new()
-            .set_target_width(render_width as usize)
-            .set_maximum_height(render_height as usize);
+            .set_target_width(render_width as i32)
+            .set_maximum_height(render_height as i32);
 
         debug!("开始渲染页面: page={}, config={}x{}, max_dimension={}", page_num, render_width, render_height, max_dimension);
 
