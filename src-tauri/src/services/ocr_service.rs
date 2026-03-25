@@ -148,8 +148,8 @@ impl OcrService {
         }
 
         // 小图像直接处理
-        let rgb_image = Self::resize_image_if_needed(image, max_dimension);
-        debug!("处理后图像大小: {}x{}", rgb_image.width(), rgb_image.height());
+        let rgb_image = image.to_rgb8();
+        debug!("图像尺寸: {}x{}", rgb_image.width(), rgb_image.height());
 
         let results = ocr.predict(vec![rgb_image]).map_err(|e| {
             error!("OCR 识别失败: {}", e);
@@ -181,7 +181,7 @@ impl OcrService {
         let (width, height) = image.dimensions();
 
         // 先缩放到目标尺寸
-        let scaled = if width > max_dimension || height > max_dimension {
+        let mut scaled = if width > max_dimension || height > max_dimension {
             let scale = max_dimension as f64 / width.max(height) as f64;
             let new_width = (width as f64 * scale) as u32;
             let new_height = (height as f64 * scale) as u32;
