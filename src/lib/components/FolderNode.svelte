@@ -30,7 +30,9 @@
 
   function handleToggleExpand(e: MouseEvent) {
     e.stopPropagation();
+    alert('[调试] 点击了展开按钮，文件夹ID: ' + node.id + ', 名称: ' + node.name);
     toggleFolderExpand(node.id);
+    alert('[调试] 当前展开状态: ' + isFolderExpanded(node.id));
   }
 
   function selectFolder() {
