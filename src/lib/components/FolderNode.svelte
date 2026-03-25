@@ -19,20 +19,18 @@
   export let onCancelFolder: () => void;
   export let onSelectDirectory: () => void;
   export let onNewFolderNameChange: (value: string) => void;
-  export let isFolderExpanded: (folderId: number) => boolean;
+  export let expandedFolders: Set<number>;
   export let toggleFolderExpand: (folderId: number) => void;
 
   $: hasChildren = node.children && node.children.length > 0;
   $: showNewFolderHere = newFolderParentId === node.id;
-  $: isExpanded = isFolderExpanded(node.id);
+  $: isExpanded = expandedFolders.has(node.id);
   // 显式依赖 $pdfList 和 $folders 确保响应式更新
   $: stats = ($pdfList, $folders, getFolderOcrStats(node.id));
 
   function handleToggleExpand(e: MouseEvent) {
     e.stopPropagation();
-    alert('[调试] 点击了展开按钮，文件夹ID: ' + node.id + ', 名称: ' + node.name);
     toggleFolderExpand(node.id);
-    alert('[调试] 当前展开状态: ' + isFolderExpanded(node.id));
   }
 
   function selectFolder() {
@@ -114,7 +112,7 @@
       {onCancelFolder}
       {onSelectDirectory}
       {onNewFolderNameChange}
-      {isFolderExpanded}
+      {expandedFolders}
       {toggleFolderExpand}
     />
   {/each}

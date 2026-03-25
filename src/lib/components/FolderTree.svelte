@@ -22,13 +22,7 @@
   // 展开的文件夹 ID 集合
   let expandedFolders = new Set<number>();
 
-  function isFolderExpanded(folderId: number): boolean {
-    return expandedFolders.has(folderId);
-  }
-
   function toggleFolderExpand(folderId: number) {
-    console.log('[FolderTree] toggleFolderExpand called with folderId:', folderId);
-    console.log('[FolderTree] expandedFolders before:', [...expandedFolders]);
     const newSet = new Set(expandedFolders);
     if (newSet.has(folderId)) {
       newSet.delete(folderId);
@@ -36,7 +30,6 @@
       newSet.add(folderId);
     }
     expandedFolders = newSet; // 创建新的 Set 实例触发响应式更新
-    console.log('[FolderTree] expandedFolders after:', [...expandedFolders]);
   }
 
   function expandFolder(folderId: number) {
@@ -402,7 +395,7 @@
         onCancelFolder={handleCancel}
         onSelectDirectory={selectDirectory}
         onNewFolderNameChange={(v) => newFolderName = v}
-        {isFolderExpanded}
+        expandedFolders={expandedFolders}
         {toggleFolderExpand}
       />
     {/each}
