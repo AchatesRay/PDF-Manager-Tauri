@@ -5,7 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:webview:allow-inspector",
+    "core:webview:allow-internal-toggle-devtools",
     "shell:allow-open",
     "shell:allow-execute",
     "dialog:default",
