@@ -1,5 +1,5 @@
 use crate::services::model_manager::ModelManager;
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb, imageops};
+use image::{DynamicImage, GenericImageView, imageops};
 use oar_ocr::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
@@ -29,6 +29,9 @@ pub struct OcrStatus {
 
 /// 默认最大图像尺寸
 const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 2000;
+
+/// 分块处理的最大尺寸（每个分块）
+const TILE_MAX_DIMENSION: u32 = 800;
 
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
@@ -118,43 +121,6 @@ impl OcrService {
         Ok(())
     }
 
-    /// 缩放图像以减少内存占用
-    fn resize_image_if_needed(image: &DynamicImage, max_dimension: u32) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
-        let (width, height) = image.dimensions();
-        let max_pixels = max_dimension * max_dimension;
-        let pixels = width * height;
-
-        if width <= max_dimension && height <= max_dimension && pixels <= max_pixels {
-            debug!("图像尺寸适中，无需缩放: {}x{}", width, height);
-            return image.to_rgb8();
-        }
-
-        // 计算缩放比例
-        let scale_by_dimension = if width > max_dimension || height > max_dimension {
-            let scale_w = max_dimension as f64 / width as f64;
-            let scale_h = max_dimension as f64 / height as f64;
-            scale_w.min(scale_h)
-        } else {
-            1.0
-        };
-
-        let scale_by_pixels = if pixels > max_pixels {
-            (max_pixels as f64 / pixels as f64).sqrt()
-        } else {
-            1.0
-        };
-
-        let scale = scale_by_dimension.min(scale_by_pixels);
-        let new_width = (width as f64 * scale) as u32;
-        let new_height = (height as f64 * scale) as u32;
-
-        info!("缩放图像: {}x{} -> {}x{} (scale={:.2})", width, height, new_width, new_height, scale);
-
-        // 使用 image crate 的 resize 方法
-        image.resize(new_width, new_height, imageops::FilterType::Lanczos3)
-            .to_rgb8()
-    }
-
     /// 执行 OCR 识别（使用默认尺寸限制）
     pub fn recognize(&mut self, image: &DynamicImage) -> Result<String, OcrError> {
         self.recognize_with_limit(image, DEFAULT_MAX_IMAGE_DIMENSION)
@@ -173,18 +139,23 @@ impl OcrService {
 
         debug!("开始 OCR 识别, 图像大小: {}x{}, 最大尺寸限制: {}", image.width(), image.height(), max_dimension);
 
-        // 缩放图像以减少内存占用
-        let rgb_image = Self::resize_image_if_needed(image, max_dimension);
+        let (width, height) = image.dimensions();
 
+        // 如果图像较大，使用分块处理以减少内存峰值
+        if width > TILE_MAX_DIMENSION || height > TILE_MAX_DIMENSION {
+            info!("图像较大，使用分块处理: {}x{}", width, height);
+            return self.recognize_with_tiling(image, max_dimension);
+        }
+
+        // 小图像直接处理
+        let rgb_image = Self::resize_image_if_needed(image, max_dimension);
         debug!("处理后图像大小: {}x{}", rgb_image.width(), rgb_image.height());
 
-        // 执行识别
         let results = ocr.predict(vec![rgb_image]).map_err(|e| {
             error!("OCR 识别失败: {}", e);
             OcrError::OcrFailed(format!("识别失败: {}", e))
         })?;
 
-        // 合并识别结果
         let text = results
             .first()
             .map(|r| {
@@ -198,6 +169,81 @@ impl OcrService {
             .unwrap_or_default();
 
         info!("OCR 识别完成: {} 字符", text.len());
+        Ok(text)
+    }
+
+    /// 分块处理大图像
+    fn recognize_with_tiling(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
+        let ocr = self.ocr.as_ref().ok_or_else(|| {
+            OcrError::OcrFailed("OCR 模型未初始化".to_string())
+        })?;
+
+        let (width, height) = image.dimensions();
+
+        // 先缩放到目标尺寸
+        let scaled = if width > max_dimension || height > max_dimension {
+            let scale = max_dimension as f64 / width.max(height) as f64;
+            let new_width = (width as f64 * scale) as u32;
+            let new_height = (height as f64 * scale) as u32;
+            info!("缩放图像: {}x{} -> {}x{}", width, height, new_width, new_height);
+            image.resize(new_width, new_height, imageops::FilterType::Lanczos3)
+        } else {
+            image.clone()
+        };
+
+        let (sw, sh) = scaled.dimensions();
+
+        // 计算分块数量
+        let tile_size = TILE_MAX_DIMENSION;
+        let cols = ((sw + tile_size - 1) / tile_size) as usize;
+        let rows = ((sh + tile_size - 1) / tile_size) as usize;
+
+        info!("分块处理: {}x{} 图像分为 {}x{} = {} 块", sw, sh, cols, rows, cols * rows);
+
+        let mut all_texts: Vec<String> = Vec::new();
+
+        for row in 0..rows {
+            for col in 0..cols {
+                let x0 = (col as u32 * tile_size).min(sw);
+                let y0 = (row as u32 * tile_size).min(sh);
+                let x1 = ((col as u32 + 1) * tile_size).min(sw);
+                let y1 = ((row as u32 + 1) * tile_size).min(sh);
+
+                if x0 >= x1 || y0 >= y1 {
+                    continue;
+                }
+
+                debug!("处理分块 [{},{}]: ({},{}) - ({},{})", row, col, x0, y0, x1, y1);
+
+                // 裁剪分块
+                let tile = scaled.crop(x0, y0, x1 - x0, y1 - y0);
+                let rgb_tile = tile.to_rgb8();
+
+                // 识别分块
+                match ocr.predict(vec![rgb_tile]) {
+                    Ok(results) => {
+                        if let Some(result) = results.first() {
+                            let tile_text: String = result.text_regions
+                                .iter()
+                                .filter_map(|region| region.text_with_confidence())
+                                .map(|(t, _)| t)
+                                .collect::<Vec<_>>()
+                                .join("\n");
+
+                            if !tile_text.is_empty() {
+                                all_texts.push(tile_text);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("分块 [{},{}] 识别失败: {}", row, col, e);
+                    }
+                }
+            }
+        }
+
+        let text = all_texts.join("\n\n");
+        info!("分块 OCR 完成: {} 字符", text.len());
         Ok(text)
     }
 
