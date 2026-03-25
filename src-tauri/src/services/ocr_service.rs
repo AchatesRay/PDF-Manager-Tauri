@@ -33,6 +33,12 @@ const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 2000;
 /// 分块处理的最大尺寸（每个分块）
 const TILE_MAX_DIMENSION: u32 = 800;
 
+/// 最小分块尺寸（用于内存不足时降级处理）
+const MIN_TILE_DIMENSION: u32 = 400;
+
+/// 内存不足时的最大重试次数
+const MAX_MEMORY_RETRIES: u32 = 3;
+
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
@@ -147,29 +153,66 @@ impl OcrService {
             return self.recognize_with_tiling(image, max_dimension);
         }
 
-        // 小图像直接处理
-        let rgb_image = image.to_rgb8();
-        debug!("图像尺寸: {}x{}", rgb_image.width(), rgb_image.height());
+        // 小图像直接处理，带有内存不足重试
+        let mut current_tile_size = TILE_MAX_DIMENSION;
+        let mut retry_count = 0;
 
-        let results = ocr.predict(vec![rgb_image]).map_err(|e| {
-            error!("OCR 识别失败: {}", e);
-            OcrError::OcrFailed(format!("识别失败: {}", e))
-        })?;
+        loop {
+            // 如果需要缩小处理
+            let process_image = if current_tile_size < width.max(height) {
+                let scale = current_tile_size as f64 / width.max(height) as f64;
+                let new_width = (width as f64 * scale) as u32;
+                let new_height = (height as f64 * scale) as u32;
+                info!("内存不足重试 #{}: 缩小图像 {}x{} -> {}x{}",
+                    retry_count, width, height, new_width, new_height);
+                image.resize(new_width, new_height, imageops::FilterType::Lanczos3)
+            } else {
+                image.clone()
+            };
 
-        let text = results
-            .first()
-            .map(|r| {
-                r.text_regions
-                    .iter()
-                    .filter_map(|region| region.text_with_confidence())
-                    .map(|(t, _)| t)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
+            let rgb_image = process_image.to_rgb8();
+            debug!("图像尺寸: {}x{}", rgb_image.width(), rgb_image.height());
 
-        info!("OCR 识别完成: {} 字符", text.len());
-        Ok(text)
+            match ocr.predict(vec![rgb_image]) {
+                Ok(results) => {
+                    let text = results
+                        .first()
+                        .map(|r| {
+                            r.text_regions
+                                .iter()
+                                .filter_map(|region| region.text_with_confidence())
+                                .map(|(t, _)| t)
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        })
+                        .unwrap_or_default();
+
+                    info!("OCR 识别完成: {} 字符", text.len());
+                    return Ok(text);
+                }
+                Err(e) => {
+                    let error_str = e.to_string();
+                    // 检查是否是内存分配错误
+                    if error_str.contains("allocate") || error_str.contains("memory") || error_str.contains("Failed to allocate") {
+                        warn!("OCR 内存分配失败: {}", e);
+                        retry_count += 1;
+
+                        if retry_count >= MAX_MEMORY_RETRIES || current_tile_size <= MIN_TILE_DIMENSION {
+                            error!("OCR 识别失败: 达到最大重试次数或最小尺寸");
+                            return Err(OcrError::OcrFailed(format!("内存不足，无法完成识别: {}", e)));
+                        }
+
+                        // 缩小尺寸重试
+                        current_tile_size = (current_tile_size * 3 / 4).max(MIN_TILE_DIMENSION);
+                        info!("重试 OCR，减小处理尺寸至: {}", current_tile_size);
+                        continue;
+                    } else {
+                        error!("OCR 识别失败: {}", e);
+                        return Err(OcrError::OcrFailed(format!("识别失败: {}", e)));
+                    }
+                }
+            }
+        }
     }
 
     /// 分块处理大图像
@@ -201,6 +244,8 @@ impl OcrService {
         info!("分块处理: {}x{} 图像分为 {}x{} = {} 块", sw, sh, cols, rows, cols * rows);
 
         let mut all_texts: Vec<String> = Vec::new();
+        let mut current_tile_size = tile_size;
+        let mut memory_retry_count = 0;
 
         for row in 0..rows {
             for col in 0..cols {
@@ -217,26 +262,82 @@ impl OcrService {
 
                 // 裁剪分块
                 let tile = scaled.crop(x0, y0, x1 - x0, y1 - y0);
-                let rgb_tile = tile.to_rgb8();
 
-                // 识别分块
-                match ocr.predict(vec![rgb_tile]) {
-                    Ok(results) => {
-                        if let Some(result) = results.first() {
-                            let tile_text: String = result.text_regions
-                                .iter()
-                                .filter_map(|region| region.text_with_confidence())
-                                .map(|(t, _)| t)
-                                .collect::<Vec<_>>()
-                                .join("\n");
+                // 带重试的识别
+                loop {
+                    let rgb_tile = tile.to_rgb8();
 
-                            if !tile_text.is_empty() {
-                                all_texts.push(tile_text);
+                    match ocr.predict(vec![rgb_tile]) {
+                        Ok(results) => {
+                            if let Some(result) = results.first() {
+                                let tile_text: String = result.text_regions
+                                    .iter()
+                                    .filter_map(|region| region.text_with_confidence())
+                                    .map(|(t, _)| t)
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                if !tile_text.is_empty() {
+                                    all_texts.push(tile_text);
+                                }
+                            }
+                            // 重置重试计数
+                            memory_retry_count = 0;
+                            break;
+                        }
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            // 检查是否是内存分配错误
+                            if error_str.contains("allocate") || error_str.contains("memory") || error_str.contains("Failed to allocate") {
+                                warn!("分块 [{},{}] 内存分配失败: {}", row, col, e);
+                                memory_retry_count += 1;
+
+                                if memory_retry_count >= MAX_MEMORY_RETRIES {
+                                    error!("分块处理达到最大重试次数，跳过此分块");
+                                    memory_retry_count = 0;
+                                    break;
+                                }
+
+                                // 缩小图像后重试此分块
+                                let retry_scale = 0.75f64;
+                                let retry_w = ((x1 - x0) as f64 * retry_scale) as u32;
+                                let retry_h = ((y1 - y0) as f64 * retry_scale) as u32;
+                                info!("重试分块 [{},{}]，缩小至 {}x{}", row, col, retry_w, retry_h);
+
+                                // 创建缩小的分块
+                                let smaller_tile = tile.resize(retry_w, retry_h, imageops::FilterType::Lanczos3);
+                                let rgb_tile = smaller_tile.to_rgb8();
+
+                                // 再次尝试
+                                match ocr.predict(vec![rgb_tile]) {
+                                    Ok(results) => {
+                                        if let Some(result) = results.first() {
+                                            let tile_text: String = result.text_regions
+                                                .iter()
+                                                .filter_map(|region| region.text_with_confidence())
+                                                .map(|(t, _)| t)
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+
+                                            if !tile_text.is_empty() {
+                                                all_texts.push(tile_text);
+                                            }
+                                        }
+                                        memory_retry_count = 0;
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        // 再次失败，跳过此分块
+                                        warn!("分块 [{},{}] 重试后仍失败，跳过", row, col);
+                                        memory_retry_count = 0;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                warn!("分块 [{},{}] 识别失败: {}", row, col, e);
+                                break;
                             }
                         }
-                    }
-                    Err(e) => {
-                        warn!("分块 [{},{}] 识别失败: {}", row, col, e);
                     }
                 }
             }
