@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn};
 
-/// 默认最大图像尺寸
-pub const DEFAULT_OCR_MAX_IMAGE_DIMENSION: u32 = 2000;
+/// 默认最大图像尺寸（降低以减少内存占用）
+pub const DEFAULT_OCR_MAX_IMAGE_DIMENSION: u32 = 1000;
 /// 最小允许值
 pub const MIN_OCR_MAX_IMAGE_DIMENSION: u32 = 500;
 /// 最大允许值
-pub const MAX_OCR_MAX_IMAGE_DIMENSION: u32 = 4000;
+pub const MAX_OCR_MAX_IMAGE_DIMENSION: u32 = 2000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {

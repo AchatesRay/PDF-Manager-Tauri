@@ -276,6 +276,14 @@ pub async fn start_ocr(
     for page_num in 1..=page_count {
         info!("处理PDF页面: pdf_id={}, page={}/{}", pdf_id, page_num, page_count);
 
+        // 动态调整图像尺寸：如果内存紧张，降低渲染尺寸
+        let current_dimension = if crate::services::memory_monitor::is_low_memory() {
+            warn!("内存紧张，降低渲染尺寸: {} -> 500", max_image_dimension);
+            500
+        } else {
+            max_image_dimension
+        };
+
         match process_page(
             pdf_id,
             page_num,
@@ -286,7 +294,7 @@ pub async fn start_ocr(
             &search_service,
             &filename,
             folder_id,
-            max_image_dimension,
+            current_dimension,
         ) {
             Ok(_) => {
                 success_count += 1;
@@ -297,6 +305,15 @@ pub async fn start_ocr(
                 error!("页面处理失败: pdf_id={}, page={}, 错误: {}", pdf_id, page_num, e);
             }
         }
+
+        // 显式释放内存：触发垃圾回收
+        // 在 Rust 中，drop 会释放内存，但实际释放时机取决于分配器
+        // 这里我们通过记录内存状态来监控
+        let mem_info = crate::services::memory_monitor::get_system_memory_info();
+        info!("内存状态: 可用={:.1}GB, 已用={:.1}%",
+            mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0,
+            mem_info.used_percent
+        );
 
         // 发送进度
         let _ = app_handle.emit("ocr-progress", OcrProgress {

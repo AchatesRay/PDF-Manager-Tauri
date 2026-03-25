@@ -1,8 +1,11 @@
 use sysinfo::System;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// 内存安全阈值：保留 1GB 给系统
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
+
+/// OCR 模型预估内存占用（约 800MB）
+const OCR_MODEL_MEMORY: u64 = 800 * 1024 * 1024;
 
 /// 内存信息
 #[derive(Debug, Clone, serde::Serialize)]
@@ -74,18 +77,27 @@ pub fn estimate_page_memory(max_dimension: u32) -> u64 {
 }
 
 /// 估算整个任务所需内存（字节）
+///
+/// 包括：
+/// - OCR 模型内存（约 800MB）
+/// - 图像处理内存（峰值约 2-3 页）
 pub fn estimate_task_memory(page_count: u32, max_dimension: u32) -> u64 {
     let per_page = estimate_page_memory(max_dimension);
-    // 假设不会同时持有所有页面的内存，但需要考虑峰值
-    // 峰值大约是 2-3 个页面的内存（渲染中 + OCR 中 + 等待释放）
-    let peak_pages = 3.min(page_count as usize);
-    let total = per_page * peak_pages as u64;
+
+    // 图像内存峰值：假设同时持有 2 个页面的图像
+    let peak_pages = 2.min(page_count as usize);
+    let image_memory = per_page * peak_pages as u64;
+
+    // 总内存 = OCR 模型内存 + 图像内存
+    let total = OCR_MODEL_MEMORY + image_memory;
 
     info!(
-        "估算任务内存: pages={}, peak_pages={}, per_page={}MB, total={}MB",
+        "估算任务内存: pages={}, peak_pages={}, per_page={}MB, image={}MB, model={}MB, total={}MB",
         page_count,
         peak_pages,
         per_page / 1024 / 1024,
+        image_memory / 1024 / 1024,
+        OCR_MODEL_MEMORY / 1024 / 1024,
         total / 1024 / 1024
     );
 
