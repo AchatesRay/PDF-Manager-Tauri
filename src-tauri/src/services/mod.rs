@@ -5,3 +5,4 @@ pub mod ocr_service;
 pub mod pdf_service;
 pub mod search_service;
 pub mod task_queue;
+pub mod text_postprocess;

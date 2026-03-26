@@ -1,4 +1,5 @@
 use crate::services::model_manager::{ModelManager, ModelType};
+use crate::services::text_postprocess::{detect_text_language, optimize_by_language};
 use image::{DynamicImage, GenericImageView, imageops};
 use oar_ocr::prelude::*;
 use std::path::Path;
@@ -45,6 +46,78 @@ const MIN_CONFIDENCE: f32 = 0.35;
 
 /// 分块重叠比例 - 优化：避免文字被分块边界截断
 const OVERLAP_RATIO: f32 = 0.25;
+
+/// 倾斜检测阈值 - 超过此角度才进行校正（度）
+const SKEW_THRESHOLD_DEGREES: f32 = 0.5;
+
+/// 检测文档倾斜角度
+/// 返回角度（度），正数表示顺时针倾斜
+/// 使用简化投影法检测（适合小幅倾斜的文档）
+fn detect_skew_angle(image: &image::GrayImage) -> f32 {
+    use imageproc::edges::canny;
+
+    // Canny 边缘检测
+    let edges = canny(image, 50.0, 150.0);
+
+    // 使用水平投影法检测倾斜（±5度范围）
+    let max_angle = 5.0_f32;
+    let angle_step = 0.5_f32;
+
+    let mut best_angle = 0.0_f32;
+    let mut best_score = 0.0_f32;
+
+    let mut angle = -max_angle;
+    while angle <= max_angle {
+        let score = calculate_horizontal_projection(&edges, angle);
+
+        if score > best_score {
+            best_score = score;
+            best_angle = angle;
+        }
+
+        angle += angle_step;
+    }
+
+    best_angle
+}
+
+/// 计算水平投影分数（用于检测最佳倾斜角度）
+fn calculate_horizontal_projection(edges: &image::GrayImage, angle: f32) -> f32 {
+    use std::f32::consts::PI;
+
+    let (width, height) = edges.dimensions();
+    let radians = angle * PI / 180.0;
+    let cos_a = radians.cos();
+    let sin_a = radians.sin();
+
+    let mut projection: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
+
+    for y in 0..height {
+        for x in 0..width {
+            if edges.get_pixel(x, y)[0] > 128 {
+                // 边缘点 - 计算旋转后的 y 坐标
+                let rotated_y = y as f32 * cos_a - x as f32 * sin_a;
+                let bucket = rotated_y.round() as i32;
+                *projection.entry(bucket).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // 返回投影的方差（越大的方差表示越明显的水平线）
+    if projection.is_empty() {
+        return 0.0;
+    }
+
+    let values: Vec<i32> = projection.values().copied().collect();
+    let mean = values.iter().sum::<i32>() as f32 / values.len() as f32;
+    let variance = values
+        .iter()
+        .map(|&v| (v as f32 - mean).powi(2))
+        .sum::<f32>()
+        / values.len() as f32;
+
+    variance
+}
 
 /// Sauvola 局部阈值算法（适合文档 OCR）
 /// window_size: 邻域窗口大小（奇数）
@@ -103,9 +176,11 @@ fn sauvola_threshold(image: &image::GrayImage, window_size: u32, k: f32) -> imag
 ///
 /// 优化说明：
 /// 1. 使用中值滤波去噪 - 保留边缘，去除噪点
-/// 2. 使用 Sauvola 自适应二值化 - window=25, k=0.3
+/// 2. 检测并校正倾斜（Deskew）- 适合扫描文档
+/// 3. 使用 Sauvola 自适应二值化 - window=25, k=0.3
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
     use imageproc::filter::median_filter;
+    use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
 
     // 转换为灰度图
     let gray = image.to_luma8();
@@ -113,12 +188,26 @@ fn preprocess_image(image: &DynamicImage) -> DynamicImage {
     // 1. 中值滤波去噪（保留边缘，去除噪点）
     let denoised = median_filter(&gray, 3, 3);
 
-    // 2. 自适应阈值二值化（使用优化后的 Sauvola 参数）
+    // 2. 检测并校正倾斜（如果角度超过阈值）
+    let skew_angle = detect_skew_angle(&denoised);
+    let deskewed = if skew_angle.abs() > SKEW_THRESHOLD_DEGREES {
+        info!("检测到文档倾斜: {:.1f} 度，进行校正", skew_angle);
+        rotate_about_center(
+            &denoised,
+            skew_angle.to_radians(),
+            Interpolation::Bilinear,
+            image::Luma([255]), // 白色背景
+        )
+    } else {
+        denoised
+    };
+
+    // 3. 自适应阈值二值化（使用优化后的 Sauvola 参数）
     // window=25: 更大的窗口适应文档光照不均
     // k=0.3: 提高对比度敏感度
-    let binary = sauvola_threshold(&denoised, 25, 0.3);
+    let binary = sauvola_threshold(&deskewed, 25, 0.3);
 
-    // 3. 转回 RGB 格式（OAROCR 需要 RGB 输入）
+    // 4. 转回 RGB 格式（OAROCR 需要 RGB 输入）
     let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
         binary.width(),
         binary.height(),
@@ -302,7 +391,7 @@ impl OcrService {
 
             match ocr.predict(vec![rgb_image]) {
                 Ok(results) => {
-                    let text = results
+                    let raw_text = results
                         .first()
                         .map(|r| {
                             r.text_regions
@@ -320,6 +409,14 @@ impl OcrService {
                                 .join("\n")
                         })
                         .unwrap_or_default();
+
+                    // 应用后处理
+                    let text = if !raw_text.is_empty() {
+                        let lang = detect_text_language(&raw_text);
+                        optimize_by_language(&raw_text, lang)
+                    } else {
+                        raw_text
+                    };
 
                     info!("OCR 识别完成: {} 字符", text.len());
                     return Ok(text);
@@ -497,7 +594,15 @@ impl OcrService {
         drop(scaled);
         std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
 
-        let text = all_texts.join("\n\n");
+        // 合并分块结果并应用后处理
+        let raw_text = all_texts.join("\n\n");
+        let text = if !raw_text.is_empty() {
+            let lang = detect_text_language(&raw_text);
+            optimize_by_language(&raw_text, lang)
+        } else {
+            raw_text
+        };
+
         info!("分块 OCR 完成: {} 字符", text.len());
         Ok(text)
     }
