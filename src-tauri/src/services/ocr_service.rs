@@ -191,7 +191,7 @@ fn preprocess_image(image: &DynamicImage) -> DynamicImage {
     // 2. 检测并校正倾斜（如果角度超过阈值）
     let skew_angle = detect_skew_angle(&denoised);
     let deskewed = if skew_angle.abs() > SKEW_THRESHOLD_DEGREES {
-        info!("检测到文档倾斜: {:.1f} 度，进行校正", skew_angle);
+        info!("检测到文档倾斜: {:.1} 度，进行校正", skew_angle);
         rotate_about_center(
             &denoised,
             skew_angle.to_radians(),

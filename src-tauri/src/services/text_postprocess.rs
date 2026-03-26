@@ -78,7 +78,7 @@ pub fn postprocess_text(text: &str) -> String {
 fn is_punctuation(ch: char) -> bool {
     ch.is_ascii_punctuation()
         || [
-            '，', '。', '、', '；', '：', '？', '！', '"', '"', ''', ''', '（', '）', '【', '】',
+            '，', '。', '、', '；', '：', '？', '！', '"', '"', '‘', '’', '（', '）', '【', '】',
             '《', '》', '…', '—', '～',
         ]
         .contains(&ch)
