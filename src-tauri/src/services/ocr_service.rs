@@ -174,50 +174,13 @@ fn sauvola_threshold(image: &image::GrayImage, window_size: u32, k: f32) -> imag
 
 /// 预处理图像以提高 OCR 识别正确率
 ///
-/// 优化说明：
-/// 1. 使用中值滤波去噪 - 保留边缘，去除噪点
-/// 2. 检测并校正倾斜（Deskew）- 适合扫描文档
-/// 3. 使用 Sauvola 自适应二值化 - window=25, k=0.3
+/// 注意：当前简化处理，直接返回原图
+/// 因为 Sauvola 二值化可能导致 OCR 模型识别失败
+/// 如需启用预处理，请确保测试验证效果
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
-    use imageproc::filter::median_filter;
-    use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
-
-    // 转换为灰度图
-    let gray = image.to_luma8();
-
-    // 1. 中值滤波去噪（保留边缘，去除噪点）
-    let denoised = median_filter(&gray, 3, 3);
-
-    // 2. 检测并校正倾斜（如果角度超过阈值）
-    let skew_angle = detect_skew_angle(&denoised);
-    let deskewed = if skew_angle.abs() > SKEW_THRESHOLD_DEGREES {
-        info!("检测到文档倾斜: {:.1} 度，进行校正", skew_angle);
-        rotate_about_center(
-            &denoised,
-            skew_angle.to_radians(),
-            Interpolation::Bilinear,
-            image::Luma([255]), // 白色背景
-        )
-    } else {
-        denoised
-    };
-
-    // 3. 自适应阈值二值化（使用优化后的 Sauvola 参数）
-    // window=25: 更大的窗口适应文档光照不均
-    // k=0.3: 提高对比度敏感度
-    let binary = sauvola_threshold(&deskewed, 25, 0.3);
-
-    // 4. 转回 RGB 格式（OAROCR 需要 RGB 输入）
-    let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
-        binary.width(),
-        binary.height(),
-        |x, y| {
-            let luma = binary.get_pixel(x, y);
-            image::Rgb([luma[0], luma[0], luma[0]])
-        }
-    );
-
-    DynamicImage::ImageRgb8(rgb)
+    // 直接返回原图，避免二值化处理破坏识别效果
+    // 后续可以根据需要添加轻度的对比度增强
+    image.clone()
 }
 
 pub struct OcrService {
