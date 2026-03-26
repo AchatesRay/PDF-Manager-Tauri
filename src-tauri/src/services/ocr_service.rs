@@ -27,44 +27,34 @@ pub struct OcrStatus {
     pub models_dir: String,
 }
 
-/// 默认最大图像尺寸
-const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 2000;
+/// 默认最大图像尺寸 - 优化：2000 -> 3000，提升小字体识别率
+const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 3000;
 
-/// 分块处理的最大尺寸（每个分块）
-const TILE_MAX_DIMENSION: u32 = 800;
+/// 分块处理的最大尺寸（每个分块）- 优化：800 -> 1200，减少文字截断
+const TILE_MAX_DIMENSION: u32 = 1200;
 
-/// 最小分块尺寸（用于内存不足时降级处理）
-const MIN_TILE_DIMENSION: u32 = 400;
+/// 最小分块尺寸（用于内存不足时降级处理）- 优化：400 -> 600
+const MIN_TILE_DIMENSION: u32 = 600;
 
 /// 内存不足时的最大重试次数
 const MAX_MEMORY_RETRIES: u32 = 3;
 
-/// 最低置信度阈值（0.0-1.0），低于此值的识别结果将被过滤
-const MIN_CONFIDENCE: f32 = 0.5;
+/// 最低置信度阈值（0.0-1.0）- 优化：0.5 -> 0.35
+/// PP-OCRv5 Mobile 模型置信度偏低，降低阈值以保留更多有效识别结果
+const MIN_CONFIDENCE: f32 = 0.35;
+
+/// 分块重叠比例 - 优化：避免文字被分块边界截断
+const OVERLAP_RATIO: f32 = 0.25;
 
 /// 预处理图像以提高 OCR 识别正确率
 ///
-/// 包括：对比度增强、锐化处理
+/// 优化说明：
+/// 1. 删除 equalize_histogram - 避免破坏原始对比度关系，Sauvola 算法可自适应处理
+/// 2. 保留中值滤波去噪逻辑（在 recognize_with_limit 中）
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
-    use imageproc::contrast::equalize_histogram;
-
-    // 转换为灰度图进行处理
-    let gray = image.to_luma8();
-
-    // 1. 直方图均衡化（增强对比度）
-    let equalized = equalize_histogram(&gray);
-
-    // 转回 RGB（不使用锐化，因为 imageproc 0.24 的 sharpen 模块是私有的）
-    let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
-        equalized.width(),
-        equalized.height(),
-        |x, y| {
-            let luma = equalized.get_pixel(x, y);
-            image::Rgb([luma[0], luma[0], luma[0]])
-        }
-    );
-
-    DynamicImage::ImageRgb8(rgb)
+    // 直接返回原图，预处理逻辑已移至 recognize_with_limit 中的中值滤波
+    // 这样可以避免对不需要预处理的图像进行额外处理
+    image.clone()
 }
 
 pub struct OcrService {
@@ -306,8 +296,7 @@ impl OcrService {
 
         let (sw, sh) = scaled.dimensions();
 
-        // 分块重叠比例（避免文字被截断）
-        const OVERLAP_RATIO: f32 = 0.15;
+        // 分块重叠比例（避免文字被截断）- 使用常量 OVERLAP_RATIO = 0.25
         let tile_size = TILE_MAX_DIMENSION;
         let overlap = (tile_size as f32 * OVERLAP_RATIO) as u32;
         let step = tile_size - overlap; // 实际步进距离
