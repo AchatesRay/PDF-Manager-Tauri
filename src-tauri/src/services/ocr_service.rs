@@ -46,15 +46,89 @@ const MIN_CONFIDENCE: f32 = 0.35;
 /// 分块重叠比例 - 优化：避免文字被分块边界截断
 const OVERLAP_RATIO: f32 = 0.25;
 
+/// Sauvola 局部阈值算法（适合文档 OCR）
+/// window_size: 邻域窗口大小（奇数）
+/// k: 控制阈值敏感度（通常 0.2-0.5）
+/// 优化参数：window=25（更大窗口适应不均匀光照），k=0.3（提高对比度敏感度）
+fn sauvola_threshold(image: &image::GrayImage, window_size: u32, k: f32) -> image::GrayImage {
+    let (width, height) = image.dimensions();
+    let half_window = (window_size / 2) as i32;
+    let mut result = image::GrayImage::new(width, height);
+
+    const MAX_STD: f32 = 128.0; // 灰度标准差最大值
+
+    for y in 0..height {
+        for x in 0..width {
+            // 计算局部均值和标准差
+            let mut sum: u32 = 0;
+            let mut sum_sq: u32 = 0;
+            let mut count: u32 = 0;
+
+            for dy in -half_window..=half_window {
+                for dx in -half_window..=half_window {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+
+                    if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
+                        let pixel = image.get_pixel(nx as u32, ny as u32)[0] as u32;
+                        sum += pixel;
+                        sum_sq += pixel * pixel;
+                        count += 1;
+                    }
+                }
+            }
+
+            if count == 0 {
+                result.put_pixel(x, y, image::Luma([255]));
+                continue;
+            }
+
+            let mean = sum as f32 / count as f32;
+            let variance = (sum_sq as f32 / count as f32) - (mean * mean);
+            let std = variance.sqrt().max(0.0);
+
+            // Sauvola 公式: T = mean * (1 + k * ((std / R) - 1))
+            let threshold = mean * (1.0 + k * ((std / MAX_STD) - 1.0));
+
+            let current_pixel = image.get_pixel(x, y)[0] as f32;
+            let binary_value = if current_pixel <= threshold { 0 } else { 255 };
+            result.put_pixel(x, y, image::Luma([binary_value]));
+        }
+    }
+
+    result
+}
+
 /// 预处理图像以提高 OCR 识别正确率
 ///
 /// 优化说明：
-/// 1. 删除 equalize_histogram - 避免破坏原始对比度关系，Sauvola 算法可自适应处理
-/// 2. 保留中值滤波去噪逻辑（在 recognize_with_limit 中）
+/// 1. 使用中值滤波去噪 - 保留边缘，去除噪点
+/// 2. 使用 Sauvola 自适应二值化 - window=25, k=0.3
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
-    // 直接返回原图，预处理逻辑已移至 recognize_with_limit 中的中值滤波
-    // 这样可以避免对不需要预处理的图像进行额外处理
-    image.clone()
+    use imageproc::filter::median_filter;
+
+    // 转换为灰度图
+    let gray = image.to_luma8();
+
+    // 1. 中值滤波去噪（保留边缘，去除噪点）
+    let denoised = median_filter(&gray, 3, 3);
+
+    // 2. 自适应阈值二值化（使用优化后的 Sauvola 参数）
+    // window=25: 更大的窗口适应文档光照不均
+    // k=0.3: 提高对比度敏感度
+    let binary = sauvola_threshold(&denoised, 25, 0.3);
+
+    // 3. 转回 RGB 格式（OAROCR 需要 RGB 输入）
+    let rgb: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = image::ImageBuffer::from_fn(
+        binary.width(),
+        binary.height(),
+        |x, y| {
+            let luma = binary.get_pixel(x, y);
+            image::Rgb([luma[0], luma[0], luma[0]])
+        }
+    );
+
+    DynamicImage::ImageRgb8(rgb)
 }
 
 pub struct OcrService {
