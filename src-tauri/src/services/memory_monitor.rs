@@ -1,3 +1,4 @@
+use crate::services::model_manager::ModelType;
 use sysinfo::System;
 use tracing::{debug, info};
 
@@ -9,8 +10,7 @@ const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 /// - Mobile (PP-OCRv5 Mobile): ~500MB
 /// - Server (PP-OCRv5 Server): ~1.5GB
 /// - Balanced (PP-OCRv5 Mobile Det + RepSVTR Rec): ~300MB
-pub fn get_model_memory(model_type: &crate::services::model_manager::ModelType) -> u64 {
-    use crate::services::model_manager::ModelType;
+pub fn get_model_memory(model_type: &ModelType) -> u64 {
     match model_type {
         ModelType::Lite => 200 * 1024 * 1024,      // ~200MB
         ModelType::Mobile => 500 * 1024 * 1024,    // ~500MB
@@ -96,7 +96,7 @@ pub fn estimate_page_memory(max_dimension: u32) -> u64 {
 pub fn estimate_task_memory(
     page_count: u32,
     max_dimension: u32,
-    model_type: &crate::services::model_manager::ModelType,
+    model_type: &ModelType,
 ) -> u64 {
     let per_page = estimate_page_memory(max_dimension);
     let model_memory = get_model_memory(model_type);
@@ -155,7 +155,6 @@ pub fn is_low_memory() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::model_manager::ModelType;
 
     #[test]
     fn test_get_system_memory_info() {
