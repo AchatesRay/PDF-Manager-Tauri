@@ -150,9 +150,9 @@ fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
                 size: 24_200_000, // ~24.2MB
             },
             ModelFile {
-                name: String::from("ppocrv5_dict.txt"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
-                size: 5_682, // ~5KB
+                name: String::from("ppocr_keys_v1.txt"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocr_keys_v1.txt"),
+                size: 24_000, // ~24KB (6623 chars for RepSVTR)
             },
         ],
     }

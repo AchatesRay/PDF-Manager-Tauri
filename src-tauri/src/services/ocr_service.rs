@@ -163,7 +163,7 @@ impl OcrService {
             ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt"),
             ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx", "ppocrv5_dict.txt"),
             ModelType::Lite => ("pp-ocrv4_mobile_det.onnx", "pp-ocrv4_mobile_rec.onnx", "ppocr_keys_v1.txt"),
-            ModelType::Balanced => ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocrv5_dict.txt"),
+            ModelType::Balanced => ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocr_keys_v1.txt"),
         };
 
         let det_path = models_dir.join(det_name);
