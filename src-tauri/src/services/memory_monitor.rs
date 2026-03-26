@@ -4,11 +4,20 @@ use tracing::{debug, info};
 /// 内存安全阈值：保留 1GB 给系统
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 
-/// OCR 模型预估内存占用
+/// OCR 模型预估内存占用（字节）
 /// - Lite (PP-OCRv4 Mobile): ~200MB
 /// - Mobile (PP-OCRv5 Mobile): ~500MB
 /// - Server (PP-OCRv5 Server): ~1.5GB
-const OCR_MODEL_MEMORY: u64 = 200 * 1024 * 1024;
+/// - Balanced (PP-OCRv5 Mobile Det + RepSVTR Rec): ~300MB
+pub fn get_model_memory(model_type: &crate::services::model_manager::ModelType) -> u64 {
+    use crate::services::model_manager::ModelType;
+    match model_type {
+        ModelType::Lite => 200 * 1024 * 1024,      // ~200MB
+        ModelType::Mobile => 500 * 1024 * 1024,    // ~500MB
+        ModelType::Server => 1500 * 1024 * 1024,   // ~1.5GB
+        ModelType::Balanced => 300 * 1024 * 1024,  // ~300MB
+    }
+}
 
 /// 内存信息
 #[derive(Debug, Clone, serde::Serialize)]
@@ -82,17 +91,22 @@ pub fn estimate_page_memory(max_dimension: u32) -> u64 {
 /// 估算整个任务所需内存（字节）
 ///
 /// 包括：
-/// - OCR 模型内存（约 800MB）
+/// - OCR 模型内存
 /// - 图像处理内存（峰值约 2-3 页）
-pub fn estimate_task_memory(page_count: u32, max_dimension: u32) -> u64 {
+pub fn estimate_task_memory(
+    page_count: u32,
+    max_dimension: u32,
+    model_type: &crate::services::model_manager::ModelType,
+) -> u64 {
     let per_page = estimate_page_memory(max_dimension);
+    let model_memory = get_model_memory(model_type);
 
     // 图像内存峰值：假设同时持有 2 个页面的图像
     let peak_pages = 2.min(page_count as usize);
     let image_memory = per_page * peak_pages as u64;
 
     // 总内存 = OCR 模型内存 + 图像内存
-    let total = OCR_MODEL_MEMORY + image_memory;
+    let total = model_memory + image_memory;
 
     info!(
         "估算任务内存: pages={}, peak_pages={}, per_page={}MB, image={}MB, model={}MB, total={}MB",
@@ -100,7 +114,7 @@ pub fn estimate_task_memory(page_count: u32, max_dimension: u32) -> u64 {
         peak_pages,
         per_page / 1024 / 1024,
         image_memory / 1024 / 1024,
-        OCR_MODEL_MEMORY / 1024 / 1024,
+        model_memory / 1024 / 1024,
         total / 1024 / 1024
     );
 
@@ -141,6 +155,7 @@ pub fn is_low_memory() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::model_manager::ModelType;
 
     #[test]
     fn test_get_system_memory_info() {
@@ -164,8 +179,23 @@ mod tests {
     }
 
     #[test]
+    fn test_estimate_task_memory() {
+        let mem = estimate_task_memory(10, 2000, &ModelType::Balanced);
+        // 应该至少包含模型内存 (300MB)
+        assert!(mem >= 300 * 1024 * 1024);
+    }
+
+    #[test]
     fn test_can_start_task() {
         // 请求 1MB 内存应该总是可以
         assert!(can_start_task(1024 * 1024));
+    }
+
+    #[test]
+    fn test_get_model_memory() {
+        assert_eq!(get_model_memory(&ModelType::Lite), 200 * 1024 * 1024);
+        assert_eq!(get_model_memory(&ModelType::Mobile), 500 * 1024 * 1024);
+        assert_eq!(get_model_memory(&ModelType::Server), 1500 * 1024 * 1024);
+        assert_eq!(get_model_memory(&ModelType::Balanced), 300 * 1024 * 1024);
     }
 }

@@ -211,6 +211,15 @@ pub async fn start_ocr(
 
     info!("PDF信息: filename={}, pages={}, storage={}", filename, page_count, storage_path);
 
+    // 获取模型类型
+    let model_type = {
+        let ocr_svc = ocr_service.lock().map_err(|e| {
+            error!("获取OCR服务锁失败: {}", e);
+            format!("OCR服务锁定失败: {}", e)
+        })?;
+        ocr_svc.model_type()
+    };
+
     // 检查 OCR 服务是否可用
     {
         let mut ocr_svc = ocr_service.lock().map_err(|e| {
@@ -232,7 +241,7 @@ pub async fn start_ocr(
     }
 
     // 估算所需内存
-    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension);
+    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension, &model_type);
     info!("估算任务内存: {} MB", required_memory / 1024 / 1024);
 
     // 检查内存是否足够

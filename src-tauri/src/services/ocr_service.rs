@@ -76,8 +76,8 @@ pub struct OcrService {
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        // 默认使用轻量版模型，成熟稳定且内存占用低
-        Self::with_model_type(data_dir, ModelType::Lite)
+        // 默认使用平衡版模型，精度优于 Mobile，内存占用适中
+        Self::with_model_type(data_dir, ModelType::Balanced)
     }
 
     /// 创建 OCR 服务（指定模型类型）
@@ -163,6 +163,7 @@ impl OcrService {
             ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt"),
             ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx", "ppocrv5_dict.txt"),
             ModelType::Lite => ("pp-ocrv4_mobile_det.onnx", "pp-ocrv4_mobile_rec.onnx", "ppocr_keys_v1.txt"),
+            ModelType::Balanced => ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocrv5_dict.txt"),
         };
 
         let det_path = models_dir.join(det_name);

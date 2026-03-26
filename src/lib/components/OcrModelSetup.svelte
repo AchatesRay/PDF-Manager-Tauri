@@ -96,7 +96,7 @@
     </div>
 
     <p class="setup-desc">
-      使用 PaddleOCR 进行文字识别需要下载模型文件（约 20MB）。
+      使用 PaddleOCR 进行文字识别需要下载模型文件（约 30MB）。
     </p>
 
     {#if error}
