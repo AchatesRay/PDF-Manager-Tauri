@@ -78,34 +78,35 @@ pub struct ModelManager {
 /// 获取模型文件列表（运行时创建）
 fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
     match model_type {
+        // PP-OCRv4 Mobile 版 - 成熟稳定，内存占用低（约 200MB）
         ModelType::Lite => vec![
-            // PP-OCRv4 轻量版 - 成熟稳定，内存占用低
             ModelFile {
-                name: String::from("ch_PP-OCRv4_det_infer.onnx"),
-                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_det_infer.onnx"),
-                size: 4_500_000, // ~4.5MB
+                name: String::from("pp-ocrv4_mobile_det.onnx"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_mobile_det.onnx"),
+                size: 4_600_000, // ~4.6MB
             },
             ModelFile {
-                name: String::from("ch_PP-OCRv4_rec_infer.onnx"),
-                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_infer.onnx"),
-                size: 10_000_000, // ~10MB
+                name: String::from("pp-ocrv4_mobile_rec.onnx"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_mobile_rec.onnx"),
+                size: 10_400_000, // ~10.4MB
             },
             ModelFile {
                 name: String::from("ppocr_keys_v1.txt"),
-                url: String::from("https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocr_keys_v1.txt"),
                 size: 24_000, // ~24KB
             },
         ],
+        // PP-OCRv5 Mobile 版
         ModelType::Mobile => vec![
             ModelFile {
                 name: String::from("pp-ocrv5_mobile_det.onnx"),
                 url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx"),
-                size: 4_828_087, // ~4.6MB
+                size: 4_600_000, // ~4.6MB
             },
             ModelFile {
                 name: String::from("pp-ocrv5_mobile_rec.onnx"),
                 url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
-                size: 16_556_181, // ~15.8MB
+                size: 15_800_000, // ~15.8MB
             },
             ModelFile {
                 name: String::from("ppocrv5_dict.txt"),
@@ -113,16 +114,17 @@ fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
                 size: 5_682, // ~5KB
             },
         ],
+        // PP-OCRv5 Server 版 - 高精度
         ModelType::Server => vec![
             ModelFile {
                 name: String::from("pp-ocrv5_server_det.onnx"),
-                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/pp-ocrv5_server_det.onnx"),
-                size: 110_000_000, // ~110MB
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_server_det.onnx"),
+                size: 84_000_000, // ~84MB
             },
             ModelFile {
                 name: String::from("pp-ocrv5_server_rec.onnx"),
-                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv5/chinese/pp-ocrv5_server_rec.onnx"),
-                size: 200_000_000, // ~200MB
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_server_rec.onnx"),
+                size: 80_600_000, // ~80.6MB
             },
             ModelFile {
                 name: String::from("ppocrv5_dict.txt"),

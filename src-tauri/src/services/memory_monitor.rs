@@ -4,9 +4,10 @@ use tracing::{debug, info};
 /// 内存安全阈值：保留 1GB 给系统
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 
-/// OCR 轻量版模型预估内存占用（约 200MB）
-/// - Mobile 版约 800MB
-/// - Server 版约 2.5GB
+/// OCR 模型预估内存占用
+/// - Lite (PP-OCRv4 Mobile): ~200MB
+/// - Mobile (PP-OCRv5 Mobile): ~500MB
+/// - Server (PP-OCRv5 Server): ~1.5GB
 const OCR_MODEL_MEMORY: u64 = 200 * 1024 * 1024;
 
 /// 内存信息
