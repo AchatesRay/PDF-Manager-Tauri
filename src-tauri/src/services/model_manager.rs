@@ -12,11 +12,13 @@ pub enum ModelType {
     Mobile,
     /// 服务器版：高精度、高内存（约 2-3GB）
     Server,
+    /// PP-OCRv4 轻量版：成熟稳定、低内存（约 200MB）- 推荐
+    Lite,
 }
 
 impl Default for ModelType {
     fn default() -> Self {
-        Self::Mobile
+        Self::Lite
     }
 }
 
@@ -25,6 +27,7 @@ impl std::fmt::Display for ModelType {
         match self {
             ModelType::Mobile => write!(f, "mobile"),
             ModelType::Server => write!(f, "server"),
+            ModelType::Lite => write!(f, "lite"),
         }
     }
 }
@@ -36,6 +39,7 @@ impl std::str::FromStr for ModelType {
         match s.to_lowercase().as_str() {
             "mobile" => Ok(ModelType::Mobile),
             "server" => Ok(ModelType::Server),
+            "lite" => Ok(ModelType::Lite),
             _ => Err(format!("未知的模型类型: {}", s)),
         }
     }
@@ -74,6 +78,24 @@ pub struct ModelManager {
 /// 获取模型文件列表（运行时创建）
 fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
     match model_type {
+        ModelType::Lite => vec![
+            // PP-OCRv4 轻量版 - 成熟稳定，内存占用低
+            ModelFile {
+                name: String::from("ch_PP-OCRv4_det_infer.onnx"),
+                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_det_infer.onnx"),
+                size: 4_500_000, // ~4.5MB
+            },
+            ModelFile {
+                name: String::from("ch_PP-OCRv4_rec_infer.onnx"),
+                url: String::from("https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_infer.onnx"),
+                size: 10_000_000, // ~10MB
+            },
+            ModelFile {
+                name: String::from("ppocr_keys_v1.txt"),
+                url: String::from("https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt"),
+                size: 24_000, // ~24KB
+            },
+        ],
         ModelType::Mobile => vec![
             ModelFile {
                 name: String::from("pp-ocrv5_mobile_det.onnx"),

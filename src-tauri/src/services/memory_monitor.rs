@@ -4,8 +4,10 @@ use tracing::{debug, info};
 /// 内存安全阈值：保留 1GB 给系统
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 
-/// OCR 服务器版模型预估内存占用（约 2.5GB）
-const OCR_MODEL_MEMORY: u64 = 2_500 * 1024 * 1024;
+/// OCR 轻量版模型预估内存占用（约 200MB）
+/// - Mobile 版约 800MB
+/// - Server 版约 2.5GB
+const OCR_MODEL_MEMORY: u64 = 200 * 1024 * 1024;
 
 /// 内存信息
 #[derive(Debug, Clone, serde::Serialize)]

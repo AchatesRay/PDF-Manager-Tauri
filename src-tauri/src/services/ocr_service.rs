@@ -76,8 +76,8 @@ pub struct OcrService {
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        // 默认使用服务器版模型，精度更高
-        Self::with_model_type(data_dir, ModelType::Server)
+        // 默认使用轻量版模型，成熟稳定且内存占用低
+        Self::with_model_type(data_dir, ModelType::Lite)
     }
 
     /// 创建 OCR 服务（指定模型类型）
@@ -159,14 +159,15 @@ impl OcrService {
 
         let models_dir = self.model_manager.models_dir();
 
-        let (det_name, rec_name) = match self.model_type {
-            ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx"),
-            ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx"),
+        let (det_name, rec_name, dict_name) = match self.model_type {
+            ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt"),
+            ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx", "ppocrv5_dict.txt"),
+            ModelType::Lite => ("ch_PP-OCRv4_det_infer.onnx", "ch_PP-OCRv4_rec_infer.onnx", "ppocr_keys_v1.txt"),
         };
 
         let det_path = models_dir.join(det_name);
         let rec_path = models_dir.join(rec_name);
-        let dict_path = models_dir.join("ppocrv5_dict.txt");
+        let dict_path = models_dir.join(dict_name);
 
         info!("加载 OCR 模型: type={}, det={:?}, rec={:?}, dict={:?}",
             self.model_type, det_path, rec_path, dict_path);
