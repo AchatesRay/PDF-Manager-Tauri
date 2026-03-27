@@ -1,22 +1,12 @@
 /// OCR 文本后处理模块
 /// 提供常见的错误校正和格式化功能
 
-/// 常见 OCR 错误字符映射表（中文场景）
-fn get_char_correction_map() -> std::collections::HashMap<char, char> {
+/// 常见标点符号映射表（英文标点 -> 中文标点）
+fn get_punctuation_map() -> std::collections::HashMap<char, char> {
     let mut map = std::collections::HashMap::new();
-
-    // 常见混淆字符
-    map.insert('0', 'O'); // 英文零和字母 O 混淆（根据上下文）
-    map.insert('1', 'l'); // 数字 1 和小写 L
-    map.insert('|', 'I'); // 竖线和字母 I
-    map.insert('「', '【'); // 日文引号修正为中文引号
-    map.insert('」', '】');
-    map.insert('『', '『');
-    map.insert('』', '』');
 
     // 常见标点符号修正（英文标点 -> 中文标点）
     map.insert(',', '，');
-    map.insert('.', '。');
     map.insert(':', '：');
     map.insert(';', '；');
     map.insert('?', '？');
@@ -29,14 +19,84 @@ fn get_char_correction_map() -> std::collections::HashMap<char, char> {
     map
 }
 
+/// 检查字符是否可能是被误识别的数字
+/// OCR 常见错误：'l' 被识别为 '1'，'O' 被识别为 '0'
+fn should_be_digit(ch: char, prev: Option<char>, next: Option<char>) -> Option<char> {
+    match ch {
+        // 小写 L 可能被误识别为数字 1
+        'l' | 'L' | '|' | 'I' => {
+            // 如果前后都是数字，或者前一个字符是数字且后一个是数字/标点
+            let prev_is_digit = prev.map_or(false, |c| c.is_ascii_digit());
+            let next_is_digit = next.map_or(false, |c| c.is_ascii_digit());
+            let prev_is_amount = prev.map_or(false, |c| c == '￥' || c == '$' || c == '¥');
+            let next_is_unit = next.map_or(false, |c| c == '元' || c == '万' || c == '亿' || c == '年' || c == '月' || c == '日');
+
+            // 数字上下文：前后有数字、金额符号、单位
+            if prev_is_digit || next_is_digit || prev_is_amount || next_is_unit {
+                return Some('1');
+            }
+            // 日期模式：年月日前的数字
+            if let Some(n) = next {
+                if n == '年' || n == '月' || n == '日' {
+                    if prev_is_digit || prev.map_or(false, |c| c == '月' || c == '年') {
+                        return Some('1');
+                    }
+                }
+            }
+            None
+        }
+        // 大写 O 可能被误识别为数字 0
+        'O' | 'o' | 'D' => {
+            let prev_is_digit = prev.map_or(false, |c| c.is_ascii_digit());
+            let next_is_digit = next.map_or(false, |c| c.is_ascii_digit());
+            let prev_is_amount = prev.map_or(false, |c| c == '￥' || c == '$' || c == '¥');
+
+            // 数字上下文：前后有数字、金额符号
+            if prev_is_digit || next_is_digit || prev_is_amount {
+                return Some('0');
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// 修正 OCR 数字识别错误（上下文感知）
+/// OCR 常将数字 1 识别为 l，数字 0 识别为 O
+fn fix_ocr_number_errors(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return text.to_string();
+    }
+
+    let mut result = Vec::with_capacity(chars.len());
+
+    for (i, &ch) in chars.iter().enumerate() {
+        let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+        let next = if i + 1 < chars.len() { Some(chars[i + 1]) } else { None };
+
+        // 尝试修正数字识别错误
+        if let Some(corrected) = should_be_digit(ch, prev, next) {
+            result.push(corrected);
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result.into_iter().collect()
+}
+
 /// 后处理 OCR 识别文本
-/// 包括：标点符号规范化、常见错误修正、空行合并
+/// 包括：数字错误修正、标点符号规范化、空行合并
 pub fn postprocess_text(text: &str) -> String {
     if text.is_empty() {
         return String::new();
     }
 
-    let correction_map = get_char_correction_map();
+    // 先修正数字识别错误
+    let text = fix_ocr_number_errors(text);
+
+    let punctuation_map = get_punctuation_map();
     let mut result = String::with_capacity(text.len());
 
     let mut prev_char = '\0';
@@ -53,8 +113,23 @@ pub fn postprocess_text(text: &str) -> String {
             consecutive_newlines = 0;
         }
 
-        // 字符修正（英文标点 -> 中文标点）
-        let corrected = correction_map.get(&ch).copied().unwrap_or(ch);
+        // 标点符号修正（英文标点 -> 中文标点）
+        let corrected = punctuation_map.get(&ch).copied().unwrap_or(ch);
+
+        // 特殊处理：句号（需要判断是否为小数点）
+        let corrected = if ch == '.' {
+            // 判断是否为小数点：前后都是数字
+            let prev_is_digit = result.chars().last().map_or(false, |c| c.is_ascii_digit());
+            // 由于我们已经遍历到当前字符，无法直接查看下一个字符
+            // 使用简化逻辑：如果前一个字符是数字，保持为英文句号（可能是小数点）
+            if prev_is_digit {
+                '.'
+            } else {
+                '。'
+            }
+        } else {
+            corrected
+        };
 
         // 避免重复标点（保留中文标点）
         if is_punctuation(corrected) && is_punctuation(prev_char) {
@@ -78,7 +153,7 @@ pub fn postprocess_text(text: &str) -> String {
 fn is_punctuation(ch: char) -> bool {
     ch.is_ascii_punctuation()
         || [
-            '，', '。', '、', '；', '：', '？', '！', '"', '"', '‘', '’', '（', '）', '【', '】',
+            '，', '。', '、', '；', '：', '？', '！', '"', '"', '\'', '\'', '（', '）', '【', '】',
             '《', '》', '…', '—', '～',
         ]
         .contains(&ch)
@@ -164,7 +239,6 @@ fn normalize_punctuation(text: &str) -> String {
     text.chars()
         .map(|ch| match ch {
             ',' => '，',
-            '.' if !ch.is_ascii_digit() => '。',
             ':' => '：',
             ';' => '；',
             '?' => '？',
@@ -209,9 +283,35 @@ mod tests {
 
     #[test]
     fn test_normalize_punctuation() {
-        let input = "Hello,World.";
+        let input = "Hello,World:";
         let result = normalize_punctuation(input);
         assert!(result.contains('，'));
-        assert!(result.contains('。'));
+        assert!(result.contains('：'));
+    }
+
+    #[test]
+    fn test_fix_ocr_number_errors() {
+        // 数字上下文中的 l 应该被修正为 1
+        let input = "金额: l00元";
+        let result = postprocess_text(input);
+        assert!(result.contains("100"), "Expected '100' in '{}'", result);
+
+        // 金额上下文中的 O 应该被修正为 0
+        let input2 = "总计: 5O元";
+        let result2 = postprocess_text(input2);
+        assert!(result2.contains("50"), "Expected '50' in '{}'", result2);
+
+        // 非数字上下文中的 l 不应该被修正
+        let input3 = "hello world";
+        let result3 = postprocess_text(input3);
+        assert!(result3.contains("hello"), "Expected 'hello' in '{}'", result3);
+    }
+
+    #[test]
+    fn test_date_number_fix() {
+        // 日期格式中的数字
+        let input = "2026年l月2O日";
+        let result = postprocess_text(input);
+        assert!(result.contains("1月") || result.contains("20日"), "Result: {}", result);
     }
 }

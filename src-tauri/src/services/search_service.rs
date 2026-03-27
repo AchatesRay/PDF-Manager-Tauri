@@ -59,7 +59,7 @@ impl SearchService {
 
         // 索引版本文件，用于检测 schema 变化
         let version_file = index_path.join(".version");
-        let current_version = "3"; // 更新版本号当 schema 变化时
+        let current_version = "4"; // 更新版本号：增加单字索引支持
 
         // 检查版本是否匹配，不匹配则删除旧索引
         let needs_rebuild = if version_file.exists() {
@@ -217,6 +217,24 @@ impl SearchService {
         // STRING 字段会将整个值作为一个 term 存储
         for token in &tokens {
             doc.add_text(content_field, token);
+
+            // 【新增】为中文字符分词结果添加单字索引
+            // 这样搜索单个中文字符也能匹配
+            if token.chars().count() > 1 {
+                for ch in token.chars() {
+                    if Self::is_chinese(ch) {
+                        doc.add_text(content_field, &ch.to_string());
+                    }
+                }
+            }
+        }
+
+        // 【新增】额外添加所有中文字符的单字索引
+        // 确保即使分词结果不包含单字，也能搜索单字
+        for ch in cleaned_content.chars() {
+            if Self::is_chinese(ch) {
+                doc.add_text(content_field, &ch.to_string());
+            }
         }
 
         // 保存清理后的内容用于生成 snippet
