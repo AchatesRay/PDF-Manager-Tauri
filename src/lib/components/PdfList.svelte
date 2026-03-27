@@ -139,9 +139,9 @@
     }
   }
 
-  async function handleStartOcr(id: number) {
+  async function handleStartOcr(id: number, force: boolean = false) {
     try {
-      await startOcr(id);
+      await startOcr(id, force);
       await refreshQueueStatus();
     } catch (e) {
       alert('启动OCR失败: ' + e);
@@ -256,20 +256,31 @@
             </span>
           </div>
           <div class="actions">
-            {#if pdf.status === 'pending'}
-              {#if getQueuePosition(pdf.id) !== null}
-                <span class="queue-position">排队中 (#{getQueuePosition(pdf.id)})</span>
-                <button class="cancel-btn" on:click|stopPropagation={() => handleCancelTask(pdf.id)} title="取消排队">取消</button>
-              {:else}
-                <button class="ocr-btn" on:click|stopPropagation={() => handleStartOcr(pdf.id)}>OCR</button>
-              {/if}
-            {:else if pdf.status === 'processing'}
+            <!-- pending 且不在队列中：显示 OCR 按钮 -->
+            {#if pdf.status === 'pending' && getQueuePosition(pdf.id) === null}
+              <button class="ocr-btn" on:click|stopPropagation={() => handleStartOcr(pdf.id)}>OCR</button>
+            {/if}
+
+            <!-- pending 在队列中：显示取消按钮 -->
+            {#if pdf.status === 'pending' && getQueuePosition(pdf.id) !== null}
+              <span class="queue-position">排队中 (#{getQueuePosition(pdf.id)})</span>
+              <button class="cancel-btn" on:click|stopPropagation={() => handleCancelTask(pdf.id)} title="取消排队">取消</button>
+            {/if}
+
+            <!-- processing：显示加载动画 -->
+            {#if pdf.status === 'processing'}
               <span class="processing-indicator">
                 <svg class="spinner-small" viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4"/>
                 </svg>
               </span>
             {/if}
+
+            <!-- done 或 error：显示 OCR 按钮重新识别 -->
+            {#if pdf.status === 'done' || pdf.status === 'error'}
+              <button class="ocr-btn re-ocr" on:click|stopPropagation={() => handleStartOcr(pdf.id, true)}>OCR</button>
+            {/if}
+
             <button class="delete-btn" on:click|stopPropagation={() => handleDelete(pdf.id)} title="删除">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/>
@@ -437,6 +448,14 @@
 
   .ocr-btn:hover {
     background: #059669;
+  }
+
+  .ocr-btn.re-ocr {
+    background: var(--accent, #3b82f6);
+  }
+
+  .ocr-btn.re-ocr:hover {
+    background: var(--accent-dark, #2563eb);
   }
 
   .queue-position {
