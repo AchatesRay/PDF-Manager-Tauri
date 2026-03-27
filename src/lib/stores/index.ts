@@ -46,3 +46,12 @@ export const filteredPdfList = derived(
     return $pdfList.filter(pdf => pdf.folder_id === $selectedFolderId);
   }
 );
+
+// OCR 模型类型
+export const selectedModelType = writable<string>('mobile');
+
+// 模型类型列表
+export const modelTypes = writable<{value: string, label: string, memory: string}[]>([]);
+
+// 是否显示下载对话框
+export const showDownloadDialog = writable(false);
