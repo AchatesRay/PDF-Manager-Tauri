@@ -192,8 +192,8 @@ pub struct OcrService {
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        // 默认使用平衡版模型，精度优于 Mobile，内存占用适中
-        Self::with_model_type(data_dir, ModelType::Balanced)
+        // 默认使用 Mobile 模型，适合低配电脑（内存 ~200MB）
+        Self::with_model_type(data_dir, ModelType::Mobile)
     }
 
     /// 创建 OCR 服务（指定模型类型）
