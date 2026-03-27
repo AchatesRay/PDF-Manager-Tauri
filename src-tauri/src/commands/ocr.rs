@@ -270,6 +270,7 @@ pub fn get_memory_info() -> MemoryInfo {
 #[tauri::command]
 pub async fn start_ocr(
     pdf_id: i64,
+    force: Option<bool>,
     db: State<'_, Db>,
     ocr_service: State<'_, Mutex<OcrService>>,
     pdf_service: State<'_, Mutex<PdfService>>,
@@ -277,7 +278,7 @@ pub async fn start_ocr(
     task_queue: State<'_, Mutex<TaskQueue>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    info!("请求OCR处理: pdf_id={}", pdf_id);
+    info!("请求OCR处理: pdf_id={}, force={:?}", pdf_id, force);
 
     // 获取 OCR 最大图像尺寸设置
     let max_image_dimension: u32 = {
@@ -309,6 +310,34 @@ pub async fn start_ocr(
     };
 
     info!("PDF信息: filename={}, pages={}, storage={}", filename, page_count, storage_path);
+
+    // 如果是强制重新识别，清除已有结果
+    if force.unwrap_or(false) {
+        info!("强制重新识别，清除已有 OCR 结果: pdf_id={}", pdf_id);
+
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+
+        // 清除 OCR 结果
+        conn.execute(
+            "DELETE FROM pdf_pages WHERE pdf_id = ?1",
+            rusqlite::params![pdf_id],
+        ).map_err(|e| {
+            error!("清除 OCR 结果失败: {}", e);
+            format!("清除结果失败: {}", e)
+        })?;
+
+        // 重置状态为 pending
+        conn.execute(
+            "UPDATE pdfs SET status = 'pending', error_message = NULL, updated_at = datetime('now') WHERE id = ?1",
+            rusqlite::params![pdf_id],
+        ).map_err(|e| {
+            error!("重置状态失败: {}", e);
+            format!("重置状态失败: {}", e)
+        })?;
+    }
 
     // 获取模型类型并检查 OCR 服务是否可用
     let model_type = {
