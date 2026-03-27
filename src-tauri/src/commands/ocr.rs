@@ -28,6 +28,14 @@ pub struct OcrProgress {
     pub status: String,
 }
 
+/// 模型类型信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelTypeInfo {
+    pub value: String,
+    pub label: String,
+    pub memory: String,
+}
+
 /// 获取 OCR 状态
 #[tauri::command]
 pub fn get_ocr_status(
@@ -525,4 +533,31 @@ fn process_page(
     }
 
     Ok(())
+}
+
+/// 获取可选模型类型列表
+#[tauri::command]
+pub fn get_ocr_model_types() -> Vec<ModelTypeInfo> {
+    vec![
+        ModelTypeInfo {
+            value: "mobile".to_string(),
+            label: "Mobile (推荐)".to_string(),
+            memory: "~200MB".to_string(),
+        },
+        ModelTypeInfo {
+            value: "balanced".to_string(),
+            label: "Balanced".to_string(),
+            memory: "~300MB".to_string(),
+        },
+        ModelTypeInfo {
+            value: "server".to_string(),
+            label: "Server (高精度)".to_string(),
+            memory: "~1.5GB".to_string(),
+        },
+        ModelTypeInfo {
+            value: "lite".to_string(),
+            label: "Lite (v4稳定版)".to_string(),
+            memory: "~200MB".to_string(),
+        },
+    ]
 }
