@@ -94,6 +94,13 @@ export interface OcrStatus {
   models_ready: boolean;
   missing_files: string[];
   models_dir: string;
+  model_type: string;
+}
+
+export interface ModelTypeInfo {
+  value: string;
+  label: string;
+  memory: string;
 }
 
 export interface DownloadGuide {
@@ -112,6 +119,22 @@ export async function getOcrStatus(): Promise<OcrStatus> {
   return invoke('get_ocr_status');
 }
 
+export async function getOcrModelTypes(): Promise<ModelTypeInfo[]> {
+  return invoke('get_ocr_model_types');
+}
+
+export async function getOcrModelType(): Promise<string> {
+  return invoke('get_ocr_model_type');
+}
+
+export async function setOcrModelType(modelType: string): Promise<void> {
+  return invoke('set_ocr_model_type', { modelType });
+}
+
+export async function refreshOcrStatus(): Promise<OcrStatus> {
+  return invoke('refresh_ocr_status');
+}
+
 export async function getOcrDownloadGuide(): Promise<DownloadGuide[]> {
   return invoke('get_ocr_download_guide');
 }
@@ -124,8 +147,8 @@ export async function cancelOcrDownload(): Promise<void> {
   return invoke('cancel_ocr_download');
 }
 
-export async function startOcr(pdfId: number): Promise<void> {
-  return invoke('start_ocr', { pdfId });
+export async function startOcr(pdfId: number, force: boolean = false): Promise<void> {
+  return invoke('start_ocr', { pdfId, force });
 }
 
 // Queue API
