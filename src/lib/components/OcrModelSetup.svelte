@@ -3,20 +3,34 @@
   import { listen } from '@tauri-apps/api/event';
   import {
     getOcrStatus,
+    getOcrModelTypes,
+    getOcrModelType,
+    setOcrModelType,
+    refreshOcrStatus,
     getOcrDownloadGuide,
     downloadOcrModels,
     cancelOcrDownload,
     type OcrStatus,
+    type ModelTypeInfo,
     type DownloadGuide,
     type DownloadProgress,
   } from '../api';
-  import { ocrModelStatus, ocrDownloadProgress, isDownloading } from '../stores';
+  import {
+    ocrModelStatus,
+    ocrDownloadProgress,
+    isDownloading,
+    selectedModelType,
+    modelTypes,
+    showDownloadDialog,
+  } from '../stores';
 
-  let showManualGuide = false;
-  let downloadGuides: DownloadGuide[] = [];
   let error: string | null = null;
+  let downloadGuides: DownloadGuide[] = [];
+  let isRefreshing = false;
 
   onMount(async () => {
+    await loadModelTypes();
+    await loadCurrentModelType();
     await checkStatus();
     downloadGuides = await getOcrDownloadGuide();
 
@@ -29,6 +43,7 @@
     const unlistenComplete = await listen<void>('model-download-complete', async () => {
       isDownloading.set(false);
       ocrDownloadProgress.set(null);
+      showDownloadDialog.set(false);
       await checkStatus();
     });
 
@@ -45,12 +60,59 @@
     };
   });
 
+  async function loadModelTypes() {
+    try {
+      const types = await getOcrModelTypes();
+      modelTypes.set(types);
+    } catch (e) {
+      console.error('Failed to load model types:', e);
+    }
+  }
+
+  async function loadCurrentModelType() {
+    try {
+      const modelType = await getOcrModelType();
+      selectedModelType.set(modelType);
+    } catch (e) {
+      console.error('Failed to get current model type:', e);
+    }
+  }
+
   async function checkStatus() {
     try {
       const status = await getOcrStatus();
       ocrModelStatus.set(status);
     } catch (e) {
       console.error('Failed to get OCR status:', e);
+    }
+  }
+
+  async function handleRefresh() {
+    isRefreshing = true;
+    error = null;
+    try {
+      const status = await refreshOcrStatus();
+      ocrModelStatus.set(status);
+      if (!status.models_ready) {
+        showDownloadDialog.set(true);
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      isRefreshing = false;
+    }
+  }
+
+  async function handleModelTypeChange(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const newType = target.value;
+    try {
+      await setOcrModelType(newType);
+      selectedModelType.set(newType);
+      // 切换模型后刷新状态
+      await checkStatus();
+    } catch (e) {
+      error = String(e);
     }
   }
 
@@ -84,21 +146,48 @@
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
+
+  $: statusText = $ocrModelStatus?.models_ready
+    ? '✓ 模型已就绪'
+    : '✗ 模型未安装';
 </script>
 
-{#if !$ocrModelStatus?.models_ready}
-  <div class="ocr-setup">
-    <div class="setup-header">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-      </svg>
-      <h3>OCR 模型未安装</h3>
+<div class="ocr-setup">
+  <div class="setup-header">
+    <h3>OCR 模型</h3>
+  </div>
+
+  <div class="setup-content">
+    <!-- 模型选择和重新检测按钮 -->
+    <div class="model-controls">
+      <div class="model-select">
+        <label for="model-type">模型选择</label>
+        <select id="model-type" value={$selectedModelType} on:change={handleModelTypeChange}>
+          {#each $modelTypes as type}
+            <option value={type.value}>{type.label} ({type.memory})</option>
+          {/each}
+        </select>
+      </div>
+
+      <button
+        class="refresh-btn"
+        on:click={handleRefresh}
+        disabled={isRefreshing}
+      >
+        <svg class:spinning={isRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 4v6h-6M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+        </svg>
+        重新检测
+      </button>
     </div>
 
-    <p class="setup-desc">
-      使用 PaddleOCR 进行文字识别需要下载模型文件（约 30MB）。
-    </p>
+    <!-- 状态显示 -->
+    <div class="status-text" class:ready={$ocrModelStatus?.models_ready}>
+      {statusText}
+    </div>
 
+    <!-- 错误提示 -->
     {#if error}
       <div class="error-message">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -109,68 +198,73 @@
         <span>{error}</span>
       </div>
     {/if}
+  </div>
+</div>
 
-    {#if $isDownloading && $ocrDownloadProgress}
-      <div class="download-progress">
-        <div class="progress-info">
-          <span class="file-name">{$ocrDownloadProgress.file}</span>
-          <span class="progress-percent">
-            {formatProgress($ocrDownloadProgress.current, $ocrDownloadProgress.total)}
-          </span>
-        </div>
-        <div class="progress-bar">
-          <div
-            class="progress-fill"
-            style="width: {($ocrDownloadProgress.current / ($ocrDownloadProgress.total || 1)) * 100}%"
-          ></div>
-        </div>
-        <div class="progress-bytes">
-          {formatBytes($ocrDownloadProgress.current)} / {formatBytes($ocrDownloadProgress.total)}
-        </div>
-        <button class="cancel-btn" on:click={handleCancel}>
-          取消下载
-        </button>
-      </div>
-    {:else}
-      <div class="actions">
-        <button class="download-btn" on:click={handleDownload} disabled={$isDownloading}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          在线下载
-        </button>
-        <button class="manual-btn" on:click={() => showManualGuide = !showManualGuide}>
-          手动下载
-        </button>
+<!-- 下载对话框 -->
+{#if $showDownloadDialog && !$ocrModelStatus?.models_ready}
+  <div class="download-dialog-overlay" on:click={() => showDownloadDialog.set(false)}>
+    <div class="download-dialog" on:click|stopPropagation>
+      <div class="dialog-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <h4>OCR 模型未安装</h4>
       </div>
 
-      {#if showManualGuide}
-        <div class="manual-guide">
-          <h4>手动下载步骤：</h4>
-          <ol>
-            <li>下载以下文件并放入目录：<code>{$ocrModelStatus?.models_dir || 'models'}</code></li>
-          </ol>
-          <div class="file-list">
-            {#each downloadGuides as guide}
-              <div class="file-item">
-                <a href={guide.url} target="_blank" rel="noopener noreferrer" class="file-link">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
-                    <polyline points="15 3 21 3 21 9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
-                  {guide.name}
-                </a>
-                <span class="file-size">{guide.size}</span>
-              </div>
-            {/each}
+      <p class="dialog-desc">请下载以下模型文件：</p>
+
+      <ul class="file-list">
+        {#each downloadGuides as guide}
+          <li>
+            <span class="file-name">{guide.name}</span>
+            <span class="file-size">{guide.size}</span>
+          </li>
+        {/each}
+      </ul>
+
+      <p class="models-dir">模型目录: {$ocrModelStatus?.models_dir || 'models'}</p>
+
+      {#if $isDownloading && $ocrDownloadProgress}
+        <div class="download-progress">
+          <div class="progress-info">
+            <span class="file-name">{$ocrDownloadProgress.file}</span>
+            <span class="progress-percent">
+              {formatProgress($ocrDownloadProgress.current, $ocrDownloadProgress.total)}
+            </span>
           </div>
-          <p class="guide-note">下载完成后重启应用即可使用 OCR 功能。</p>
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              style="width: {($ocrDownloadProgress.current / ($ocrDownloadProgress.total || 1)) * 100}%"
+            ></div>
+          </div>
+          <div class="progress-bytes">
+            {formatBytes($ocrDownloadProgress.current)} / {formatBytes($ocrDownloadProgress.total)}
+          </div>
+          <button class="cancel-btn" on:click={handleCancel}>
+            取消下载
+          </button>
+        </div>
+      {:else}
+        <div class="dialog-actions">
+          <button class="download-btn" on:click={handleDownload}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            在线下载
+          </button>
+          <button class="manual-btn" on:click={() => window.open('https://github.com/GreatV/oar-ocr/releases/tag/v0.3.0', '_blank')}>
+            手动下载
+          </button>
+          <button class="close-btn" on:click={() => showDownloadDialog.set(false)}>
+            取消
+          </button>
         </div>
       {/if}
-    {/if}
+    </div>
   </div>
 {/if}
 
@@ -179,74 +273,207 @@
     background: var(--bg-secondary, #ffffff);
     border: 1px solid var(--border, #e5e7eb);
     border-radius: 8px;
-    padding: 16px;
-    margin: 12px 8px;
-  }
-
-  .setup-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .setup-header svg {
-    width: 24px;
-    height: 24px;
-    color: var(--warning, #f59e0b);
+    padding: 12px;
+    margin: 8px;
   }
 
   .setup-header h3 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+  }
+
+  .model-controls {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    margin-bottom: 10px;
+  }
+
+  .model-select {
+    flex: 1;
+  }
+
+  .model-select label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary, #6b7280);
+    margin-bottom: 4px;
+  }
+
+  .model-select select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--bg-primary, #f9fafb);
+    color: var(--text-primary, #1f2937);
+    cursor: pointer;
+  }
+
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: var(--bg-primary, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-primary, #1f2937);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .refresh-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .refresh-btn svg.spinning {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .status-text {
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+  }
+
+  .status-text.ready {
+    color: var(--success, #10b981);
+  }
+
+  .error-message {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    background: var(--error-soft, #fef2f2);
+    border: 1px solid var(--error, #ef4444);
+    border-radius: 4px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--error, #ef4444);
+  }
+
+  .error-message svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  /* 下载对话框 */
+  .download-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .download-dialog {
+    background: var(--bg-secondary, #ffffff);
+    border-radius: 8px;
+    padding: 16px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+
+  .dialog-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .dialog-header svg {
+    width: 20px;
+    height: 20px;
+    color: var(--warning, #f59e0b);
+  }
+
+  .dialog-header h4 {
     margin: 0;
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #1f2937);
   }
 
-  .setup-desc {
-    margin: 0 0 16px;
-    font-size: 13px;
-    color: var(--text-secondary, #6b7280);
-    line-height: 1.5;
-  }
-
-  .error-message {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    background: var(--error-soft, #fef2f2);
-    border: 1px solid var(--error, #ef4444);
-    border-radius: 6px;
-    margin-bottom: 12px;
+  .dialog-desc {
+    margin: 0 0 8px;
     font-size: 12px;
-    color: var(--error, #ef4444);
+    color: var(--text-secondary, #6b7280);
   }
 
-  .error-message svg {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
+  .file-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: var(--bg-tertiary, #f3f4f6);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 8px;
   }
 
-  .actions {
+  .file-list li {
     display: flex;
-    gap: 10px;
-    margin-bottom: 12px;
+    justify-content: space-between;
+    font-size: 11px;
+    padding: 4px 0;
   }
 
-  .download-btn, .manual-btn {
+  .file-name {
+    color: var(--text-primary, #1f2937);
+  }
+
+  .file-size {
+    color: var(--text-muted, #9ca3af);
+  }
+
+  .models-dir {
+    margin: 0 0 12px;
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+  }
+
+  .dialog-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .download-btn, .manual-btn, .close-btn {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 13px;
+    gap: 4px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s;
   }
 
   .download-btn {
@@ -255,18 +482,13 @@
     border: none;
   }
 
-  .download-btn:hover:not(:disabled) {
+  .download-btn:hover {
     background: var(--accent-dark, #2563eb);
   }
 
-  .download-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
   .download-btn svg, .manual-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
 
   .manual-btn {
@@ -275,31 +497,25 @@
     border: 1px solid var(--border, #e5e7eb);
   }
 
-  .manual-btn:hover {
-    border-color: var(--accent, #3b82f6);
-    color: var(--accent, #3b82f6);
+  .close-btn {
+    background: transparent;
+    color: var(--text-secondary, #6b7280);
+    border: 1px solid var(--border, #e5e7eb);
   }
 
   .download-progress {
     background: var(--bg-tertiary, #f3f4f6);
-    border-radius: 6px;
-    padding: 12px;
+    border-radius: 4px;
+    padding: 10px;
   }
 
   .progress-info {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 8px;
-  }
-
-  .file-name {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-primary, #1f2937);
+    margin-bottom: 6px;
   }
 
   .progress-percent {
-    font-size: 12px;
     font-weight: 600;
     color: var(--accent, #3b82f6);
   }
@@ -320,102 +536,24 @@
   }
 
   .progress-bytes {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #9ca3af);
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
 
   .cancel-btn {
     width: 100%;
-    padding: 8px;
+    padding: 6px;
     background: none;
     border: 1px solid var(--border, #e5e7eb);
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary, #6b7280);
     cursor: pointer;
-    transition: all 0.15s;
   }
 
   .cancel-btn:hover {
     border-color: var(--error, #ef4444);
     color: var(--error, #ef4444);
-  }
-
-  .manual-guide {
-    background: var(--bg-tertiary, #f3f4f6);
-    border-radius: 6px;
-    padding: 12px;
-  }
-
-  .manual-guide h4 {
-    margin: 0 0 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #1f2937);
-  }
-
-  .manual-guide ol {
-    margin: 0;
-    padding-left: 20px;
-  }
-
-  .manual-guide li {
-    font-size: 12px;
-    color: var(--text-secondary, #6b7280);
-    margin-bottom: 8px;
-  }
-
-  .manual-guide code {
-    background: var(--bg-secondary, #ffffff);
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-size: 11px;
-    color: var(--accent, #3b82f6);
-    word-break: break-all;
-  }
-
-  .file-list {
-    margin-top: 10px;
-  }
-
-  .file-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    background: var(--bg-secondary, #ffffff);
-    border: 1px solid var(--border-light, #f3f4f6);
-    border-radius: 4px;
-    margin-bottom: 6px;
-  }
-
-  .file-link {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--accent, #3b82f6);
-    text-decoration: none;
-  }
-
-  .file-link:hover {
-    text-decoration: underline;
-  }
-
-  .file-link svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  .file-size {
-    font-size: 11px;
-    color: var(--text-muted, #9ca3af);
-  }
-
-  .guide-note {
-    margin: 10px 0 0;
-    font-size: 11px;
-    color: var(--text-muted, #9ca3af);
   }
 </style>
