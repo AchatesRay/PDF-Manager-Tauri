@@ -172,15 +172,135 @@ fn sauvola_threshold(image: &image::GrayImage, window_size: u32, k: f32) -> imag
     result
 }
 
+/// 图像质量分析结果
+struct ImageQuality {
+    contrast: f32,
+    brightness: f32,
+    is_clear: bool,
+}
+
+/// 分析图像质量
+fn analyze_image_quality(image: &DynamicImage) -> ImageQuality {
+    let gray = image.to_luma8();
+    let (width, height) = gray.dimensions();
+
+    // 采样分析（避免全图计算）
+    let step = 10;
+    let mut sum: f64 = 0.0;
+    let mut sum_sq: f64 = 0.0;
+    let mut count: u32 = 0;
+
+    for y in (0..height).step_by(step) {
+        for x in (0..width).step_by(step) {
+            let pixel = gray.get_pixel(x, y)[0] as f64;
+            sum += pixel;
+            sum_sq += pixel * pixel;
+            count += 1;
+        }
+    }
+
+    let mean = sum / count as f64;
+    let variance = (sum_sq / count as f64) - (mean * mean);
+    let std_dev = variance.sqrt();
+
+    ImageQuality {
+        contrast: std_dev as f32,
+        brightness: mean as f32,
+        is_clear: std_dev > 40.0, // 标准差 > 40 认为清晰
+    }
+}
+
 /// 预处理图像以提高 OCR 识别正确率
-///
-/// 注意：当前简化处理，直接返回原图
-/// 因为 Sauvola 二值化可能导致 OCR 模型识别失败
-/// 如需启用预处理，请确保测试验证效果
+/// 根据图像质量动态选择预处理方式
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
-    // 直接返回原图，避免二值化处理破坏识别效果
-    // 后续可以根据需要添加轻度的对比度增强
+    let quality = analyze_image_quality(image);
+
+    // 清晰图像直接返回
+    if quality.is_clear {
+        debug!("图像质量良好，跳过预处理");
+        return image.clone();
+    }
+
+    debug!("图像质量较差，应用轻度增强 (对比度={:.1}, 亮度={:.1})",
+           quality.contrast, quality.brightness);
+
+    // 低对比度：轻度对比度增强
+    if quality.contrast < 40.0 {
+        let gray = image.to_luma8();
+        let enhanced = enhance_contrast(&gray);
+        return DynamicImage::ImageLuma8(enhanced);
+    }
+
+    // 低光照：亮度调整
+    if quality.brightness < 100.0 {
+        // 简单的亮度调整
+        let rgb = image.to_rgb8();
+        let factor = 128.0 / quality.brightness as f64;
+        let enhanced: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
+            image::ImageBuffer::from_fn(rgb.width(), rgb.height(), |x, y| {
+                let pixel = rgb.get_pixel(x, y);
+                image::Rgb([
+                    (pixel[0] as f64 * factor).min(255.0) as u8,
+                    (pixel[1] as f64 * factor).min(255.0) as u8,
+                    (pixel[2] as f64 * factor).min(255.0) as u8,
+                ])
+            });
+        return DynamicImage::ImageRgb8(enhanced);
+    }
+
     image.clone()
+}
+
+/// 轻度对比度增强
+fn enhance_contrast(image: &image::GrayImage) -> image::GrayImage {
+    let (width, height) = image.dimensions();
+
+    // 计算直方图
+    let mut hist = [0u32; 256];
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y)[0];
+            hist[pixel as usize] += 1;
+        }
+    }
+
+    // 简单的直方图拉伸
+    let mut min_val = 0;
+    let mut max_val = 255;
+    for i in 0..256 {
+        if hist[i] > height * width / 100 {
+            min_val = i as u8;
+            break;
+        }
+    }
+    for i in (0..256).rev() {
+        if hist[i] > height * width / 100 {
+            max_val = i as u8;
+            break;
+        }
+    }
+
+    if max_val <= min_val {
+        return image.clone();
+    }
+
+    // 应用拉伸
+    let mut result = image::GrayImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y)[0];
+            let new_val = if pixel < min_val {
+                0
+            } else if pixel > max_val {
+                255
+            } else {
+                ((pixel - min_val) as f32 * 255.0 / (max_val - min_val) as f32) as u8
+            };
+            result.put_pixel(x, y, image::Luma([new_val]));
+        }
+    }
+
+    result
 }
 
 pub struct OcrService {
