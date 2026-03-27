@@ -134,6 +134,61 @@ pub fn get_ocr_model_type(
     Ok(model_type)
 }
 
+/// 重新检测模型状态并尝试加载
+#[tauri::command]
+pub fn refresh_ocr_status(
+    db: State<'_, Db>,
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Result<OcrStatus, String> {
+    info!("重新检测 OCR 模型状态");
+
+    // 从数据库读取模型类型
+    let model_type_str = {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+
+        crate::db::get_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE)
+            .unwrap_or_else(|| "mobile".to_string())
+    };
+
+    let model_type: ModelType = model_type_str.parse()
+        .unwrap_or(ModelType::Mobile);
+
+    // 检查并更新服务
+    let mut svc = ocr_service.lock().map_err(|e| {
+        error!("获取OCR服务锁失败: {}", e);
+        format!("OCR服务锁定失败: {}", e)
+    })?;
+
+    // 确保模型类型一致
+    if svc.model_type() != model_type {
+        svc.set_model_type(model_type);
+    }
+
+    // 如果模型文件存在但未加载，尝试加载
+    let status = svc.get_status();
+    if status.models_ready && !svc.is_available() {
+        info!("模型文件存在但未加载，尝试加载");
+        if let Err(e) = svc.init_ocr() {
+            warn!("模型加载失败: {}", e);
+        }
+    }
+
+    let final_status = svc.get_status();
+    info!("OCR 状态检测完成: models_ready={}, available={}",
+          final_status.models_ready, final_status.available);
+
+    Ok(OcrStatus {
+        available: final_status.available,
+        models_ready: final_status.models_ready,
+        missing_files: final_status.missing_files,
+        models_dir: final_status.models_dir,
+        model_type: svc.model_type().to_string(),
+    })
+}
+
 /// 下载 OCR 模型
 #[tauri::command]
 pub async fn download_ocr_models(
