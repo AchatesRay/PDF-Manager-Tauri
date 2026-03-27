@@ -147,6 +147,7 @@ pub fn run() {
             commands::ocr::get_ocr_status,
             commands::ocr::get_ocr_download_guide,
             commands::ocr::get_ocr_model_types,
+            commands::ocr::get_ocr_model_type,
             commands::ocr::set_ocr_model_type,
             commands::ocr::download_ocr_models,
             commands::ocr::cancel_ocr_download,

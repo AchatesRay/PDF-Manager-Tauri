@@ -79,23 +79,59 @@ pub fn get_ocr_download_guide(
     ModelManager::get_download_guide(model_type)
 }
 
-/// 设置模型类型
+/// 设置模型类型（持久化保存）
 #[tauri::command]
 pub fn set_ocr_model_type(
     model_type: String,
+    db: State<'_, Db>,
     ocr_service: State<'_, Mutex<OcrService>>,
 ) -> Result<(), String> {
+    info!("设置 OCR 模型类型: {}", model_type);
+
+    // 验证模型类型
     let model_type: ModelType = model_type.parse()
         .map_err(|e| format!("无效的模型类型: {}", e))?;
 
+    // 保存到数据库
+    {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+
+        crate::db::set_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE, &model_type.to_string())
+            .map_err(|e| {
+                error!("保存模型类型设置失败: {}", e);
+                format!("保存设置失败: {}", e)
+            })?;
+    }
+
+    // 切换服务中的模型类型
     let mut svc = ocr_service.lock().map_err(|e| {
         error!("获取OCR服务锁失败: {}", e);
         format!("OCR服务锁定失败: {}", e)
     })?;
 
     svc.set_model_type(model_type);
-    info!("模型类型已设置为: {}", model_type);
+    info!("模型类型已切换并保存: {}", model_type);
     Ok(())
+}
+
+/// 获取当前模型类型（从数据库读取）
+#[tauri::command]
+pub fn get_ocr_model_type(
+    db: State<'_, Db>,
+) -> Result<String, String> {
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    let model_type = crate::db::get_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE)
+        .unwrap_or_else(|| "mobile".to_string());
+
+    info!("当前模型类型: {}", model_type);
+    Ok(model_type)
 }
 
 /// 下载 OCR 模型
