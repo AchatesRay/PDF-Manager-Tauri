@@ -3,15 +3,10 @@
   import { listen } from '@tauri-apps/api/event';
   import {
     getOcrStatus,
-    getOcrModelTypes,
-    getOcrModelType,
-    setOcrModelType,
-    refreshOcrStatus,
     getOcrDownloadGuide,
     downloadOcrModels,
     cancelOcrDownload,
     type OcrStatus,
-    type ModelTypeInfo,
     type DownloadGuide,
     type DownloadProgress,
   } from '../api';
@@ -19,64 +14,45 @@
     ocrModelStatus,
     ocrDownloadProgress,
     isDownloading,
-    selectedModelType,
-    modelTypes,
     showDownloadDialog,
   } from '../stores';
 
   let error: string | null = null;
   let downloadGuides: DownloadGuide[] = [];
-  let isRefreshing = false;
 
-  onMount(async () => {
-    await loadModelTypes();
-    await loadCurrentModelType();
-    await checkStatus();
-    downloadGuides = await getOcrDownloadGuide();
+  onMount(() => {
+    checkStatus();
+    getOcrDownloadGuide().then(guides => downloadGuides = guides);
 
     // 监听下载进度
-    const unlistenProgress = await listen<DownloadProgress>('model-download-progress', (event) => {
+    let unlistenProgress: (() => void) | null = null;
+    let unlistenComplete: (() => void) | null = null;
+    let unlistenError: (() => void) | null = null;
+
+    listen<DownloadProgress>('model-download-progress', (event) => {
       ocrDownloadProgress.set(event.payload);
-    });
+    }).then(unlisten => unlistenProgress = unlisten);
 
     // 监听下载完成
-    const unlistenComplete = await listen<void>('model-download-complete', async () => {
+    listen<void>('model-download-complete', async () => {
       isDownloading.set(false);
       ocrDownloadProgress.set(null);
       showDownloadDialog.set(false);
       await checkStatus();
-    });
+    }).then(unlisten => unlistenComplete = unlisten);
 
     // 监听下载错误
-    const unlistenError = await listen<{ error: string }>('model-download-error', (event) => {
+    listen<{ error: string }>('model-download-error', (event) => {
       isDownloading.set(false);
       error = event.payload.error;
-    });
+    }).then(unlisten => unlistenError = unlisten);
 
     return () => {
-      unlistenProgress();
-      unlistenComplete();
-      unlistenError();
+      unlistenProgress?.();
+      unlistenComplete?.();
+      unlistenError?.();
     };
   });
-
-  async function loadModelTypes() {
-    try {
-      const types = await getOcrModelTypes();
-      modelTypes.set(types);
-    } catch (e) {
-      console.error('Failed to load model types:', e);
-    }
-  }
-
-  async function loadCurrentModelType() {
-    try {
-      const modelType = await getOcrModelType();
-      selectedModelType.set(modelType);
-    } catch (e) {
-      console.error('Failed to get current model type:', e);
-    }
-  }
 
   async function checkStatus() {
     try {
@@ -84,35 +60,6 @@
       ocrModelStatus.set(status);
     } catch (e) {
       console.error('Failed to get OCR status:', e);
-    }
-  }
-
-  async function handleRefresh() {
-    isRefreshing = true;
-    error = null;
-    try {
-      const status = await refreshOcrStatus();
-      ocrModelStatus.set(status);
-      if (!status.models_ready) {
-        showDownloadDialog.set(true);
-      }
-    } catch (e) {
-      error = String(e);
-    } finally {
-      isRefreshing = false;
-    }
-  }
-
-  async function handleModelTypeChange(event: Event) {
-    const target = event.target as HTMLSelectElement;
-    const newType = target.value;
-    try {
-      await setOcrModelType(newType);
-      selectedModelType.set(newType);
-      // 切换模型后刷新状态
-      await checkStatus();
-    } catch (e) {
-      error = String(e);
     }
   }
 
@@ -152,54 +99,22 @@
     : '✗ 模型未安装';
 </script>
 
-<div class="ocr-setup">
-  <div class="setup-header">
-    <h3>OCR 模型</h3>
-  </div>
-
-  <div class="setup-content">
-    <!-- 模型选择和重新检测按钮 -->
-    <div class="model-controls">
-      <div class="model-select">
-        <label for="model-type">模型选择</label>
-        <select id="model-type" value={$selectedModelType} on:change={handleModelTypeChange}>
-          {#each $modelTypes as type}
-            <option value={type.value}>{type.label} ({type.memory})</option>
-          {/each}
-        </select>
-      </div>
-
-      <button
-        class="refresh-btn"
-        on:click={handleRefresh}
-        disabled={isRefreshing}
-      >
-        <svg class:spinning={isRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M23 4v6h-6M1 20v-6h6"/>
-          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-        </svg>
-        重新检测
-      </button>
-    </div>
-
-    <!-- 状态显示 -->
-    <div class="status-text" class:ready={$ocrModelStatus?.models_ready}>
-      {statusText}
-    </div>
-
-    <!-- 错误提示 -->
-    {#if error}
-      <div class="error-message">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="15" y1="9" x2="9" y2="15"/>
-          <line x1="9" y1="9" x2="15" y2="15"/>
-        </svg>
-        <span>{error}</span>
-      </div>
-    {/if}
-  </div>
+<!-- 状态显示（嵌入在 PdfList header 中） -->
+<div class="status-text" class:ready={$ocrModelStatus?.models_ready}>
+  {statusText}
 </div>
+
+<!-- 错误提示 -->
+{#if error}
+  <div class="error-message">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="15" y1="9" x2="9" y2="15"/>
+      <line x1="9" y1="9" x2="15" y2="15"/>
+    </svg>
+    <span>{error}</span>
+  </div>
+{/if}
 
 <!-- 下载对话框 -->
 {#if $showDownloadDialog && !$ocrModelStatus?.models_ready}
@@ -269,87 +184,6 @@
 {/if}
 
 <style>
-  .ocr-setup {
-    background: var(--bg-secondary, #ffffff);
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 8px;
-    padding: 12px;
-    margin: 8px;
-  }
-
-  .setup-header h3 {
-    margin: 0 0 12px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #1f2937);
-  }
-
-  .model-controls {
-    display: flex;
-    gap: 10px;
-    align-items: flex-end;
-    margin-bottom: 10px;
-  }
-
-  .model-select {
-    flex: 1;
-  }
-
-  .model-select label {
-    display: block;
-    font-size: 11px;
-    color: var(--text-secondary, #6b7280);
-    margin-bottom: 4px;
-  }
-
-  .model-select select {
-    width: 100%;
-    padding: 6px 8px;
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 4px;
-    font-size: 12px;
-    background: var(--bg-primary, #f9fafb);
-    color: var(--text-primary, #1f2937);
-    cursor: pointer;
-  }
-
-  .refresh-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 10px;
-    background: var(--bg-primary, #f9fafb);
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 4px;
-    font-size: 11px;
-    color: var(--text-primary, #1f2937);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    border-color: var(--accent, #3b82f6);
-    color: var(--accent, #3b82f6);
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .refresh-btn svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  .refresh-btn svg.spinning {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
   .status-text {
     font-size: 11px;
     color: var(--text-muted, #9ca3af);
@@ -486,7 +320,7 @@
     background: var(--accent-dark, #2563eb);
   }
 
-  .download-btn svg, .manual-btn svg {
+  .download-btn svg {
     width: 14px;
     height: 14px;
   }

@@ -17,7 +17,6 @@ pub struct OcrStatus {
     pub models_ready: bool,
     pub missing_files: Vec<String>,
     pub models_dir: String,
-    pub model_type: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,14 +25,6 @@ pub struct OcrProgress {
     pub current: u32,
     pub total: u32,
     pub status: String,
-}
-
-/// 模型类型信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelTypeInfo {
-    pub value: String,
-    pub label: String,
-    pub memory: String,
 }
 
 /// 获取 OCR 状态
@@ -52,11 +43,10 @@ pub fn get_ocr_status(
     };
 
     let status = svc.get_status();
-    let model_type = svc.model_type();
 
     debug!(
-        "OCR状态: available={}, models_ready={}, missing={:?}, model_type={}",
-        status.available, status.models_ready, status.missing_files, model_type
+        "OCR状态: available={}, models_ready={}, missing={:?}",
+        status.available, status.models_ready, status.missing_files
     );
 
     Ok(OcrStatus {
@@ -64,108 +54,27 @@ pub fn get_ocr_status(
         models_ready: status.models_ready,
         missing_files: status.missing_files,
         models_dir: status.models_dir,
-        model_type: model_type.to_string(),
     })
 }
 
 /// 获取下载指导
 #[tauri::command]
-pub fn get_ocr_download_guide(
-    ocr_service: State<'_, Mutex<OcrService>>,
-) -> Vec<DownloadGuide> {
-    let model_type = ocr_service.lock()
-        .map(|s| s.model_type())
-        .unwrap_or(ModelType::Mobile);
-    ModelManager::get_download_guide(model_type)
-}
-
-/// 设置模型类型（持久化保存）
-#[tauri::command]
-pub fn set_ocr_model_type(
-    model_type: String,
-    db: State<'_, Db>,
-    ocr_service: State<'_, Mutex<OcrService>>,
-) -> Result<(), String> {
-    info!("设置 OCR 模型类型: {}", model_type);
-
-    // 验证模型类型
-    let model_type: ModelType = model_type.parse()
-        .map_err(|e| format!("无效的模型类型: {}", e))?;
-
-    // 保存到数据库
-    {
-        let conn = db.lock().map_err(|e| {
-            error!("获取数据库锁失败: {}", e);
-            format!("数据库锁定失败: {}", e)
-        })?;
-
-        crate::db::set_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE, &model_type.to_string())
-            .map_err(|e| {
-                error!("保存模型类型设置失败: {}", e);
-                format!("保存设置失败: {}", e)
-            })?;
-    }
-
-    // 切换服务中的模型类型
-    let mut svc = ocr_service.lock().map_err(|e| {
-        error!("获取OCR服务锁失败: {}", e);
-        format!("OCR服务锁定失败: {}", e)
-    })?;
-
-    svc.set_model_type(model_type);
-    info!("模型类型已切换并保存: {}", model_type);
-    Ok(())
-}
-
-/// 获取当前模型类型（从数据库读取）
-#[tauri::command]
-pub fn get_ocr_model_type(
-    db: State<'_, Db>,
-) -> Result<String, String> {
-    let conn = db.lock().map_err(|e| {
-        error!("获取数据库锁失败: {}", e);
-        format!("数据库锁定失败: {}", e)
-    })?;
-
-    let model_type = crate::db::get_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE)
-        .unwrap_or_else(|| "mobile".to_string());
-
-    info!("当前模型类型: {}", model_type);
-    Ok(model_type)
+pub fn get_ocr_download_guide() -> Vec<DownloadGuide> {
+    ModelManager::get_download_guide(ModelType::Balanced)
 }
 
 /// 重新检测模型状态并尝试加载
 #[tauri::command]
 pub fn refresh_ocr_status(
-    db: State<'_, Db>,
     ocr_service: State<'_, Mutex<OcrService>>,
 ) -> Result<OcrStatus, String> {
     info!("重新检测 OCR 模型状态");
-
-    // 从数据库读取模型类型
-    let model_type_str = {
-        let conn = db.lock().map_err(|e| {
-            error!("获取数据库锁失败: {}", e);
-            format!("数据库锁定失败: {}", e)
-        })?;
-
-        crate::db::get_setting(&conn, crate::db::SETTING_OCR_MODEL_TYPE)
-            .unwrap_or_else(|| "mobile".to_string())
-    };
-
-    let model_type: ModelType = model_type_str.parse()
-        .unwrap_or(ModelType::Mobile);
 
     // 检查并更新服务
     let mut svc = ocr_service.lock().map_err(|e| {
         error!("获取OCR服务锁失败: {}", e);
         format!("OCR服务锁定失败: {}", e)
     })?;
-
-    // 确保模型类型一致
-    if svc.model_type() != model_type {
-        svc.set_model_type(model_type);
-    }
 
     // 如果模型文件存在但未加载，尝试加载
     let status = svc.get_status();
@@ -185,7 +94,6 @@ pub fn refresh_ocr_status(
         models_ready: final_status.models_ready,
         missing_files: final_status.missing_files,
         models_dir: final_status.models_dir,
-        model_type: svc.model_type().to_string(),
     })
 }
 
@@ -197,15 +105,16 @@ pub async fn download_ocr_models(
 ) -> Result<(), String> {
     info!("开始下载 OCR 模型");
 
-    let (model_manager, model_type) = {
+    let model_manager = {
         let svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
         })?;
-        (svc.model_manager(), svc.model_type())
+        svc.model_manager()
     };
 
-    model_manager.download_models(app_handle, model_type).await?;
+    // 使用固定的 Balanced 模型
+    model_manager.download_models(app_handle, ModelType::Balanced).await?;
 
     info!("OCR 模型下载完成");
     Ok(())
@@ -340,7 +249,7 @@ pub async fn start_ocr(
     }
 
     // 获取模型类型并检查 OCR 服务是否可用
-    let model_type = {
+    {
         let mut ocr_svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
@@ -357,12 +266,10 @@ pub async fn start_ocr(
             error!("OCR服务不可用");
             return Err("OCR服务不可用，请先下载模型文件".to_string());
         }
+    }
 
-        ocr_svc.model_type()
-    };
-
-    // 估算所需内存
-    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension, &model_type);
+    // 估算所需内存（使用 Balanced 模型）
+    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension, &ModelType::Balanced);
     info!("估算任务内存: {} MB", required_memory / 1024 / 1024);
 
     // 检查内存是否足够
@@ -653,31 +560,4 @@ fn process_page(
     }
 
     Ok(())
-}
-
-/// 获取可选模型类型列表
-#[tauri::command]
-pub fn get_ocr_model_types() -> Vec<ModelTypeInfo> {
-    vec![
-        ModelTypeInfo {
-            value: "mobile".to_string(),
-            label: "Mobile (推荐)".to_string(),
-            memory: "~200MB".to_string(),
-        },
-        ModelTypeInfo {
-            value: "balanced".to_string(),
-            label: "Balanced".to_string(),
-            memory: "~300MB".to_string(),
-        },
-        ModelTypeInfo {
-            value: "server".to_string(),
-            label: "Server (高精度)".to_string(),
-            memory: "~1.5GB".to_string(),
-        },
-        ModelTypeInfo {
-            value: "lite".to_string(),
-            label: "Lite (v4稳定版)".to_string(),
-            memory: "~200MB".to_string(),
-        },
-    ]
 }

@@ -306,19 +306,13 @@ fn enhance_contrast(image: &image::GrayImage) -> image::GrayImage {
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
-    model_type: ModelType,
 }
 
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
+    /// 使用 Balanced 模型：Mobile 检测 + RepSVTR 识别，精度优于 Mobile，内存约 300MB
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        // 默认使用 Mobile 模型，适合低配电脑（内存 ~200MB）
-        Self::with_model_type(data_dir, ModelType::Mobile)
-    }
-
-    /// 创建 OCR 服务（指定模型类型）
-    pub fn with_model_type(data_dir: &Path, model_type: ModelType) -> Result<Self, OcrError> {
-        info!("初始化 OCR 服务, data_dir={:?}, model_type={}", data_dir, model_type);
+        info!("初始化 OCR 服务, data_dir={:?}", data_dir);
 
         let models_dir = data_dir.join("models");
 
@@ -331,33 +325,17 @@ impl OcrService {
 
         let model_manager = Arc::new(ModelManager::new(models_dir));
 
-        info!("OCR 服务初始化成功（模型延迟加载）");
+        info!("OCR 服务初始化成功（模型延迟加载，使用 Balanced 模型）");
 
         Ok(Self {
             model_manager,
             ocr: None,
-            model_type,
         })
-    }
-
-    /// 设置模型类型（需要重新加载模型）
-    pub fn set_model_type(&mut self, model_type: ModelType) {
-        if self.model_type != model_type {
-            info!("切换模型类型: {} -> {}", self.model_type, model_type);
-            // 卸载当前模型
-            self.unload_ocr();
-            self.model_type = model_type;
-        }
-    }
-
-    /// 获取当前模型类型
-    pub fn model_type(&self) -> ModelType {
-        self.model_type
     }
 
     /// 获取 OCR 状态
     pub fn get_status(&self) -> OcrStatus {
-        let status = self.model_manager.check_models(self.model_type);
+        let status = self.model_manager.check_models(ModelType::Balanced);
 
         OcrStatus {
             available: self.ocr.is_some(),
@@ -374,7 +352,7 @@ impl OcrService {
 
     /// 检查模型文件是否存在
     pub fn check_models(&self) -> bool {
-        self.model_manager.check_models(self.model_type).ready
+        self.model_manager.check_models(ModelType::Balanced).ready
     }
 
     /// 初始化 OCR（加载模型）
@@ -384,7 +362,7 @@ impl OcrService {
             return Ok(());
         }
 
-        let status = self.model_manager.check_models(self.model_type);
+        let status = self.model_manager.check_models(ModelType::Balanced);
 
         if !status.ready {
             return Err(OcrError::ModelsMissing(format!(
@@ -395,19 +373,15 @@ impl OcrService {
 
         let models_dir = self.model_manager.models_dir();
 
-        let (det_name, rec_name, dict_name) = match self.model_type {
-            ModelType::Mobile => ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt"),
-            ModelType::Server => ("pp-ocrv5_server_det.onnx", "pp-ocrv5_server_rec.onnx", "ppocrv5_dict.txt"),
-            ModelType::Lite => ("pp-ocrv4_mobile_det.onnx", "pp-ocrv4_mobile_rec.onnx", "ppocr_keys_v1.txt"),
-            ModelType::Balanced => ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocr_keys_v1.txt"),
-        };
+        // 使用固定的 Balanced 模型
+        let (det_name, rec_name, dict_name) = ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocr_keys_v1.txt");
 
         let det_path = models_dir.join(det_name);
         let rec_path = models_dir.join(rec_name);
         let dict_path = models_dir.join(dict_name);
 
-        info!("加载 OCR 模型: type={}, det={:?}, rec={:?}, dict={:?}",
-            self.model_type, det_path, rec_path, dict_path);
+        info!("加载 OCR 模型: det={:?}, rec={:?}, dict={:?}",
+            det_path, rec_path, dict_path);
 
         let ocr = OAROCRBuilder::new(&det_path, &rec_path, &dict_path)
             .build()

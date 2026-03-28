@@ -1,25 +1,27 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showDownloadDialog } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, refreshOcrStatus } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
   import OcrModelSetup from './OcrModelSetup.svelte';
 
-  onMount(async () => {
-    await loadPdfs();
+  let isRefreshing = false;
+
+  onMount(() => {
+    loadPdfs();
 
     // 检查 OCR 模型状态
-    try {
-      const status = await getOcrStatus();
-      ocrModelStatus.set(status);
-    } catch (e) {
-      console.error('Failed to get OCR status:', e);
-    }
+    getOcrStatus()
+      .then(status => ocrModelStatus.set(status))
+      .catch(e => console.error('Failed to get OCR status:', e));
 
     // 监听 OCR 进度
-    const unlistenProgress = await listen<OcrProgress>('ocr-progress', (event) => {
+    let unlistenProgress: (() => void) | null = null;
+    let unlistenQueued: (() => void) | null = null;
+
+    listen<OcrProgress>('ocr-progress', (event) => {
       const progress = event.payload;
       ocrProgress.update(map => {
         map.set(progress.pdf_id, progress);
@@ -29,20 +31,20 @@
       if (progress.status === 'done' || progress.status === 'error') {
         loadPdfs();
       }
-    });
+    }).then(unlisten => unlistenProgress = unlisten);
 
     // 监听排队事件
-    const unlistenQueued = await listen<{ pdf_id: number; position: number }>('ocr-queued', (event) => {
+    listen<{ pdf_id: number; position: number }>('ocr-queued', (event) => {
       console.log('OCR 任务已排队:', event.payload);
       refreshQueueStatus();
-    });
+    }).then(unlisten => unlistenQueued = unlisten);
 
     // 定期刷新队列状态
     const interval = setInterval(refreshQueueStatus, 3000);
 
     return () => {
-      unlistenProgress();
-      unlistenQueued();
+      unlistenProgress?.();
+      unlistenQueued?.();
       clearInterval(interval);
     };
   });
@@ -123,6 +125,21 @@
       } catch (e) {
         alert('删除失败: ' + e);
       }
+    }
+  }
+
+  async function handleRefresh() {
+    isRefreshing = true;
+    try {
+      const status = await refreshOcrStatus();
+      ocrModelStatus.set(status);
+      if (!status.models_ready) {
+        showDownloadDialog.set(true);
+      }
+    } catch (e) {
+      console.error('Refresh OCR status failed:', e);
+    } finally {
+      isRefreshing = false;
     }
   }
 
@@ -207,17 +224,36 @@
       PDF 文件
       <span class="count">{filteredPdfs.length} 个文档</span>
     </span>
-    <button class="add-btn" on:click={handleAddPdf}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="12" y1="5" x2="12" y2="19"/>
-        <line x1="5" y1="12" x2="19" y2="12"/>
-      </svg>
-      添加
-    </button>
+    <div class="header-actions">
+      <!-- OCR 模型状态和重新检测按钮 -->
+      <div class="model-status-area">
+        <OcrModelSetup />
+        <button
+          class="refresh-btn"
+          on:click={handleRefresh}
+          disabled={isRefreshing}
+          title={$ocrModelStatus?.models_ready ? '模型状态正常' : '重新检测模型'}
+        >
+          <svg class:spinning={isRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          </svg>
+          {#if $ocrModelStatus?.models_ready}
+            模型正常
+          {:else}
+            重新检测
+          {/if}
+        </button>
+      </div>
+      <button class="add-btn" on:click={handleAddPdf}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        添加
+      </button>
+    </div>
   </div>
-
-  <!-- OCR 模型设置 -->
-  <OcrModelSetup />
 
   {#if $isLoading}
     <div class="loading-state">
@@ -324,6 +360,57 @@
     font-size: 11px;
     font-weight: 400;
     color: var(--text-muted, #9ca3af);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .model-status-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: var(--bg-secondary, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary, #1f2937);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .refresh-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .refresh-btn svg.spinning {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .add-btn {

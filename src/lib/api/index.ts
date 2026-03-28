@@ -97,10 +97,10 @@ export interface OcrStatus {
   model_type: string;
 }
 
-export interface ModelTypeInfo {
-  value: string;
-  label: string;
-  memory: string;
+export interface DownloadProgress {
+  file: string;
+  current: number;
+  total: number;
 }
 
 export interface DownloadGuide {
@@ -109,26 +109,8 @@ export interface DownloadGuide {
   size: string;
 }
 
-export interface DownloadProgress {
-  file: string;
-  current: number;
-  total: number;
-}
-
 export async function getOcrStatus(): Promise<OcrStatus> {
   return invoke('get_ocr_status');
-}
-
-export async function getOcrModelTypes(): Promise<ModelTypeInfo[]> {
-  return invoke('get_ocr_model_types');
-}
-
-export async function getOcrModelType(): Promise<string> {
-  return invoke('get_ocr_model_type');
-}
-
-export async function setOcrModelType(modelType: string): Promise<void> {
-  return invoke('set_ocr_model_type', { modelType });
 }
 
 export async function refreshOcrStatus(): Promise<OcrStatus> {
