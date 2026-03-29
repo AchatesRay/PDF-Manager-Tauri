@@ -98,7 +98,7 @@ pub fn postprocess_text(text: &str) -> String {
 
     let punctuation_map = get_punctuation_map();
     let chars: Vec<char> = text.chars().collect();
-    let mut result = Vec::with_capacity(chars.len());
+    let mut result: Vec<char> = Vec::with_capacity(chars.len());
 
     let mut consecutive_newlines: u32 = 0;
 
