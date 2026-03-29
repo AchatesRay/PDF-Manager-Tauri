@@ -97,14 +97,14 @@ pub fn postprocess_text(text: &str) -> String {
     let text = fix_ocr_number_errors(text);
 
     let punctuation_map = get_punctuation_map();
-    let mut result = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = Vec::with_capacity(chars.len());
 
-    let mut prev_char = '\0';
     let mut consecutive_newlines: u32 = 0;
 
-    for ch in text.chars() {
+    for (i, ch) in chars.iter().enumerate() {
         // 跳过连续空行（最多保留一个空行）
-        if ch == '\n' {
+        if *ch == '\n' {
             consecutive_newlines += 1;
             if consecutive_newlines > 2 {
                 continue;
@@ -113,40 +113,59 @@ pub fn postprocess_text(text: &str) -> String {
             consecutive_newlines = 0;
         }
 
-        // 标点符号修正（英文标点 -> 中文标点）
-        let corrected = punctuation_map.get(&ch).copied().unwrap_or(ch);
-
-        // 特殊处理：句号（需要判断是否为小数点）
-        let corrected = if ch == '.' {
+        // 特殊处理：逗号（需要判断是否为千位分隔符）
+        let corrected = if *ch == ',' {
+            let prev_is_digit = if i > 0 {
+                chars[i - 1].is_ascii_digit()
+            } else {
+                false
+            };
+            let next_is_digit = if i + 1 < chars.len() {
+                chars[i + 1].is_ascii_digit()
+            } else {
+                false
+            };
+            // 数字中的逗号保持为英文逗号（千位分隔符）
+            if prev_is_digit && next_is_digit {
+                ','
+            } else {
+                '，'
+            }
+        } else if *ch == '.' {
             // 判断是否为小数点：前后都是数字
-            let prev_is_digit = result.chars().last().map_or(false, |c| c.is_ascii_digit());
-            // 由于我们已经遍历到当前字符，无法直接查看下一个字符
-            // 使用简化逻辑：如果前一个字符是数字，保持为英文句号（可能是小数点）
-            if prev_is_digit {
+            let prev_is_digit = result.last().map_or(false, |&c| c.is_ascii_digit());
+            let next_is_digit = if i + 1 < chars.len() {
+                chars[i + 1].is_ascii_digit()
+            } else {
+                false
+            };
+            // 小数点：前后都是数字时保持英文句号
+            if prev_is_digit && next_is_digit {
+                '.'
+            } else if prev_is_digit {
+                // 前是数字后不是：可能是句末的数字，保持英文句号
                 '.'
             } else {
                 '。'
             }
         } else {
-            corrected
+            punctuation_map.get(ch).copied().unwrap_or(*ch)
         };
 
         // 避免重复标点（保留中文标点）
-        if is_punctuation(corrected) && is_punctuation(prev_char) {
+        if is_punctuation(corrected) && result.last().map_or(false, |&c| is_punctuation(c)) {
+            let prev_char = *result.last().unwrap();
             if !is_ascii_punctuation(corrected) && is_ascii_punctuation(prev_char) {
                 result.pop();
                 result.push(corrected);
-                prev_char = corrected;
                 continue;
             }
         }
 
         result.push(corrected);
-        prev_char = corrected;
     }
 
-    // 清理首尾空白
-    result.trim().to_string()
+    result.into_iter().collect::<String>().trim().to_string()
 }
 
 /// 检查是否为标点符号
@@ -235,19 +254,44 @@ fn optimize_english_text(text: &str) -> String {
 }
 
 /// 规范化标点符号（统一使用全角）
+/// 特殊处理：数字中的逗号保持为英文逗号（千位分隔符）
 fn normalize_punctuation(text: &str) -> String {
-    text.chars()
-        .map(|ch| match ch {
-            ',' => '，',
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = Vec::with_capacity(chars.len());
+
+    for (i, ch) in chars.iter().enumerate() {
+        let corrected = match ch {
+            ',' => {
+                // 检查是否为数字中的千位分隔符
+                let prev_is_digit = if i > 0 {
+                    chars[i - 1].is_ascii_digit()
+                } else {
+                    false
+                };
+                let next_is_digit = if i + 1 < chars.len() {
+                    chars[i + 1].is_ascii_digit()
+                } else {
+                    false
+                };
+                // 如果前后都是数字，保持英文逗号（千位分隔符）
+                if prev_is_digit && next_is_digit {
+                    ','
+                } else {
+                    '，'
+                }
+            }
             ':' => '：',
             ';' => '；',
             '?' => '？',
             '!' => '！',
             '(' => '（',
             ')' => '）',
-            _ => ch,
-        })
-        .collect()
+            _ => *ch,
+        };
+        result.push(corrected);
+    }
+
+    result.into_iter().collect()
 }
 
 /// 检查是否为中文字符
@@ -313,5 +357,44 @@ mod tests {
         let input = "2026年l月2O日";
         let result = postprocess_text(input);
         assert!(result.contains("1月") || result.contains("20日"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_number_comma_preserved() {
+        // 数字中的逗号应保持为英文逗号（千位分隔符）
+        let input = "金额 1,000,000 元";
+        let result = postprocess_text(input);
+        assert!(result.contains("1,000,000"), "Expected '1,000,000' in '{}'", result);
+
+        // 单个数字逗号
+        let input2 = "数量 10,000 个";
+        let result2 = postprocess_text(input2);
+        assert!(result2.contains("10,000"), "Expected '10,000' in '{}'", result2);
+    }
+
+    #[test]
+    fn test_chinese_comma_conversion() {
+        // 非数字中的逗号应转换为中文逗号
+        let input = "你好,世界";
+        let result = postprocess_text(input);
+        assert!(result.contains('，'), "Expected '，' in '{}'", result);
+        assert!(!result.contains(','), "Should not contain English comma in '{}'", result);
+    }
+
+    #[test]
+    fn test_mixed_comma_handling() {
+        // 混合场景：数字逗号和文本逗号
+        let input = "价格 1,500 元，数量 100 个";
+        let result = postprocess_text(input);
+        assert!(result.contains("1,500"), "Expected '1,500' in '{}'", result);
+        assert!(result.contains('，'), "Expected '，' in '{}'", result);
+    }
+
+    #[test]
+    fn test_decimal_point_preserved() {
+        // 小数点应保持为英文句号
+        let input = "金额 3.14 元";
+        let result = postprocess_text(input);
+        assert!(result.contains("3.14"), "Expected '3.14' in '{}'", result);
     }
 }
