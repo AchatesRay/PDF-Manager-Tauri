@@ -384,6 +384,7 @@ impl OcrService {
             det_path, rec_path, dict_path);
 
         let ocr = OAROCRBuilder::new(&det_path, &rec_path, &dict_path)
+            .region_batch_size(4)  // 限制识别器批处理大小，避免内存溢出
             .build()
             .map_err(|e| {
                 error!("OCR 模型加载失败: {}", e);
