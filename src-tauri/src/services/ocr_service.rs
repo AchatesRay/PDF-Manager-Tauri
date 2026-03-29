@@ -310,7 +310,7 @@ pub struct OcrService {
 
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
-    /// 使用 Balanced 模型：Mobile 检测 + RepSVTR 识别，精度优于 Mobile，内存约 300MB
+    /// 使用 PP-OCRv5 Mobile 模型：速度快、内存约 150MB
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
         info!("初始化 OCR 服务, data_dir={:?}", data_dir);
 
@@ -325,7 +325,7 @@ impl OcrService {
 
         let model_manager = Arc::new(ModelManager::new(models_dir));
 
-        info!("OCR 服务初始化成功（模型延迟加载，使用 Balanced 模型）");
+        info!("OCR 服务初始化成功（模型延迟加载，使用 PP-OCRv5 Mobile 模型）");
 
         Ok(Self {
             model_manager,
@@ -373,8 +373,8 @@ impl OcrService {
 
         let models_dir = self.model_manager.models_dir();
 
-        // 使用固定的 Balanced 模型
-        let (det_name, rec_name, dict_name) = ("pp-ocrv5_mobile_det.onnx", "ch_repsvtr_rec.onnx", "ppocr_keys_v1.txt");
+        // 使用 PP-OCRv5 Mobile 模型
+        let (det_name, rec_name, dict_name) = ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt");
 
         let det_path = models_dir.join(det_name);
         let rec_path = models_dir.join(rec_name);

@@ -8,13 +8,13 @@ use tracing::{debug, error, info, warn};
 /// 模型类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelType {
-    /// 移动版：快速、低内存（约 500MB）
+    /// 移动版：PP-OCRv5 Mobile，快速、低内存（约 150MB）
     Mobile,
     /// 服务器版：高精度、高内存（约 1.5GB）
     Server,
     /// PP-OCRv4 轻量版：成熟稳定、低内存（约 200MB）
     Lite,
-    /// 平衡版：Mobile 检测 + RepSVTR 识别，精度优于 Mobile，内存约 300MB
+    /// 平衡版：PP-OCRv5 Mobile，速度快、低内存（约 150MB）
     Balanced,
 }
 
@@ -136,8 +136,8 @@ fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
                 size: 5_682, // ~5KB
             },
         ],
-        // 平衡版：Mobile 检测 + RepSVTR 识别
-        // 内存占用约 300MB，识别精度优于 Mobile 版
+        // 平衡版：PP-OCRv5 Mobile 模型
+        // 内存占用约 150MB，速度快，适合大多数场景
         ModelType::Balanced => vec![
             ModelFile {
                 name: String::from("pp-ocrv5_mobile_det.onnx"),
@@ -145,14 +145,14 @@ fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
                 size: 4_600_000, // ~4.6MB
             },
             ModelFile {
-                name: String::from("ch_repsvtr_rec.onnx"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ch_repsvtr_rec.onnx"),
-                size: 24_200_000, // ~24.2MB
+                name: String::from("pp-ocrv5_mobile_rec.onnx"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
+                size: 15_800_000, // ~15.8MB
             },
             ModelFile {
-                name: String::from("ppocr_keys_v1.txt"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocr_keys_v1.txt"),
-                size: 24_000, // ~24KB (6623 chars for RepSVTR)
+                name: String::from("ppocrv5_dict.txt"),
+                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
+                size: 5_682, // ~5KB
             },
         ],
     }
