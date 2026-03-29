@@ -133,7 +133,7 @@ pub fn postprocess_text(text: &str) -> String {
             }
         } else if *ch == '.' {
             // 判断是否为小数点：前后都是数字
-            let prev_is_digit = result.last().map_or(false, |&c| c.is_ascii_digit());
+            let prev_is_digit = result.last().map_or(false, |c| c.is_ascii_digit());
             let next_is_digit = if i + 1 < chars.len() {
                 chars[i + 1].is_ascii_digit()
             } else {
@@ -153,7 +153,7 @@ pub fn postprocess_text(text: &str) -> String {
         };
 
         // 避免重复标点（保留中文标点）
-        if is_punctuation(corrected) && result.last().map_or(false, |&c| is_punctuation(c)) {
+        if is_punctuation(corrected) && result.last().map_or(false, |c| is_punctuation(*c)) {
             let prev_char = *result.last().unwrap();
             if !is_ascii_punctuation(corrected) && is_ascii_punctuation(prev_char) {
                 result.pop();
