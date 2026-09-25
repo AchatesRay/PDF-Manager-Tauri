@@ -1,6 +1,7 @@
 # PDF Manager 优化方案（2026-09-24）
 
-> 状态：**Phase 0–4 全部完成**。CI 不添加（workflows 曾于 `9648c08` 被刻意移除）。
+> 状态：**Phase 0–4 全部完成并已 push**（`9648c08..0d16d3c`）。CI 不添加（workflows 曾于 `9648c08` 被刻意移除）。
+> 验证基线：`cargo check` 零警告 · `cargo test --lib` 57/57 · `npm run build` 通过。
 > 历史计划见 `docs/superpowers/plans/`（2026-03-26 OCR 优化、2026-03-27 OCR 重构），与本方案冲突处以本方案为准。
 
 ## 1. 项目画像
@@ -66,9 +67,19 @@
 
 - 事件驱动队列刷新；ocrProgress 最小更新；预览 LRU 缓存；CSP/devtools/shell 收紧
 
-### Phase 4 — 工程化 ✅
+### Phase 4 — 工程化 ✅ `0d16d3c`
 
 - 删 folder_service 空壳与 sauvola/deskew 死代码；修 README（平台/数据目录/更新日志）；版本 1.1.0；CI 不添加
+
+### Phase 5 — 未定义（2026-09-25 待用户拍板）
+
+方案原本只到 Phase 4。候选（按建议优先级）：
+
+1. **真机验收**（推荐先做）：多 PDF 连续 OCR 自动串行、force 重识别后旧词不可搜、folder 过滤结果数正确
+2. **拆大组件**：FolderTree ~684 行 / PdfList ~600 行
+3. 队列持久化（重启恢复 pending）
+4. 旧计划残余：可配置预处理（2026-03-26 Chunk 6）、OCR 单测套件（Chunk 7）
+5. 搜索测试偶发 flake 排查（`test_index_and_search` 曾 1 次失败，单跑/重跑通过）
 
 ## 4. 明确不做
 

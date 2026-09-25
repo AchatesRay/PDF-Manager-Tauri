@@ -23,13 +23,13 @@
 - **业务**：本地 PDF 管理 + 扫描件 OCR + 中文全文搜索（Tauri 2 / Rust / Svelte 4）
 - **目录**：
   - `src-tauri/src/commands/` — Tauri IPC（ocr/pdf/search/folder/settings）
-  - `src-tauri/src/services/` — ocr_service、pdf_service、search_service、task_queue、memory_monitor、model_manager、text_postprocess；`folder_service` 为空壳
-  - `src-tauri/src/db/` — rusqlite，`Db = Mutex<Connection>`；表 folders/pdfs/pdf_pages/settings
+  - `src-tauri/src/services/` — ocr_service、pdf_service、search_service、task_queue、memory_monitor、model_manager、text_postprocess（`folder_service` 已于 Phase 4 删除）
+  - `src-tauri/src/db/` — rusqlite，`Db = Mutex<Connection>`，WAL 模式；表 folders/pdfs/pdf_pages/settings；`pdf_pages(pdf_id,page_number)` 唯一索引
   - `src/lib/components/` — App、FolderTree、PdfList、PdfViewer、Search*、OcrModelSetup
   - `src/lib/api/index.ts`、`src/lib/stores/index.ts`
   - `docs/superpowers/` — 历史计划（2026-03-26 OCR 优化、2026-03-27 OCR 重构）
-  - `docs/optimization/2026-09-24-optimization-plan.md` — **现行优化方案**
-- **技术栈要点**：PP-OCRv5 Mobile 识别（检查/下载路径标 Balanced）、Tantivy+jieba 搜索（索引版本 "4"）、分块 1200/重叠 0.25/置信度 0.35
+  - `docs/optimization/2026-09-24-optimization-plan.md` — **现行优化方案（Phase 0–4 已完成并 push）**
+- **技术栈要点**：PP-OCRv5 Mobile 识别（运行时标识 Balanced，~300MB）、Tantivy+jieba 搜索（**索引版本 "5"**，folder_id INDEXED，重建时备份 `index.bak`）、分块 1200/重叠 0.25/置信度 0.35、ocrProgress 事件驱动（无轮询）
 
 ## 用户工作背景
 
