@@ -6,15 +6,18 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 
 /// 模型类型
+///
+/// 注意：`Mobile` 与 `Balanced` 加载**同一组** PP-OCRv5 Mobile 文件
+/// （det/rec + ppocrv5_dict.txt）；`Balanced` 为运行时默认与下载路径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelType {
-    /// 移动版：PP-OCRv5 Mobile，快速、低内存（约 150MB）
+    /// 移动版：PP-OCRv5 Mobile，快速、低内存（约 300MB）
     Mobile,
     /// 服务器版：高精度、高内存（约 1.5GB）
     Server,
     /// PP-OCRv4 轻量版：成熟稳定、低内存（约 200MB）
     Lite,
-    /// 平衡版：PP-OCRv5 Mobile，速度快、低内存（约 150MB）
+    /// 平衡版：与 Mobile 相同的 PP-OCRv5 Mobile 文件，运行时默认（约 300MB）
     Balanced,
 }
 

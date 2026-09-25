@@ -10,7 +10,7 @@
 
 - **文件夹管理** - 创建文件夹分类管理 PDF 文件，支持多级嵌套和自定义存储路径
 - **智能识别** - 自动检测 PDF 类型（文字型/扫描型），选择最优处理方式
-- **OCR 识别** - 使用 PP-OCRv5 Balanced 模型识别扫描版 PDF 中的内容，支持中文识别，内存占用约 300MB
+- **OCR 识别** - 使用 PP-OCRv5 Mobile 模型（运行时标识 Balanced）识别扫描版 PDF 中的内容，支持中文识别，内存占用约 300MB
 - **全文搜索** - 基于 Tantivy 和 jieba 的中文全文搜索，支持内容和文件名搜索
 - **PDF 预览** - 内置 PDF 预览器，支持页面渲染和缩放
 - **批量导入** - 支持单个文件、多文件、整个文件夹批量导入
@@ -38,10 +38,10 @@
 - 支持在线自动下载模型
 - 也可手动下载模型文件放到 `models` 目录
 
-模型文件（PP-OCRv5 Balanced）：
+模型文件（PP-OCRv5 Mobile，运行时标识 Balanced）：
 - `pp-ocrv5_mobile_det.onnx` - 文字检测模型
-- `ch_repsvtr_rec.onnx` - 文字识别模型
-- `ppocr_keys_v1.txt` - 字符字典
+- `pp-ocrv5_mobile_rec.onnx` - 文字识别模型
+- `ppocrv5_dict.txt` - 字符字典
 
 ## 使用方法
 

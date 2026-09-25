@@ -1,6 +1,6 @@
 [package]
 name = "pdf-manager"
-version = "0.1.0"
+version = "1.1.0"
 description = "PDF Manager with OCR"
 authors = ["you"]
 edition = "2021"
@@ -34,6 +34,8 @@ base64 = "0.22"
 
 # PaddleOCR
 oar-ocr = "0.6"
+# 钉住 ort：oar-ocr-core 0.6 依赖 rc.12 API；rc.13 删除 CPUExecutionProvider 会编译失败
+ort = "=2.0.0-rc.12"
 
 # HTTP 下载
 reqwest = { version = "0.12", features = ["json", "stream"] }

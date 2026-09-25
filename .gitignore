@@ -26,7 +26,10 @@ npm-debug.log*
 
 # Tauri
 src-tauri/WixTools
-src-tauri/Cargo.lock
+# 应用项目应提交 Cargo.lock 以保证可复现构建
+# src-tauri/Cargo.lock
+src-tauri/pdfium.dll
+src-tauri/gen/
 
 # Test
 coverage/

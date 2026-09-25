@@ -6,16 +6,16 @@ use tracing::{debug, info};
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// OCR 模型预估内存占用（字节）
+/// 实际加载文件（Mobile 与 Balanced 相同）：pp-ocrv5_mobile_det/rec.onnx + ppocrv5_dict.txt
 /// - Lite (PP-OCRv4 Mobile): ~200MB
-/// - Mobile (PP-OCRv5 Mobile): ~500MB
+/// - Mobile / Balanced (PP-OCRv5 Mobile): ~300MB
 /// - Server (PP-OCRv5 Server): ~1.5GB
-/// - Balanced (PP-OCRv5 Mobile Det + RepSVTR Rec): ~300MB
 pub fn get_model_memory(model_type: &ModelType) -> u64 {
     match model_type {
         ModelType::Lite => 200 * 1024 * 1024,      // ~200MB
-        ModelType::Mobile => 500 * 1024 * 1024,    // ~500MB
+        ModelType::Mobile => 300 * 1024 * 1024,    // ~300MB（与 Balanced 同文件）
         ModelType::Server => 1500 * 1024 * 1024,   // ~1.5GB
-        ModelType::Balanced => 300 * 1024 * 1024,  // ~300MB
+        ModelType::Balanced => 300 * 1024 * 1024,  // ~300MB（运行时默认）
     }
 }
 
@@ -166,15 +166,13 @@ mod tests {
 
     #[test]
     fn test_estimate_page_memory() {
-        // 500x500 图像
+        // 500x500 图像：(500²×4 + 500²×3) × 1.5 = 2.625MB
         let mem = estimate_page_memory(500);
-        // 应该大约是 (500*500*4 + 500*500*3) * 1.5 = 5.25MB
-        assert!(mem > 5_000_000 && mem < 6_000_000);
+        assert!(mem > 2_000_000 && mem < 3_500_000, "500x500 => {}", mem);
 
-        // 2000x2000 图像
+        // 2000x2000 图像：(2000²×4 + 2000²×3) × 1.5 = 42MB
         let mem = estimate_page_memory(2000);
-        // 应该大约是 (2000*2000*4 + 2000*2000*3) * 1.5 = 84MB
-        assert!(mem > 80_000_000 && mem < 90_000_000);
+        assert!(mem > 40_000_000 && mem < 45_000_000, "2000x2000 => {}", mem);
     }
 
     #[test]
@@ -193,7 +191,8 @@ mod tests {
     #[test]
     fn test_get_model_memory() {
         assert_eq!(get_model_memory(&ModelType::Lite), 200 * 1024 * 1024);
-        assert_eq!(get_model_memory(&ModelType::Mobile), 500 * 1024 * 1024);
+        // Mobile 与 Balanced 加载同一组 PP-OCRv5 Mobile 文件，内存估算一致
+        assert_eq!(get_model_memory(&ModelType::Mobile), 300 * 1024 * 1024);
         assert_eq!(get_model_memory(&ModelType::Server), 1500 * 1024 * 1024);
         assert_eq!(get_model_memory(&ModelType::Balanced), 300 * 1024 * 1024);
     }

@@ -310,7 +310,7 @@ pub struct OcrService {
 
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
-    /// 使用 PP-OCRv5 Mobile 模型：速度快、内存约 150MB
+    /// 使用 PP-OCRv5 Mobile 模型（与 ModelType::Balanced 同文件）：速度快、内存约 300MB
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
         info!("初始化 OCR 服务, data_dir={:?}", data_dir);
 

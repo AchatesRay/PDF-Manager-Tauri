@@ -175,7 +175,65 @@ pub fn get_memory_info() -> MemoryInfo {
     get_system_memory_info()
 }
 
+/// 读取单个 PDF 的 OCR 任务信息
+fn load_pdf_job_info(
+    db: &State<'_, Db>,
+    pdf_id: i64,
+) -> Result<(String, i32, String, Option<i64>), String> {
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    conn.query_row(
+        "SELECT storage_path, page_count, filename, folder_id FROM pdfs WHERE id = ?1",
+        rusqlite::params![pdf_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .map_err(|e| {
+        error!("PDF不存在 (pdf_id={}): {}", pdf_id, e);
+        format!("PDF不存在: {}", e)
+    })
+}
+
+/// 将 PDF 状态写入数据库
+fn set_pdf_status(
+    db: &State<'_, Db>,
+    pdf_id: i64,
+    status: &str,
+    error_message: Option<&str>,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    match error_message {
+        Some(msg) => {
+            conn.execute(
+                "UPDATE pdfs SET status = ?1, error_message = ?2, updated_at = datetime('now') WHERE id = ?3",
+                rusqlite::params![status, msg, pdf_id],
+            )
+            .map(|_| ())
+        }
+        None => {
+            conn.execute(
+                "UPDATE pdfs SET status = ?1, error_message = NULL, updated_at = datetime('now') WHERE id = ?2",
+                rusqlite::params![status, pdf_id],
+            )
+            .map(|_| ())
+        }
+    }
+    .map_err(|e| {
+        error!("更新PDF状态失败: pdf_id={}, {}", pdf_id, e);
+        format!("更新状态失败: {}", e)
+    })
+}
+
 /// 开始 OCR 处理
+///
+/// 队列语义：仅队首任务在此函数内循环执行；`complete` + `get_next` 后
+/// **由后端继续处理下一任务**，不依赖前端再次调用 `start_ocr`。
 #[tauri::command]
 pub async fn start_ocr(
     pdf_id: i64,
@@ -202,21 +260,8 @@ pub async fn start_ocr(
     info!("OCR 最大图像尺寸: {}", max_image_dimension);
 
     // 获取 PDF 信息
-    let (storage_path, page_count, filename, folder_id): (String, i32, String, Option<i64>) = {
-        let conn = db.lock().map_err(|e| {
-            error!("获取数据库锁失败: {}", e);
-            format!("数据库锁定失败: {}", e)
-        })?;
-
-        conn.query_row(
-            "SELECT storage_path, page_count, filename, folder_id FROM pdfs WHERE id = ?1",
-            rusqlite::params![pdf_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).map_err(|e| {
-            error!("PDF不存在 (pdf_id={}): {}", pdf_id, e);
-            format!("PDF不存在: {}", e)
-        })?
-    };
+    let (mut storage_path, mut page_count, mut filename, mut folder_id) =
+        load_pdf_job_info(&db, pdf_id)?;
 
     info!("PDF信息: filename={}, pages={}, storage={}", filename, page_count, storage_path);
 
@@ -246,6 +291,17 @@ pub async fn start_ocr(
             error!("重置状态失败: {}", e);
             format!("重置状态失败: {}", e)
         })?;
+
+        drop(conn);
+
+        // 同步删除搜索索引，避免 force 后仍能搜到旧文本
+        if let Ok(mut ss) = search_service.lock() {
+            if let Err(e) = ss.delete_pdf(pdf_id as u64) {
+                warn!("force 重识别时删除搜索索引失败: pdf_id={}, {}", pdf_id, e);
+            }
+        } else {
+            warn!("force 重识别时获取搜索服务锁失败，跳过索引清理");
+        }
     }
 
     // 获取模型类型并检查 OCR 服务是否可用
@@ -303,172 +359,170 @@ pub async fn start_ocr(
         }
     };
 
-    // 如果任务在队列中等待，直接返回成功（后续会自动处理）
+    // 如果任务在队列中等待，直接返回成功（当前运行中的任务结束后由后端调度）
     if position > 0 {
         return Ok(());
     }
 
-    // 任务立即开始执行
-    // 更新状态为 processing
-    {
-        let conn = db.lock().map_err(|e| {
-            error!("获取数据库锁失败: {}", e);
-            format!("数据库锁定失败: {}", e)
-        })?;
+    // 队首任务：循环处理直至队列耗尽（修复「只 emit 不调度」）
+    let mut current_pdf_id = pdf_id;
 
-        conn.execute(
-            "UPDATE pdfs SET status = 'processing', updated_at = datetime('now') WHERE id = ?1",
-            rusqlite::params![pdf_id],
-        ).map_err(|e| {
-            error!("更新PDF状态失败: {}", e);
-            format!("更新状态失败: {}", e)
-        })?;
-    }
+    loop {
+        // 更新状态为 processing
+        set_pdf_status(&db, current_pdf_id, "processing", None)?;
 
-    // 发送进度事件
-    let _ = app_handle.emit("ocr-progress", OcrProgress {
-        pdf_id,
-        current: 0,
-        total: page_count as u32,
-        status: "processing".to_string(),
-    });
-
-    let mut success_count = 0;
-    let mut error_count = 0;
-
-    // 处理每一页
-    for page_num in 1..=page_count {
-        info!("处理PDF页面: pdf_id={}, page={}/{}", pdf_id, page_num, page_count);
-
-        // 动态调整图像尺寸：如果内存紧张，降低渲染尺寸
-        let current_dimension = if crate::services::memory_monitor::is_low_memory() {
-            warn!("内存紧张，降低渲染尺寸: {} -> 500", max_image_dimension);
-            500
-        } else {
-            max_image_dimension
-        };
-
-        match process_page(
-            pdf_id,
-            page_num,
-            &storage_path,
-            &ocr_service,
-            &pdf_service,
-            &db,
-            &search_service,
-            &filename,
-            folder_id,
-            current_dimension,
-        ) {
-            Ok(_) => {
-                success_count += 1;
-                info!("页面处理成功: pdf_id={}, page={}", pdf_id, page_num);
-            }
-            Err(e) => {
-                error_count += 1;
-                error!("页面处理失败: pdf_id={}, page={}, 错误: {}", pdf_id, page_num, e);
-            }
-        }
-
-        // 显式释放内存：触发垃圾回收
-        // 在 Rust 中，drop 会释放内存，但实际释放时机取决于分配器
-        // 这里我们通过记录内存状态来监控
-        let mem_info = crate::services::memory_monitor::get_system_memory_info();
-        info!("内存状态: 可用={:.1}GB, 已用={:.1}%",
-            mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0,
-            mem_info.used_percent
-        );
-
-        // 发送进度
+        // 发送进度事件
         let _ = app_handle.emit("ocr-progress", OcrProgress {
-            pdf_id,
-            current: page_num as u32,
+            pdf_id: current_pdf_id,
+            current: 0,
             total: page_count as u32,
             status: "processing".to_string(),
         });
-    }
 
-    // 更新最终状态
-    let final_status = if error_count == 0 {
-        "done"
-    } else if success_count == 0 {
-        "error"
-    } else {
-        "done"
-    };
+        let mut success_count = 0;
+        let mut error_count = 0;
 
-    let error_message = if error_count > 0 {
-        Some(format!("{}个页面处理失败", error_count))
-    } else {
-        None
-    };
+        // 处理每一页
+        for page_num in 1..=page_count {
+            info!("处理PDF页面: pdf_id={}, page={}/{}", current_pdf_id, page_num, page_count);
 
-    {
-        let conn = db.lock().map_err(|e| {
-            error!("获取数据库锁失败: {}", e);
-            format!("数据库锁定失败: {}", e)
-        })?;
+            // 动态调整图像尺寸：如果内存紧张，降低渲染尺寸
+            let current_dimension = if crate::services::memory_monitor::is_low_memory() {
+                warn!("内存紧张，降低渲染尺寸: {} -> 500", max_image_dimension);
+                500
+            } else {
+                max_image_dimension
+            };
 
-        match error_message {
-            Some(ref msg) => {
-                conn.execute(
-                    "UPDATE pdfs SET status = ?1, error_message = ?2, updated_at = datetime('now') WHERE id = ?3",
-                    rusqlite::params![final_status, msg, pdf_id],
-                ).map_err(|e| format!("更新状态失败: {}", e))?;
+            match process_page(
+                current_pdf_id,
+                page_num,
+                &storage_path,
+                &ocr_service,
+                &pdf_service,
+                &db,
+                &search_service,
+                &filename,
+                folder_id,
+                current_dimension,
+            ) {
+                Ok(_) => {
+                    success_count += 1;
+                    info!("页面处理成功: pdf_id={}, page={}", current_pdf_id, page_num);
+                }
+                Err(e) => {
+                    error_count += 1;
+                    error!("页面处理失败: pdf_id={}, page={}, 错误: {}", current_pdf_id, page_num, e);
+                }
             }
-            None => {
-                conn.execute(
-                    "UPDATE pdfs SET status = ?1, error_message = NULL, updated_at = datetime('now') WHERE id = ?2",
-                    rusqlite::params![final_status, pdf_id],
-                ).map_err(|e| format!("更新状态失败: {}", e))?;
-            }
+
+            let mem_info = get_system_memory_info();
+            info!("内存状态: 可用={:.1}GB, 已用={:.1}%",
+                mem_info.available as f64 / 1024.0 / 1024.0 / 1024.0,
+                mem_info.used_percent
+            );
+
+            // 发送进度
+            let _ = app_handle.emit("ocr-progress", OcrProgress {
+                pdf_id: current_pdf_id,
+                current: page_num as u32,
+                total: page_count as u32,
+                status: "processing".to_string(),
+            });
         }
-    }
 
-    let _ = app_handle.emit("ocr-progress", OcrProgress {
-        pdf_id,
-        current: page_count as u32,
-        total: page_count as u32,
-        status: final_status.to_string(),
-    });
+        // 最终状态：任一页失败 → error（schema 无 partial，禁止部分失败标 done）
+        let final_status = if error_count == 0 { "done" } else { "error" };
+        let error_message = if error_count > 0 {
+            Some(format!(
+                "{}个页面处理失败（成功 {}/{}）",
+                error_count,
+                success_count,
+                page_count
+            ))
+        } else {
+            None
+        };
 
-    info!("OCR处理完成: pdf_id={}, filename={}, 成功={}, 失败={}", pdf_id, filename, success_count, error_count);
+        set_pdf_status(&db, current_pdf_id, final_status, error_message.as_deref())?;
 
-    // 标记任务完成，检查是否有排队任务
-    let has_queued_tasks = {
-        let mut queue = task_queue.lock().map_err(|e| {
-            error!("获取任务队列锁失败: {}", e);
-            format!("任务队列锁定失败: {}", e)
-        })?;
-        queue.complete(pdf_id);
-        let next_task = queue.get_next();
-        if let Some(next) = next_task {
-            info!("队列中有下一个任务: pdf_id={}", next.pdf_id);
+        let _ = app_handle.emit("ocr-progress", OcrProgress {
+            pdf_id: current_pdf_id,
+            current: page_count as u32,
+            total: page_count as u32,
+            status: final_status.to_string(),
+        });
+
+        info!(
+            "OCR处理完成: pdf_id={}, filename={}, 成功={}, 失败={}, status={}",
+            current_pdf_id, filename, success_count, error_count, final_status
+        );
+
+        // 标记当前任务完成，并取出下一任务（后端真正继续执行）
+        // 加载失败的任务标 error 后跳过，继续取更后面的任务
+        let mut next_loaded = false;
+        // 首轮需 complete 已处理完的 current；后续轮次 current 已是 get_next 设为 running 的失败任务
+        let mut need_complete = true;
+        while !next_loaded {
+            let next_task = {
+                let mut queue = task_queue.lock().map_err(|e| {
+                    error!("获取任务队列锁失败: {}", e);
+                    format!("任务队列锁定失败: {}", e)
+                })?;
+                if need_complete {
+                    queue.complete(current_pdf_id);
+                    need_complete = false;
+                }
+                queue.get_next()
+            };
+
+            let Some(next) = next_task else {
+                info!("队列已空，释放 OCR 模型以节省内存");
+                let mut ocr_svc = ocr_service.lock().map_err(|e| {
+                    error!("获取OCR服务锁失败: {}", e);
+                    format!("OCR服务锁定失败: {}", e)
+                })?;
+                ocr_svc.unload_ocr();
+                return Ok(());
+            };
+
+            info!("调度队列中下一任务: pdf_id={}", next.pdf_id);
             let _ = app_handle.emit("ocr-queued", serde_json::json!({
                 "pdf_id": next.pdf_id,
                 "position": 0
             }));
-            true
-        } else {
-            false
-        }
-    };
 
-    // 内存管理：如果没有排队任务，立即释放模型
-    {
-        if has_queued_tasks {
-            info!("有排队任务，保留 OCR 模型以加速后续处理");
-        } else {
-            info!("没有排队任务，立即释放 OCR 模型以节省内存");
-            let mut ocr_svc = ocr_service.lock().map_err(|e| {
-                error!("获取OCR服务锁失败: {}", e);
-                format!("OCR服务锁定失败: {}", e)
-            })?;
-            ocr_svc.unload_ocr();
+            match load_pdf_job_info(&db, next.pdf_id) {
+                Ok((sp, pc, fname, fid)) => {
+                    current_pdf_id = next.pdf_id;
+                    storage_path = sp;
+                    page_count = pc;
+                    filename = fname;
+                    folder_id = fid;
+                    info!("下一任务信息: filename={}, pages={}", filename, page_count);
+                    next_loaded = true;
+                }
+                Err(e) => {
+                    error!("加载下一 OCR 任务失败: pdf_id={}, {}", next.pdf_id, e);
+                    let _ = set_pdf_status(
+                        &db,
+                        next.pdf_id,
+                        "error",
+                        Some(&format!("加载任务信息失败: {}", e)),
+                    );
+                    let _ = app_handle.emit("ocr-progress", OcrProgress {
+                        pdf_id: next.pdf_id,
+                        current: 0,
+                        total: 0,
+                        status: "error".to_string(),
+                    });
+                    // get_next 已将该任务设为 running；下一轮 complete 它后再取下一个
+                    current_pdf_id = next.pdf_id;
+                    need_complete = true;
+                }
+            }
         }
     }
-
-    Ok(())
 }
 
 fn process_page(
