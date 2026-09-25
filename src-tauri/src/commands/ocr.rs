@@ -3,7 +3,7 @@ use crate::services::memory_monitor::{can_start_task, estimate_task_memory, get_
 use crate::services::model_manager::{DownloadGuide, ModelManager, ModelType};
 use crate::services::ocr_service::OcrService;
 use crate::services::pdf_service::PdfService;
-use crate::services::search_service::SearchService;
+use crate::services::search_service::{PageIndexEntry, SearchService};
 use crate::services::task_queue::{QueueStatus, TaskQueue};
 use crate::commands::settings::DEFAULT_OCR_MAX_IMAGE_DIMENSION;
 use serde::{Deserialize, Serialize};
@@ -234,8 +234,11 @@ fn set_pdf_status(
 ///
 /// 队列语义：仅队首任务在此函数内循环执行；`complete` + `get_next` 后
 /// **由后端继续处理下一任务**，不依赖前端再次调用 `start_ocr`。
+///
+/// 同步命令：无 `.await`，跑在 Tauri 命令线程池而非 async runtime，
+/// 避免长任务占用 tokio worker。
 #[tauri::command]
-pub async fn start_ocr(
+pub fn start_ocr(
     pdf_id: i64,
     force: Option<bool>,
     db: State<'_, Db>,
@@ -381,6 +384,8 @@ pub async fn start_ocr(
 
         let mut success_count = 0;
         let mut error_count = 0;
+        // 本 PDF 成功页缓冲：循环结束后一次 commit（替代每页 50MB writer）
+        let mut pending_index: Vec<PageIndexEntry> = Vec::new();
 
         // 处理每一页
         for page_num in 1..=page_count {
@@ -401,13 +406,15 @@ pub async fn start_ocr(
                 &ocr_service,
                 &pdf_service,
                 &db,
-                &search_service,
                 &filename,
                 folder_id,
                 current_dimension,
             ) {
-                Ok(_) => {
+                Ok(entry) => {
                     success_count += 1;
+                    if let Some(e) = entry {
+                        pending_index.push(e);
+                    }
                     info!("页面处理成功: pdf_id={}, page={}", current_pdf_id, page_num);
                 }
                 Err(e) => {
@@ -429,6 +436,19 @@ pub async fn start_ocr(
                 total: page_count as u32,
                 status: "processing".to_string(),
             });
+        }
+
+        // 批量写入搜索索引（单次 commit）
+        if !pending_index.is_empty() {
+            let mut search_svc = search_service.lock().map_err(|e| {
+                error!("获取搜索服务锁失败: {}", e);
+                format!("搜索服务锁定失败: {}", e)
+            })?;
+            if let Err(e) = search_svc.index_pages(&pending_index) {
+                warn!("批量索引失败: pdf_id={}, count={}, {}", current_pdf_id, pending_index.len(), e);
+            } else {
+                info!("批量索引成功: pdf_id={}, count={}", current_pdf_id, pending_index.len());
+            }
         }
 
         // 最终状态：任一页失败 → error（schema 无 partial，禁止部分失败标 done）
@@ -532,11 +552,10 @@ fn process_page(
     ocr_service: &State<'_, Mutex<OcrService>>,
     pdf_service: &State<'_, Mutex<PdfService>>,
     db: &State<'_, Db>,
-    search_service: &State<'_, Mutex<SearchService>>,
     filename: &str,
     folder_id: Option<i64>,
     max_image_dimension: u32,
-) -> Result<(), String> {
+) -> Result<Option<PageIndexEntry>, String> {
     debug!("渲染PDF页面: page={}, path={}, max_dimension={}", page_num, storage_path, max_image_dimension);
 
     // 渲染 PDF 页面为图像（使用动态尺寸）
@@ -594,24 +613,18 @@ fn process_page(
 
     debug!("OCR结果已保存: page={}, page_id={}", page_num, page_id);
 
-    // 添加到搜索索引
+    // 返回待批量索引条目（不在每页单独 commit）
     if page_id > 0 {
-        let mut search_svc = search_service.lock().map_err(|e| {
-            error!("获取搜索服务锁失败: {}", e);
-            format!("搜索服务锁定失败: {}", e)
-        })?;
-        match search_svc.index_page(
-            page_id as u64,
-            pdf_id as u64,
+        Ok(Some(PageIndexEntry {
+            page_id: page_id as u64,
+            pdf_id: pdf_id as u64,
             folder_id,
-            page_num as u32,
-            filename,
-            &text,
-        ) {
-            Ok(_) => info!("页面已添加到搜索索引: page_id={}, pdf_id={}", page_id, pdf_id),
-            Err(e) => warn!("添加搜索索引失败: page_id={}, 错误: {}", page_id, e),
-        }
+            page_number: page_num as u32,
+            filename: filename.to_string(),
+            content: text,
+        }))
+    } else {
+        warn!("page_id 获取失败，跳过索引: pdf_id={}, page={}", pdf_id, page_num);
+        Ok(None)
     }
-
-    Ok(())
 }

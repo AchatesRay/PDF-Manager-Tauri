@@ -47,6 +47,29 @@ impl PdfService {
             })
     }
 
+    /// 获取线程本地 Pdfium 实例（每线程绑定一次，避免每页重复 bind）
+    ///
+    /// PdfiumLibraryBindings 非 Send，故用 thread_local；文档仍按页加载
+    /// （PdfDocument 借用 Pdfium 生命周期，无法跨调用缓存）。
+    fn with_pdfium<R>(f: impl FnOnce(&Pdfium) -> R) -> Result<R, PdfError> {
+        thread_local! {
+            static PDFIUM: std::cell::OnceCell<Pdfium> = const { std::cell::OnceCell::new() };
+        }
+
+        PDFIUM
+            .with(|cell| {
+                let pdfium = match cell.get() {
+                    Some(p) => p,
+                    None => {
+                        let created = Self::create_pdfium()?;
+                        let _ = cell.set(created);
+                        cell.get().expect("OnceCell set just now")
+                    }
+                };
+                Ok(f(pdfium))
+            })
+    }
+
     /// 获取 PDF 页数
     pub fn page_count(&self, pdf_path: &Path) -> Result<u32, PdfError> {
         debug!("获取PDF页数: {:?}", pdf_path);
@@ -168,10 +191,20 @@ impl PdfService {
             return Err(PdfError::RenderError(format!("文件不存在: {}", pdf_path.display())));
         }
 
-        // 每次渲染创建新的 Pdfium 实例
-        // 这是为了避免线程安全问题 (PdfiumLibraryBindings 不是 Send)
-        let pdfium = Self::create_pdfium()?;
-        info!("Pdfium实例创建成功，开始渲染...");
+        // 线程本地复用 Pdfium 实例（每线程只 bind 一次）
+        // 文档仍按次加载：PdfDocument 借用 Pdfium，无法安全跨调用缓存
+        Self::with_pdfium(|pdfium| {
+            Self::render_with_pdfium(pdfium, pdf_path, page_num, max_dimension)
+        })?
+    }
+
+    fn render_with_pdfium(
+        pdfium: &Pdfium,
+        pdf_path: &Path,
+        page_num: u32,
+        max_dimension: u32,
+    ) -> Result<DynamicImage, PdfError> {
+        info!("使用线程本地 Pdfium 实例渲染...");
 
         // 打开 PDF 文档
         let document = pdfium
@@ -293,8 +326,10 @@ mod tests {
     #[test]
     fn test_detect_type_nonexistent_file() {
         let service = PdfService::new().unwrap();
+        // 文本提取失败时按设计回退为扫描型（不返回 Err）
         let result = service.detect_type(Path::new("/nonexistent/path/file.pdf"));
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), crate::models::PdfType::Scanned);
     }
 
     #[test]

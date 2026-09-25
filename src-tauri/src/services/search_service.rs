@@ -37,6 +37,17 @@ pub struct SearchService {
     jieba: Jieba,
 }
 
+/// 待索引页面（批量提交用）
+#[derive(Debug, Clone)]
+pub struct PageIndexEntry {
+    pub page_id: u64,
+    pub pdf_id: u64,
+    pub folder_id: Option<i64>,
+    pub page_number: u32,
+    pub filename: String,
+    pub content: String,
+}
+
 impl SearchService {
     fn create_schema() -> Schema {
         let mut builder = Schema::builder();
@@ -165,6 +176,93 @@ impl SearchService {
         matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
     }
 
+    /// 待索引页面（批量提交用）
+    fn build_document(&self, entry: &PageIndexEntry) -> TantivyDocument {
+        let page_id_field = self.schema.get_field("page_id").unwrap();
+        let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
+        let folder_id_field = self.schema.get_field("folder_id").unwrap();
+        let page_number_field = self.schema.get_field("page_number").unwrap();
+        let filename_field = self.schema.get_field("filename").unwrap();
+        let content_field = self.schema.get_field("content").unwrap();
+        let raw_content_field = self.schema.get_field("raw_content").unwrap();
+
+        let cleaned_content = Self::clean_ocr_text(&entry.content);
+        let tokens: Vec<String> = self
+            .jieba
+            .cut(&cleaned_content, true)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut doc = TantivyDocument::default();
+        doc.add_u64(page_id_field, entry.page_id);
+        doc.add_u64(pdf_id_field, entry.pdf_id);
+        if let Some(fid) = entry.folder_id {
+            doc.add_u64(folder_id_field, fid as u64);
+        }
+        doc.add_u64(page_number_field, entry.page_number as u64);
+        doc.add_text(filename_field, &entry.filename);
+
+        for token in &tokens {
+            doc.add_text(content_field, token);
+            if token.chars().count() > 1 {
+                for ch in token.chars() {
+                    if Self::is_chinese(ch) {
+                        doc.add_text(content_field, &ch.to_string());
+                    }
+                }
+            }
+        }
+
+        for ch in cleaned_content.chars() {
+            if Self::is_chinese(ch) {
+                doc.add_text(content_field, &ch.to_string());
+            }
+        }
+
+        doc.add_text(raw_content_field, &cleaned_content);
+        doc
+    }
+
+    /// 批量索引页面：单次 IndexWriter + 单次 commit（替代每页一次 50MB writer + commit）
+    pub fn index_pages(&mut self, entries: &[PageIndexEntry]) -> Result<(), SearchError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        debug!("批量索引页面: count={}", entries.len());
+
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = match self.index.writer(50_000_000) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("创建索引写入器失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        };
+
+        for entry in entries {
+            let doc = self.build_document(entry);
+            if let Err(e) = writer.add_document(doc) {
+                error!("添加文档失败: page_id={}, {}", entry.page_id, e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        match writer.commit() {
+            Ok(_) => info!("批量索引提交成功: count={}", entries.len()),
+            Err(e) => {
+                error!("提交索引失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        // 立即可见（默认 OnCommitWithDelay 有延迟）
+        if let Err(e) = self.reader.reload() {
+            warn!("刷新索引reader失败: {}", e);
+        }
+
+        Ok(())
+    }
+
     pub fn index_page(
         &mut self,
         page_id: u64,
@@ -177,86 +275,15 @@ impl SearchService {
         debug!("索引页面: page_id={}, pdf_id={}, filename={}, content_len={}",
             page_id, pdf_id, filename, content.len());
 
-        let mut writer: tantivy::IndexWriter<TantivyDocument> = match self.index.writer(50_000_000) {
-            Ok(w) => w,
-            Err(e) => {
-                error!("创建索引写入器失败: {}", e);
-                return Err(SearchError::IndexError(e));
-            }
+        let entry = PageIndexEntry {
+            page_id,
+            pdf_id,
+            folder_id,
+            page_number,
+            filename: filename.to_string(),
+            content: content.to_string(),
         };
-
-        let page_id_field = self.schema.get_field("page_id").unwrap();
-        let pdf_id_field = self.schema.get_field("pdf_id").unwrap();
-        let folder_id_field = self.schema.get_field("folder_id").unwrap();
-        let page_number_field = self.schema.get_field("page_number").unwrap();
-        let filename_field = self.schema.get_field("filename").unwrap();
-        let content_field = self.schema.get_field("content").unwrap();
-        let raw_content_field = self.schema.get_field("raw_content").unwrap();
-
-        // 清理 OCR 文本中的多余空格
-        let cleaned_content = Self::clean_ocr_text(content);
-
-        // 中文分词
-        let tokens: Vec<String> = self.jieba.cut(&cleaned_content, true).into_iter().map(|s| s.to_string()).collect();
-        info!("分词完成: {} tokens, 原始内容前100字符: {:?}, 清理后前100字符: {:?}",
-            tokens.len(),
-            &content.chars().take(100).collect::<String>(),
-            &cleaned_content.chars().take(100).collect::<String>());
-        debug!("分词结果前20个: {:?}", tokens.iter().take(20).collect::<Vec<_>>());
-
-        let mut doc = TantivyDocument::default();
-        doc.add_u64(page_id_field, page_id);
-        doc.add_u64(pdf_id_field, pdf_id);
-        if let Some(fid) = folder_id {
-            doc.add_u64(folder_id_field, fid as u64);
-        }
-        doc.add_u64(page_number_field, page_number as u64);
-        doc.add_text(filename_field, filename);
-
-        // 为每个分词结果添加一个 STRING 字段值
-        // STRING 字段会将整个值作为一个 term 存储
-        for token in &tokens {
-            doc.add_text(content_field, token);
-
-            // 【新增】为中文字符分词结果添加单字索引
-            // 这样搜索单个中文字符也能匹配
-            if token.chars().count() > 1 {
-                for ch in token.chars() {
-                    if Self::is_chinese(ch) {
-                        doc.add_text(content_field, &ch.to_string());
-                    }
-                }
-            }
-        }
-
-        // 【新增】额外添加所有中文字符的单字索引
-        // 确保即使分词结果不包含单字，也能搜索单字
-        for ch in cleaned_content.chars() {
-            if Self::is_chinese(ch) {
-                doc.add_text(content_field, &ch.to_string());
-            }
-        }
-
-        // 保存清理后的内容用于生成 snippet
-        doc.add_text(raw_content_field, &cleaned_content);
-
-        match writer.add_document(doc) {
-            Ok(_) => debug!("文档添加成功"),
-            Err(e) => {
-                error!("添加文档失败: {}", e);
-                return Err(SearchError::IndexError(e));
-            }
-        }
-
-        match writer.commit() {
-            Ok(_) => info!("页面索引成功: page_id={}, filename={}", page_id, filename),
-            Err(e) => {
-                error!("提交索引失败: {}", e);
-                return Err(SearchError::IndexError(e));
-            }
-        }
-
-        Ok(())
+        self.index_pages(std::slice::from_ref(&entry))
     }
 
     pub fn search(
@@ -524,7 +551,8 @@ mod tests {
         let (snippet, match_count) = SearchService::generate_snippet(content, "不存在", 10);
 
         assert!(snippet.ends_with("..."));
-        assert!(snippet.len() <= 15); // 10 chars + "..."
+        // 按字符数：max_len=10 + "..."；中文按字符截断而非字节
+        assert!(snippet.chars().count() <= 10 + 3);
         assert_eq!(match_count, 0);
     }
 
