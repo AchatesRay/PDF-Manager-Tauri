@@ -53,7 +53,8 @@ impl SearchService {
         let mut builder = Schema::builder();
         builder.add_u64_field("page_id", INDEXED | STORED);
         builder.add_u64_field("pdf_id", INDEXED | STORED);
-        builder.add_u64_field("folder_id", STORED);
+        // INDEXED：folder 过滤下推到查询层（v5 起）
+        builder.add_u64_field("folder_id", INDEXED | STORED);
         builder.add_u64_field("page_number", STORED);
         builder.add_text_field("filename", TEXT | STORED);
         // 使用 STRING 类型，每个分词作为一个独立的 term 存储
@@ -69,32 +70,48 @@ impl SearchService {
         let schema = Self::create_schema();
 
         // 索引版本文件，用于检测 schema 变化
+        // v5: folder_id 支持 INDEXED 查询下推
         let version_file = index_path.join(".version");
-        let current_version = "4"; // 更新版本号：增加单字索引支持
+        let current_version = "5";
 
-        // 检查版本是否匹配，不匹配则删除旧索引
-        let needs_rebuild = if version_file.exists() {
-            let existing_version = std::fs::read_to_string(&version_file).unwrap_or_default();
-            if existing_version != current_version {
-                info!("索引版本不匹配 ({} != {})，重建索引", existing_version, current_version);
-                true
-            } else {
-                false
-            }
+        let existing_version = if version_file.exists() {
+            Some(std::fs::read_to_string(&version_file).unwrap_or_default())
         } else {
-            // 没有版本文件，可能是旧版本或新安装
-            if index_path.exists() {
-                info!("未找到索引版本文件，重建索引");
+            None
+        };
+
+        // 检查版本是否匹配，不匹配则备份后重建（不直接删除）
+        let needs_rebuild = match &existing_version {
+            Some(v) if v == current_version => false,
+            Some(v) => {
+                info!("索引版本不匹配 ({} != {})，备份后重建", v, current_version);
                 true
-            } else {
-                false
+            }
+            None => {
+                if index_path.exists() && index_path.join("meta.json").exists() {
+                    info!("未找到索引版本文件但存在旧索引，备份后重建");
+                    true
+                } else {
+                    false
+                }
             }
         };
 
-        // 如果需要重建，删除旧索引目录
+        // 需要重建：备份旧目录到 index.bak，避免静默删库
         if needs_rebuild && index_path.exists() {
-            info!("删除旧索引目录: {:?}", index_path);
-            std::fs::remove_dir_all(index_path)?;
+            let backup_path = index_path.with_file_name("index.bak");
+            if backup_path.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&backup_path) {
+                    warn!("清理旧备份失败: {}", e);
+                }
+            }
+            match std::fs::rename(index_path, &backup_path) {
+                Ok(_) => info!("旧索引已备份至: {:?}", backup_path),
+                Err(e) => {
+                    warn!("备份旧索引失败，回退为删除: {}", e);
+                    std::fs::remove_dir_all(index_path).map_err(SearchError::IoError)?;
+                }
+            }
         }
 
         // 检查是否存在有效的 Tantivy 索引（需要 meta.json 文件）
@@ -115,7 +132,7 @@ impl SearchService {
 
         let reader = index.reader()?;
 
-        info!("搜索服务初始化成功");
+        info!("搜索服务初始化成功 (索引版本 {})", current_version);
         Ok(Self {
             index,
             reader,
@@ -328,9 +345,25 @@ impl SearchService {
             return Ok(Vec::new());
         }
 
-        let boolean_query = BooleanQuery::new(queries);
+        let content_query = BooleanQuery::new(queries);
 
-        let top_docs = match searcher.search(&boolean_query, &TopDocs::with_limit(limit)) {
+        // folder 过滤下推：查询层 Must 约束，避免先取 limit 再内存丢弃导致结果不足
+        let boolean_query: Box<dyn tantivy::query::Query> = match folder_id {
+            Some(target_fid) => {
+                let folder_field = self.schema.get_field("folder_id").unwrap();
+                let folder_term = TermQuery::new(
+                    Term::from_field_u64(folder_field, target_fid as u64),
+                    IndexRecordOption::Basic,
+                );
+                Box::new(BooleanQuery::new(vec![
+                    (Occur::Must, Box::new(content_query) as Box<dyn tantivy::query::Query>),
+                    (Occur::Must, Box::new(folder_term)),
+                ]))
+            }
+            None => Box::new(content_query),
+        };
+
+        let top_docs = match searcher.search(boolean_query.as_ref(), &TopDocs::with_limit(limit)) {
             Ok(docs) => docs,
             Err(e) => {
                 error!("执行搜索失败: {}", e);
@@ -372,12 +405,7 @@ impl SearchService {
                 .unwrap_or("")
                 .to_string();
 
-            // 文件夹过滤
-            if let Some(target_fid) = folder_id {
-                if fid != Some(target_fid) {
-                    continue;
-                }
-            }
+            // folder 已在查询层过滤，此处仅提取字段
 
             // 使用原始查询词生成 snippet 并高亮
             let (snippet, match_count) = Self::generate_snippet(&raw_content, query, 100);

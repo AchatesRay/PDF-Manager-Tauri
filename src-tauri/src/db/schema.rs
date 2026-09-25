@@ -52,4 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_pages_pdf ON pdf_pages(pdf_id);
 
 pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE folders ADD COLUMN storage_path TEXT",
+    // 去除 (pdf_id, page_number) 重复行（保留最小 id），再建唯一索引
+    "DELETE FROM pdf_pages WHERE id NOT IN (SELECT MIN(id) FROM pdf_pages GROUP BY pdf_id, page_number)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_pdf_page ON pdf_pages(pdf_id, page_number)",
 ];

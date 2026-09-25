@@ -52,6 +52,14 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
         }
     };
 
+    // WAL：读写并发更好（搜索读不阻塞 OCR 写）
+    // journal_mode 会返回查询结果，用 query_row 而非 pragma_update
+    match conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())) {
+        Ok(_) => debug!("SQLite WAL 模式已启用"),
+        Err(e) => warn!("启用 WAL 失败（继续使用默认 journal）: {}", e),
+    }
+    let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+
     match conn.execute_batch(SCHEMA) {
         Ok(_) => debug!("数据库Schema创建成功"),
         Err(e) => {
