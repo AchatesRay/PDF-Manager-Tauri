@@ -17,14 +17,14 @@
 - **外部阅读器** - 支持配置外部 PDF 阅读器打开文件
 - **OCR 统计** - 文件夹级别显示 OCR 处理进度
 - **可调节布局** - 左中右三栏布局可自由调节宽度
-- **跨平台** - 支持 Windows、macOS、Linux
+- **Windows 优先** - 当前打包目标为 Windows（NSIS）；后端为 Rust，具备跨平台潜力
 - **高性能** - Rust 后端，内存占用低，响应速度快
 
 ## 系统要求
 
 | 项目 | 要求 |
 |------|------|
-| 操作系统 | Windows 10/11, macOS 10.15+, Linux |
+| 操作系统 | Windows 10/11（当前发布平台） |
 | 磁盘 | 至少 1GB 可用空间（含 OCR 模型） |
 | 内存 | 建议 4GB 以上 |
 
@@ -79,10 +79,11 @@
 
 ## 数据存储
 
-所有数据存储在应用程序所在目录下：
-- `pdf-manager.db` - SQLite 数据库
+默认存储在应用程序所在目录，可在设置中改为自定义数据目录：
+
+- `pdf-manager.db` - SQLite 数据库（WAL 模式）
 - `pdfs/` - PDF 文件存储
-- `index/` - 搜索索引
+- `index/` - 搜索索引（schema 升级时旧索引备份为 `index.bak`）
 - `models/` - OCR 模型文件
 - `logs/` - 日志文件
 
@@ -97,15 +98,22 @@
 | 数据库 | SQLite (rusqlite) |
 | 搜索引擎 | Tantivy + jieba-rs |
 | PDF 处理 | lopdf, pdf-extract, pdfium |
-| OCR 引擎 | PP-OCRv5 Balanced (ONNX Runtime) |
+| OCR 引擎 | PP-OCRv5 Mobile (ONNX Runtime / oar-ocr) |
 
 ## 更新日志
 
 ### v1.1.0 (2026-03-28)
 
-- 切换 OCR 模型为 PP-OCRv5 Balanced 模型
+- 切换 OCR 模型为 PP-OCRv5 Mobile（运行时标识 Balanced）
 - 简化模型选择，固定使用 Balanced 模型
 - 优化模型状态检测和下载流程
+
+### 优化（2026-09-24，未升版本号）
+
+- Phase 0：OCR 队列后端真调度、部分失败标 error、force 清搜索索引
+- Phase 1：批量索引提交、Pdfium 线程本地复用、同步命令线程模型
+- Phase 2：索引安全重建（备份）、folder 查询下推、SQLite WAL、页面唯一索引
+- Phase 3：事件驱动队列刷新、预览页 LRU 缓存、CSP/权限收紧
 
 ### v1.0.0 (2026-03-24)
 

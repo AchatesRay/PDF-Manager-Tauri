@@ -1,4 +1,3 @@
-pub mod folder_service;
 pub mod memory_monitor;
 pub mod model_manager;
 pub mod ocr_service;

@@ -5,7 +5,7 @@
 
 ## 关键经验教训
 
-- **Sauvola 二值化默认必须关闭**：历史提交 `ee239eb` 已证明开启后 OCR 识别为 0 字符；`sauvola_threshold` / `detect_skew_angle` 现为死代码，勿在未验证前重新接入预处理主路径。
+- **Sauvola 二值化默认必须关闭**：历史提交 `ee239eb` 已证明开启后 OCR 识别为 0 字符。**Phase 4（2026-09）已删除** `sauvola_threshold` / `detect_skew_angle` 死代码，勿在未验证前重新引入预处理主路径。
 - **OCR 队列「假调度」**：`start_ocr` 完成后 `TaskQueue::get_next()` 只 `emit("ocr-queued")`，后端无人真正执行下一任务；前端也只 `refreshQueueStatus` 不触发 `startOcr`。批量 OCR 会卡在排队中。
 - **部分页失败勿标 done**：`commands/ocr.rs` 中 `success>0 && error>0` 曾标 `done`；schema 仅允许 `pending/processing/done/error`，部分失败应标 `error` 并带 `error_message`。
 - **force 重识别需同步删索引**：只 `DELETE FROM pdf_pages` 不够，必须 `search_service.delete_pdf`，否则 Tantivy 残留脏词。
@@ -15,6 +15,7 @@
 - **`.gitignore` 忽略 `src-tauri/Cargo.lock` 不当**：桌面应用应提交 lock 以保证可复现构建。
 - **ort 必须钉在 2.0.0-rc.12**：oar-ocr-core 0.6.3 依赖 rc.12 API；rc.13 删除 `CPUExecutionProvider` 导致编译失败。`Cargo.toml` 已加 `ort = "=2.0.0-rc.12"`，勿随意 `cargo update -p ort`。
 - **tauri `frontendDist: ../dist` 必须存在**：否则 `generate_context!` 编译报错；`npm install && npm run build` 或至少保留 `dist/` 目录。
+- **勿恢复 `.github/workflows`**：提交 `9648c08` 曾刻意移除 CI workflows，除非用户明确要求。
 
 ## 本工作区结构事实
 

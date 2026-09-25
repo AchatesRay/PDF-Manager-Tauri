@@ -1,6 +1,6 @@
 # PDF Manager 优化方案（2026-09-24）
 
-> 状态：**已确认执行路径** — 先回滚 `ocr_service.rs` / `pdf_service.rs` 半成品，本轮只修**队列调度**与**任务状态**；其余 Phase 按需继续。
+> 状态：**Phase 0–4 全部完成**。CI 不添加（workflows 曾于 `9648c08` 被刻意移除）。
 > 历史计划见 `docs/superpowers/plans/`（2026-03-26 OCR 优化、2026-03-27 OCR 重构），与本方案冲突处以本方案为准。
 
 ## 1. 项目画像
@@ -54,21 +54,21 @@
 
 **验收**：`cargo check` 通过；≥2 个 PDF 连续入队能自动串行跑完；有失败页时状态为 `error`。
 
-### Phase 1 — OCR/后端性能（后续）
+### Phase 1 — OCR/后端性能 ✅ `a3ad94f`
 
-- 后台 worker + 短锁；Pdfium 按文档缓存；IndexWriter 批量 commit；去重去 O(n²)；清理死代码（**不启用二值化**）
+- 批量索引、Pdfium 线程本地复用、同步命令线程模型
 
-### Phase 2 — 搜索与数据（后续）
+### Phase 2 — 搜索与数据 ✅ `2afb039`
 
-- 索引版本变更策略；folder 过滤下推；唯一索引；WAL
+- 索引 v5 安全重建（备份）；folder 过滤下推；唯一索引；WAL
 
-### Phase 3 — 前端（后续）
+### Phase 3 — 前端 ✅ `4cfdb9f`
 
-- 删 3s 轮询改事件驱动；ocrProgress 最小更新；预览页缓存；CSP/devtools/shell 权限收紧；拆大组件
+- 事件驱动队列刷新；ocrProgress 最小更新；预览 LRU 缓存；CSP/devtools/shell 收紧
 
-### Phase 4 — 工程化（后续）
+### Phase 4 — 工程化 ✅
 
-- CI；版本单一来源；修 README；删 folder_service 空壳
+- 删 folder_service 空壳与 sauvola/deskew 死代码；修 README（平台/数据目录/更新日志）；版本 1.1.0；CI 不添加
 
 ## 4. 明确不做
 
