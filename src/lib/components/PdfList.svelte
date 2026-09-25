@@ -11,25 +11,50 @@
 
   onMount(() => {
     loadPdfs();
+    refreshQueueStatus();
 
     // 检查 OCR 模型状态
     getOcrStatus()
       .then(status => ocrModelStatus.set(status))
       .catch(e => console.error('Failed to get OCR status:', e));
 
-    // 监听 OCR 进度
+    // 监听 OCR 进度（事件驱动，无轮询）
     let unlistenProgress: (() => void) | null = null;
     let unlistenQueued: (() => void) | null = null;
 
+    // 每个 pdf 上一次已知状态，用于检测转换以触发列表/队列刷新
+    const lastStatus = new Map<number, string>();
+
     listen<OcrProgress>('ocr-progress', (event) => {
       const progress = event.payload;
+      const prev = lastStatus.get(progress.pdf_id);
+
+      // 最小更新：内容无变化则不触碰 store
       ocrProgress.update(map => {
-        map.set(progress.pdf_id, progress);
-        return map;
+        const old = map.get(progress.pdf_id);
+        if (
+          old &&
+          old.current === progress.current &&
+          old.total === progress.total &&
+          old.status === progress.status
+        ) {
+          return map;
+        }
+        const next = new Map(map);
+        next.set(progress.pdf_id, progress);
+        return next;
       });
 
-      if (progress.status === 'done' || progress.status === 'error') {
-        loadPdfs();
+      if (prev !== progress.status) {
+        lastStatus.set(progress.pdf_id, progress.status);
+
+        if (progress.status === 'done' || progress.status === 'error') {
+          loadPdfs();
+          refreshQueueStatus();
+        } else if (progress.status === 'processing') {
+          // 任务真正开跑时同步一次队列（替代原轮询）
+          refreshQueueStatus();
+        }
       }
     }).then(unlisten => unlistenProgress = unlisten);
 
@@ -39,13 +64,9 @@
       refreshQueueStatus();
     }).then(unlisten => unlistenQueued = unlisten);
 
-    // 定期刷新队列状态
-    const interval = setInterval(refreshQueueStatus, 3000);
-
     return () => {
       unlistenProgress?.();
       unlistenQueued?.();
-      clearInterval(interval);
     };
   });
 

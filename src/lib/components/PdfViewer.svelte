@@ -20,6 +20,34 @@
   let pendingJumpPage: number | null = null;
   let lastLoadedPdfId: number | null = null;
 
+  // 页面预览缓存：pdfId:page -> base64，避免来回翻页重复渲染
+  const pageCache = new Map<string, string>();
+  const PAGE_CACHE_LIMIT = 24;
+
+  function pageCacheKey(pdfId: number, page: number): string {
+    return `${pdfId}:${page}`;
+  }
+
+  function cachePage(pdfId: number, page: number, data: string) {
+    const key = pageCacheKey(pdfId, page);
+    // LRU：命中已存在则先删再插，维持插入顺序为最近使用
+    if (pageCache.has(key)) pageCache.delete(key);
+    pageCache.set(key, data);
+    while (pageCache.size > PAGE_CACHE_LIMIT) {
+      const oldest = pageCache.keys().next().value;
+      if (oldest === undefined) break;
+      pageCache.delete(oldest);
+    }
+  }
+
+  function clearPageCacheForPdf(pdfId: number | null) {
+    if (pdfId === null) return;
+    const prefix = `${pdfId}:`;
+    for (const key of [...pageCache.keys()]) {
+      if (key.startsWith(prefix)) pageCache.delete(key);
+    }
+  }
+
   $: if ($jumpToPage !== null && $jumpToPage >= 1) {
     pendingJumpPage = $jumpToPage;
     jumpToPage.set(null);
@@ -33,6 +61,7 @@
 
   $: if ($selectedPdfId && $selectedPdfId !== lastLoadedPdfId && pageCount > 0 && pendingJumpPage === null) {
     currentPage = 1;
+    clearPageCacheForPdf(lastLoadedPdfId);
     loadPage(currentPage);
   }
 
@@ -76,12 +105,31 @@
   async function loadPage(page: number) {
     if (!$selectedPdfId || page < 1 || page > pageCount) return;
 
+    const pdfId = $selectedPdfId!;
+    const key = pageCacheKey(pdfId, page);
+
+    // 命中缓存：直接展示，不重复调用后端渲染
+    const cached = pageCache.get(key);
+    if (cached) {
+      // 提升为最近使用
+      cachePage(pdfId, page, cached);
+      imageSrc = cached;
+      isLoading = false;
+      error = null;
+      lastLoadedPdfId = pdfId;
+      await tick();
+      updateContainerWidth();
+      return;
+    }
+
     isLoading = true;
     error = null;
-    lastLoadedPdfId = $selectedPdfId;
+    lastLoadedPdfId = pdfId;
 
     try {
-      imageSrc = await renderPdfPage($selectedPdfId!, page);
+      const rendered = await renderPdfPage(pdfId, page);
+      cachePage(pdfId, page, rendered);
+      imageSrc = rendered;
       await tick();
       updateContainerWidth();
     } catch (e) {

@@ -24,7 +24,6 @@ pub fn run() {
     info!("可执行文件目录: {:?}", exe_dir);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             info!("开始初始化应用");
