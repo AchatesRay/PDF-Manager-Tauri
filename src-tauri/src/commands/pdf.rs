@@ -124,18 +124,24 @@ pub fn add_pdf(
         format!("数据库锁定失败: {}", e)
     })?;
 
-    let storage_dir = if let Some(folder_path) = get_folder_storage_path(&conn, folder_id) {
+    // 持锁期间只读取数据库值；get_pdfs_dir() 内部会再次 lock(Db)（非可重入 std::sync::Mutex），
+    // 若在持锁时求值会造成同线程二次加锁自死锁，导致后续所有 IPC 永久挂起（P0-6）
+    let folder_path = get_folder_storage_path(&conn, folder_id);
+    let data_dir_setting = get_setting(&conn, SETTING_DATA_DIR).map(|p| PathBuf::from(p).join("pdfs"));
+    drop(conn);
+
+    let storage_dir = if let Some(folder_path) = folder_path {
         debug!("使用文件夹存储路径: {:?}", folder_path);
         folder_path
+    } else if let Some(data_dir) = data_dir_setting {
+        debug!("使用数据目录存储路径: {:?}", data_dir);
+        data_dir
     } else {
-        // 获取用户配置的数据目录
-        let data_dir = get_setting(&conn, SETTING_DATA_DIR)
-            .map(|p| PathBuf::from(p).join("pdfs"))
-            .unwrap_or_else(|| get_pdfs_dir(&app_handle));
+        // 锁已释放，此时回调 app_handle 取默认数据目录是安全的
+        let data_dir = get_pdfs_dir(&app_handle);
         debug!("使用数据目录存储路径: {:?}", data_dir);
         data_dir
     };
-    drop(conn);
 
     // 确保存储目录存在
     if !storage_dir.exists() {

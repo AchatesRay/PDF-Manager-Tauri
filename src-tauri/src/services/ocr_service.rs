@@ -159,6 +159,16 @@ fn enhance_contrast(image: &image::GrayImage) -> image::GrayImage {
         return image.clone();
     }
 
+    // 动态范围过小时拉伸无意义且有害：大面积留白的扫描件上，1% 阈值可能选出
+    // min=254/max=255 这类"伪范围"，1 级拉伸会把整页压成全黑，导致 OCR 输出为空（P0-7）
+    if (max_val as u32) - (min_val as u32) < 16 {
+        debug!(
+            "对比度增强跳过: 动态范围过小 (min={}, max={})",
+            min_val, max_val
+        );
+        return image.clone();
+    }
+
     // 应用拉伸
     let mut result = image::GrayImage::new(width, height);
     for y in 0..height {

@@ -588,6 +588,15 @@ fn process_page(
 
     info!("OCR识别成功: page={}, 文本长度={}", page_num, text.len());
 
+    // 空文本不再静默标 done：空白页合法，但大面积空白往往意味着预处理/尺寸问题（P0-7），
+    // 必须在日志留下可排查的告警信号
+    if text.trim().is_empty() {
+        warn!(
+            "OCR 结果为空白文本: pdf_id={}, page={}, max_dimension={}（若非空白页，请检查渲染尺寸与图像预处理）",
+            pdf_id, page_num, max_image_dimension
+        );
+    }
+
     // 保存到数据库
     let conn = db.lock().map_err(|e| {
         error!("获取数据库锁失败: {}", e);
