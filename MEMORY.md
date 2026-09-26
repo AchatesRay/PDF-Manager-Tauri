@@ -36,7 +36,8 @@
 
 - 偏好：先回滚不可靠半成品，再做正确性修复；动手前要求先更新记忆并落盘方案。
 - 沟通语言：中文。
-- **网络代理（用户指定）**：外网不可达时用 `http://proxy.lfk.qianxin-inc.cn:3128`（`curl -x` / `Invoke-WebRequest -Proxy`）。
+- **网络代理（用户指定，2026-09-26 实测）**：本机用 `http://127.0.0.1:7897`（git fetch/push 已验证通过）；`proxy.lfk.qianxin-inc.cn:3128` 属另一台机器配置，本机 DNS 不解析，勿用。git 走一次性参数 `git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 ...`（勿落盘配置）。
+- **Git 环境**：MinGit 2.55 位于 `%LOCALAPPDATA%\Programs\Git-MinGit\cmd`（已入用户 PATH）；`user.name/email` 未配置，commit 用一次性 `-c user.name=AchatesRay -c user.email=AchatesRay@users.noreply.github.com` 沿用历史作者。
 - **构建依赖**：`src-tauri/` 需存在 `pdfium.dll`（`tauri.conf.json` bundle.resources）；仓库不自带，需下载。
 
 ## 安全边界

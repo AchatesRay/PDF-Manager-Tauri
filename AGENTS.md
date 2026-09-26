@@ -10,7 +10,7 @@
 
 ## 本类专属规范（开发类）
 
-- **Rust 编译验证**：改 `src-tauri` 后执行 `cargo check`（需 PATH 含 `%USERPROFILE%\.cargo\bin`，以及 MSVC Build Tools）。
+- **Rust 编译验证**：改 `src-tauri` 后执行 `cargo check`（需 PATH 含 `%USERPROFILE%\.cargo\bin`；**cargo 前须先 `call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"`** 注入 link.exe/Windows SDK，否则链接失败）。
 - **OCR 回归红线**：禁止默认启用二值化/Sauvola 主路径（见 MEMORY.md 教训）。
 - **方案落盘**：用户要求执行优化/重构时，方案应写入 `docs/optimization/` 或 `docs/superpowers/` 后再改代码。
 
