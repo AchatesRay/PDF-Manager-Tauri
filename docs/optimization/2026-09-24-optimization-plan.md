@@ -101,8 +101,8 @@
 
 | 维度 | 终态 |
 |------|------|
-| 分支 | `main` = `df9a5ae` = `origin/main`（0/0 同步，工作树干净） |
-| 进度 | Phase 0–5 全部完成并 push（4 个 commit：`4d3360e` fix / `112c22d` docs / `ebec4ce` chore / `df9a5ae` docs） |
+| 分支 | `main` 与 `origin/main` 0/0 同步、工作树干净（时点 2026-09-26；head 以 `git log` 为准，本节不内嵌哈希以免自指过期） |
+| 进度 | Phase 0–5 全部完成并 push；修复类 commit `4d3360e`（P0-6/P0-7），其余为 docs/chore 收尾（全量见 `git log 7feb241..HEAD`） |
 | 缺陷 | P0-6 根级 add_pdf 自死锁、P0-7 预处理压黑 —— **已修复、已复验、已 push** |
 | 验证基线 | `cargo check` 零警告 · `cargo test --lib` 57/57 · `npm run build` 通过 · Phase 5 真机验收 9/9 PASS |
 | 交付物 | `Output/环境安装与OCR验证/`（验收报告 ×2、CDP 驱动器、harness、样本；受 `.gitignore` 保护） |
