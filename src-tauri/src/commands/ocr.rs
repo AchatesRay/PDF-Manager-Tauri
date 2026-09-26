@@ -1,14 +1,14 @@
-use crate::db::{Db, get_setting, SETTING_OCR_MAX_IMAGE_DIMENSION};
+use crate::db::{Db, get_setting, SETTING_OCR_MAX_IMAGE_DIMENSION, SETTING_OCR_PREPROCESS_MODE};
 use crate::services::memory_monitor::{can_start_task, estimate_task_memory, get_system_memory_info, MemoryInfo};
 use crate::services::model_manager::{DownloadGuide, ModelManager, ModelType};
-use crate::services::ocr_service::OcrService;
+use crate::services::ocr_service::{OcrService, PreprocessMode};
 use crate::services::pdf_service::PdfService;
 use crate::services::search_service::{PageIndexEntry, SearchService};
 use crate::services::task_queue::{QueueStatus, TaskQueue};
 use crate::commands::settings::DEFAULT_OCR_MAX_IMAGE_DIMENSION;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,16 +157,31 @@ pub fn get_ocr_queue_status(
 #[tauri::command]
 pub fn cancel_ocr_task(
     pdf_id: i64,
+    db: State<'_, Db>,
     task_queue: State<'_, Mutex<TaskQueue>>,
 ) -> Result<bool, String> {
     info!("取消OCR任务: pdf_id={}", pdf_id);
 
-    let mut queue = task_queue.lock().map_err(|e| {
-        error!("获取任务队列锁失败: {}", e);
-        format!("任务队列锁定失败: {}", e)
-    })?;
+    let cancelled = {
+        let mut queue = task_queue.lock().map_err(|e| {
+            error!("获取任务队列锁失败: {}", e);
+            format!("任务队列锁定失败: {}", e)
+        })?;
+        queue.cancel(pdf_id)
+    };
 
-    Ok(queue.cancel(pdf_id))
+    // 持久化同步：取消成功即从 ocr_queue 移除
+    if cancelled {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+        if let Err(e) = remove_queue_row(&conn, pdf_id) {
+            warn!("移除持久化任务失败: pdf_id={}, {}", pdf_id, e);
+        }
+    }
+
+    Ok(cancelled)
 }
 
 /// 获取系统内存信息
@@ -230,20 +245,143 @@ fn set_pdf_status(
     })
 }
 
+/// 持久化：任务入队成功后写入 ocr_queue（顺序号 = 当前最大 +1，完成后删行）
+fn insert_queue_row(conn: &rusqlite::Connection, pdf_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT OR IGNORE INTO ocr_queue (pdf_id, position, created_at)
+         VALUES (?1, (SELECT COALESCE(MAX(position), -1) + 1 FROM ocr_queue), datetime('now'))",
+        rusqlite::params![pdf_id],
+    )?;
+    Ok(())
+}
+
+/// 持久化：任务完成/取消/加载失败后移除
+fn remove_queue_row(conn: &rusqlite::Connection, pdf_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM ocr_queue WHERE pdf_id = ?1", rusqlite::params![pdf_id])?;
+    Ok(())
+}
+
+/// 宽松解析 ocr_queue.created_at（datetime('now') 为 `YYYY-MM-DD HH:MM:SS` UTC）
+fn parse_queue_created_at(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::TimeZone;
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|n| chrono::Utc.from_utc_datetime(&n))
+        })
+}
+
+/// 启动时恢复持久化 OCR 队列（T4）。
+///
+/// 步骤：① processing → pending（崩溃恢复）② 清理已删除/已完结 PDF 的队列行
+/// ③ 按 position 顺序装载到 TaskQueue（running 保持 None）。
+/// 返回恢复的 pdf_id 列表；调用方随后决定是否自动续跑。
+pub fn restore_persisted_queue(
+    conn: &rusqlite::Connection,
+    queue: &mut TaskQueue,
+) -> Vec<i64> {
+    // ① 崩溃恢复：上次执行中被打断的任务置回 pending
+    match conn.execute("UPDATE pdfs SET status = 'pending', error_message = NULL WHERE status = 'processing'", []) {
+        Ok(n) if n > 0 => info!("崩溃恢复: {} 个 processing 任务置回 pending", n),
+        Ok(_) => {}
+        Err(e) => warn!("重置 processing 状态失败: {}", e),
+    }
+
+    // ② 清理失效行：PDF 已不存在；或已 done/error（不自动重跑已完结任务）
+    if let Err(e) = conn.execute("DELETE FROM ocr_queue WHERE pdf_id NOT IN (SELECT id FROM pdfs)", []) {
+        warn!("清理失效队列行失败: {}", e);
+    }
+    if let Err(e) = conn.execute(
+        "DELETE FROM ocr_queue WHERE pdf_id IN (SELECT id FROM pdfs WHERE status NOT IN ('pending', 'processing'))",
+        [],
+    ) {
+        warn!("清理已完结队列行失败: {}", e);
+    }
+
+    // ③ 装载
+    let rows: Vec<(i64, String)> = match conn.prepare("SELECT pdf_id, created_at FROM ocr_queue ORDER BY position, created_at") {
+        Ok(mut stmt) => stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(e) => {
+            warn!("读取持久化队列失败: {}", e);
+            Vec::new()
+        }
+    };
+
+    if rows.is_empty() {
+        return Vec::new();
+    }
+
+    let tasks: Vec<crate::services::task_queue::OcrTask> = rows
+        .iter()
+        .map(|(pdf_id, created)| crate::services::task_queue::OcrTask {
+            pdf_id: *pdf_id,
+            created_at: parse_queue_created_at(created).unwrap_or_else(chrono::Utc::now),
+        })
+        .collect();
+    let ids: Vec<i64> = tasks.iter().map(|t| t.pdf_id).collect();
+
+    queue.restore(tasks);
+    info!("恢复持久化 OCR 队列: {:?}", ids);
+    ids
+}
+
+/// 应用启动时自动续跑恢复的队列（由 setup 后台线程调用）
+///
+/// 模型文件未就绪时不做任何处理：任务保留在持久化队列中等待用户下载模型，
+/// 不会被标 error（避免误伤），UI 队列状态可见。
+pub fn resume_ocr_queue(app_handle: tauri::AppHandle) {
+    info!("启动恢复：检查持久化 OCR 队列");
+
+    // 模型文件就绪才自动续跑
+    let models_ready = app_handle
+        .state::<Mutex<OcrService>>()
+        .lock()
+        .map(|svc| {
+            let st = svc.get_status();
+            st.models_ready || st.available
+        })
+        .unwrap_or(false);
+    if !models_ready {
+        warn!("OCR 模型未就绪，持久化队列保持等待（下载模型后任意一次 OCR 会继续调度）");
+        return;
+    }
+
+    // 取队首（置为 running）
+    let first = app_handle
+        .state::<Mutex<TaskQueue>>()
+        .lock()
+        .map(|mut q| q.get_next().map(|t| t.pdf_id))
+        .unwrap_or(None);
+    let Some(first) = first else {
+        debug!("无可恢复任务");
+        return;
+    };
+    info!("恢复执行 OCR 队列，队首 pdf_id={}", first);
+
+    // 与 start_ocr 共用工作线程主体（含致命错误兜底清理）
+    run_queue_worker(app_handle, first);
+}
+
 /// 开始 OCR 处理
 ///
-/// 队列语义：仅队首任务在此函数内循环执行；`complete` + `get_next` 后
-/// **由后端继续处理下一任务**，不依赖前端再次调用 `start_ocr`。
+/// 队列语义：命令内只做校验/清理/入队，**执行转交独立工作线程**（P0-9）；
+/// 工作线程内 `complete` + `get_next` 后由后端继续处理下一任务，
+/// 不依赖前端再次调用 `start_ocr`。
 ///
-/// 同步命令：无 `.await`，跑在 Tauri 命令线程池而非 async runtime，
-/// 避免长任务占用 tokio worker。
+/// 之所以不在命令内循环：同步命令是串行分发的，长任务会阻塞全部其它 IPC
+/// （UI 冻结、排队/取消不可达）——详见 `spawn_queue_worker` 注释。
 #[tauri::command]
 pub fn start_ocr(
     pdf_id: i64,
     force: Option<bool>,
     db: State<'_, Db>,
     ocr_service: State<'_, Mutex<OcrService>>,
-    pdf_service: State<'_, Mutex<PdfService>>,
     search_service: State<'_, Mutex<SearchService>>,
     task_queue: State<'_, Mutex<TaskQueue>>,
     app_handle: tauri::AppHandle,
@@ -262,9 +400,8 @@ pub fn start_ocr(
     };
     info!("OCR 最大图像尺寸: {}", max_image_dimension);
 
-    // 获取 PDF 信息
-    let (mut storage_path, mut page_count, mut filename, mut folder_id) =
-        load_pdf_job_info(&db, pdf_id)?;
+    // 获取 PDF 信息（日志、force 清理与内存估算使用）
+    let (storage_path, page_count, filename, _folder_id) = load_pdf_job_info(&db, pdf_id)?;
 
     info!("PDF信息: filename={}, pages={}, storage={}", filename, page_count, storage_path);
 
@@ -362,17 +499,216 @@ pub fn start_ocr(
         }
     };
 
+    // 持久化入队（T4：重启恢复 pending 任务；完成/取消/删除时删行）
+    {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+        if let Err(e) = insert_queue_row(&conn, pdf_id) {
+            warn!("持久化 OCR 任务失败（内存队列仍有效）: pdf_id={}, {}", pdf_id, e);
+        }
+    }
+
     // 如果任务在队列中等待，直接返回成功（当前运行中的任务结束后由后端调度）
     if position > 0 {
         return Ok(());
     }
 
-    // 队首任务：循环处理直至队列耗尽（修复「只 emit 不调度」）
-    let mut current_pdf_id = pdf_id;
+    // 队首任务：转交独立工作线程执行（P0-9）
+    //
+    // 本应用的同步命令是**串行分发**的（Phase 5 v2 实测：OCR 期间首次探测延迟=整轮 OCR 时长 9194ms，
+    // 其后样本才是 7~10ms——报告当时误读为「OCR 期间 IPC 无卡顿」）。若在命令内跑完整个队列：
+    //   ① OCR 期间所有其它 IPC（列表/排队/取消/设置）被阻塞 → UI 冻结；
+    //   ② 第二个 start_ocr 无法入队 → pending 队列、「排队中」、取消路径全部不可达。
+    // 转交工作线程后命令立即返回，分发线程恢复响应，队列语义（后端自动串行调度）保持不变。
+    spawn_queue_worker(app_handle, pdf_id);
+    Ok(())
+}
+
+/// 把队列执行转交独立工作线程（不占用命令分发线程）
+pub fn spawn_queue_worker(app_handle: tauri::AppHandle, head: i64) {
+    let spawned = std::thread::Builder::new()
+        .name(format!("ocr-worker-{}", head))
+        .spawn(move || run_queue_worker(app_handle, head));
+    match spawned {
+        Ok(_) => info!("OCR 工作线程已启动: head={}", head),
+        Err(e) => error!("启动 OCR 工作线程失败: head={}, {}", head, e),
+    }
+}
+
+/// 工作线程主体：执行队列循环；致命错误时兜底清理（防任务悬挂 / 重启后反复崩溃）。
+///
+/// 外层 catch_unwind：工作线程 panic 不会有人观察到（stderr 被丢弃），线程静默死亡后
+/// 任务永久卡在 processing —— 必须把 panic 转成日志 + 兜底清理。
+fn run_queue_worker(app_handle: tauri::AppHandle, head: i64) {
+    let handle_for_inner = app_handle.clone();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        run_queue_worker_inner(handle_for_inner, head)
+    }));
+    match result {
+        Ok(Ok(())) => debug!("OCR 工作线程正常结束: head={}", head),
+        Ok(Err(e)) => error!("OCR 工作线程异常: head={}, err={}", head, e),
+        Err(panic_payload) => {
+            let msg = panic_payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic")
+                .to_string();
+            error!("OCR 工作线程 PANIC（已捕获）: head={}, {}", head, msg);
+            // panic 时 inner 的 states 借用已失效，重新从 handle 取
+            fail_fast_worker_by_handle(&app_handle, head, &msg);
+        }
+    }
+}
+
+fn run_queue_worker_inner(app_handle: tauri::AppHandle, head: i64) -> Result<(), String> {
+    let db = app_handle.state::<Db>();
+    let ocr_service = app_handle.state::<Mutex<OcrService>>();
+    let pdf_service = app_handle.state::<Mutex<PdfService>>();
+    let search_service = app_handle.state::<Mutex<SearchService>>();
+    let task_queue = app_handle.state::<Mutex<TaskQueue>>();
+
+    let result = run_queue_loop(
+        head,
+        &db,
+        &ocr_service,
+        &pdf_service,
+        &search_service,
+        &task_queue,
+        &app_handle,
+    );
+    if let Err(ref e) = result {
+        error!("OCR 工作线程执行失败: head={}, err={}", head, e);
+        fail_fast_worker(&app_handle, &db, &task_queue, head, e);
+    }
+    result
+}
+
+/// panic 路径的兜底（重新从 handle 取 states，因为 panic 时 inner 的借用已失效）
+fn fail_fast_worker_by_handle(app_handle: &tauri::AppHandle, head: i64, err: &str) {
+    let db = app_handle.state::<Db>();
+    let task_queue = app_handle.state::<Mutex<TaskQueue>>();
+    fail_fast_worker(app_handle, &db, &task_queue, head, err);
+}
+
+/// 致命错误兜底：processing→error、清空内存队列与持久化队列、通知前端。
+/// 选择清空而非重试：模型缺失/磁盘故障等致命条件在本进程内不会自愈，
+/// 保留任务只会让重启后反复走进同一错误（崩溃环）。
+fn fail_fast_worker(
+    app_handle: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    task_queue: &State<'_, Mutex<TaskQueue>>,
+    head: i64,
+    err: &str,
+) {
+    let msg = format!("OCR 执行失败: {}", err);
+    match db.lock() {
+        Ok(conn) => {
+            let _ = conn.execute(
+                "UPDATE pdfs SET status = 'error', error_message = ?1 WHERE status = 'processing'",
+                rusqlite::params![msg],
+            );
+            let _ = conn.execute("DELETE FROM ocr_queue", []);
+        }
+        Err(e) => warn!("兜底清理获取数据库锁失败: {}", e),
+    }
+    if let Ok(mut q) = task_queue.lock() {
+        q.clear();
+    }
+    let _ = app_handle.emit("ocr-progress", OcrProgress {
+        pdf_id: head,
+        current: 0,
+        total: 0,
+        status: "error".to_string(),
+    });
+    warn!("OCR 工作线程兜底清理完成: head={}", head);
+}
+
+/// 队首任务执行循环：处理当前任务，完成后由后端取下一任务继续执行。
+///
+/// 前置条件：`first_pdf_id` 已由 `enqueue`/`get_next` 置为 running。
+#[allow(clippy::too_many_arguments)]
+fn run_queue_loop(
+    first_pdf_id: i64,
+    db: &State<'_, Db>,
+    ocr_service: &State<'_, Mutex<OcrService>>,
+    pdf_service: &State<'_, Mutex<PdfService>>,
+    search_service: &State<'_, Mutex<SearchService>>,
+    task_queue: &State<'_, Mutex<TaskQueue>>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    // 确保模型已加载（启动恢复路径没有 start_ocr 的前置检查）
+    {
+        let mut ocr_svc = ocr_service.lock().map_err(|e| {
+            error!("获取OCR服务锁失败: {}", e);
+            format!("OCR服务锁定失败: {}", e)
+        })?;
+        if !ocr_svc.is_available() {
+            if let Err(e) = ocr_svc.init_ocr() {
+                error!("OCR模型初始化失败: {}", e);
+                return Err(format!("OCR服务不可用: {}", e));
+            }
+        }
+        if !ocr_svc.is_available() {
+            error!("OCR服务不可用");
+            return Err("OCR服务不可用，请先下载模型文件".to_string());
+        }
+    }
+
+    // T6：读取并应用预处理模式（每次执行时读取，设置修改对下一任务生效）
+    let preprocess_mode = {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+        get_setting(&conn, SETTING_OCR_PREPROCESS_MODE)
+            .and_then(|v| PreprocessMode::parse(&v))
+            .unwrap_or_default()
+    };
+    if let Ok(mut ocr_svc) = ocr_service.lock() {
+        ocr_svc.set_preprocess_mode(preprocess_mode);
+    }
+    info!("OCR 预处理模式: {}", preprocess_mode.as_str());
+
+    let (mut storage_path, mut page_count, mut filename, mut folder_id) =
+        load_pdf_job_info(db, first_pdf_id)?;
+    info!(
+        "队首任务开始执行: pdf_id={}, filename={}, pages={}",
+        first_pdf_id, filename, page_count
+    );
+
+    // 每次执行时读取设置（启动恢复路径同样生效，设置修改对下一任务立即生效）
+    let max_image_dimension: u32 = {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+        get_setting(&conn, SETTING_OCR_MAX_IMAGE_DIMENSION)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_OCR_MAX_IMAGE_DIMENSION)
+    };
+    info!("OCR 最大图像尺寸: {}", max_image_dimension);
+
+    let mut current_pdf_id = first_pdf_id;
 
     loop {
+        // 每个任务开始前清理该 pdf 的旧索引：保证「索引 ⊆ 本次识别结果」，
+        // 并避免崩溃恢复重跑产生重复文档（原 force 独占清理改为通用不变式）
+        {
+            match search_service.lock() {
+                Ok(mut ss) => {
+                    if let Err(e) = ss.delete_pdf(current_pdf_id as u64) {
+                        warn!("清理旧索引失败: pdf_id={}, {}", current_pdf_id, e);
+                    }
+                }
+                Err(e) => warn!("清理旧索引时获取搜索服务锁失败: {}", e),
+            }
+        }
+
         // 更新状态为 processing
-        set_pdf_status(&db, current_pdf_id, "processing", None)?;
+        set_pdf_status(db, current_pdf_id, "processing", None)?;
 
         // 发送进度事件
         let _ = app_handle.emit("ocr-progress", OcrProgress {
@@ -403,9 +739,9 @@ pub fn start_ocr(
                 current_pdf_id,
                 page_num,
                 &storage_path,
-                &ocr_service,
-                &pdf_service,
-                &db,
+                ocr_service,
+                pdf_service,
+                db,
                 &filename,
                 folder_id,
                 current_dimension,
@@ -464,7 +800,7 @@ pub fn start_ocr(
             None
         };
 
-        set_pdf_status(&db, current_pdf_id, final_status, error_message.as_deref())?;
+        set_pdf_status(db, current_pdf_id, final_status, error_message.as_deref())?;
 
         let _ = app_handle.emit("ocr-progress", OcrProgress {
             pdf_id: current_pdf_id,
@@ -484,6 +820,7 @@ pub fn start_ocr(
         // 首轮需 complete 已处理完的 current；后续轮次 current 已是 get_next 设为 running 的失败任务
         let mut need_complete = true;
         while !next_loaded {
+            let mut completed_id: Option<i64> = None;
             let next_task = {
                 let mut queue = task_queue.lock().map_err(|e| {
                     error!("获取任务队列锁失败: {}", e);
@@ -491,18 +828,37 @@ pub fn start_ocr(
                 })?;
                 if need_complete {
                     queue.complete(current_pdf_id);
+                    completed_id = Some(current_pdf_id);
                     need_complete = false;
                 }
                 queue.get_next()
             };
 
-            let Some(next) = next_task else {
-                info!("队列已空，释放 OCR 模型以节省内存");
-                let mut ocr_svc = ocr_service.lock().map_err(|e| {
-                    error!("获取OCR服务锁失败: {}", e);
-                    format!("OCR服务锁定失败: {}", e)
+            // 持久化同步：完成的任务出队（锁外操作 DB，避免锁序交叉）
+            if let Some(cid) = completed_id {
+                let conn = db.lock().map_err(|e| {
+                    error!("获取数据库锁失败: {}", e);
+                    format!("数据库锁定失败: {}", e)
                 })?;
-                ocr_svc.unload_ocr();
+                if let Err(e) = remove_queue_row(&conn, cid) {
+                    warn!("移除持久化任务失败: pdf_id={}, {}", cid, e);
+                }
+            }
+
+            let Some(next) = next_task else {
+                // 仅在队列确实空闲时释放模型：若有新工作线程已接管（enqueue 已置 running），
+                // 卸载会让新线程重新加载模型（recognize 会自愈，但白费数秒）
+                let busy = task_queue.lock().map(|q| q.is_busy()).unwrap_or(false);
+                if busy {
+                    info!("队列已有新任务接管，跳过模型释放");
+                } else {
+                    info!("队列已空，释放 OCR 模型以节省内存");
+                    let mut ocr_svc = ocr_service.lock().map_err(|e| {
+                        error!("获取OCR服务锁失败: {}", e);
+                        format!("OCR服务锁定失败: {}", e)
+                    })?;
+                    ocr_svc.unload_ocr();
+                }
                 return Ok(());
             };
 
@@ -512,7 +868,7 @@ pub fn start_ocr(
                 "position": 0
             }));
 
-            match load_pdf_job_info(&db, next.pdf_id) {
+            match load_pdf_job_info(db, next.pdf_id) {
                 Ok((sp, pc, fname, fid)) => {
                     current_pdf_id = next.pdf_id;
                     storage_path = sp;
@@ -525,7 +881,7 @@ pub fn start_ocr(
                 Err(e) => {
                     error!("加载下一 OCR 任务失败: pdf_id={}, {}", next.pdf_id, e);
                     let _ = set_pdf_status(
-                        &db,
+                        db,
                         next.pdf_id,
                         "error",
                         Some(&format!("加载任务信息失败: {}", e)),
@@ -564,6 +920,7 @@ fn process_page(
             error!("获取PDF服务锁失败: {}", e);
             format!("PDF服务锁定失败: {}", e)
         })?;
+        info!("已获取PDF服务锁，开始渲染: page={}", page_num);
         pdf_svc.render_page_with_limit(std::path::Path::new(storage_path), page_num as u32, max_image_dimension)
             .map_err(|e| {
                 error!("渲染PDF页面失败: page={}, 错误: {}", page_num, e);
@@ -635,5 +992,101 @@ fn process_page(
     } else {
         warn!("page_id 获取失败，跳过索引: pdf_id={}, page={}", pdf_id, page_num);
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mem_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        conn
+    }
+
+    /// T4：入队顺序号单调递增、重复入队忽略、完成即删行
+    #[test]
+    fn test_queue_row_persistence() {
+        let conn = mem_conn();
+
+        insert_queue_row(&conn, 5).unwrap();
+        insert_queue_row(&conn, 6).unwrap();
+        insert_queue_row(&conn, 5).unwrap(); // 幂等：已存在不重排
+
+        let rows: Vec<(i64, i64)> = conn
+            .prepare("SELECT pdf_id, position FROM ocr_queue ORDER BY position")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rows, vec![(5, 0), (6, 1)]);
+
+        remove_queue_row(&conn, 5).unwrap();
+        insert_queue_row(&conn, 7).unwrap();
+        let rows: Vec<(i64, i64)> = conn
+            .prepare("SELECT pdf_id, position FROM ocr_queue ORDER BY position")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        // 5 已删，新任务 7 拿到 max+1 = 2，顺序语义保持
+        assert_eq!(rows, vec![(6, 1), (7, 2)]);
+    }
+
+    /// T4：启动恢复——崩溃 processing 置回 pending、done/孤儿行清理、按序装载
+    #[test]
+    fn test_restore_persisted_queue() {
+        let conn = mem_conn();
+        conn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (1, 'a.pdf', '/x/a.pdf', 'pending')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (2, 'b.pdf', '/x/b.pdf', 'processing')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (3, 'c.pdf', '/x/c.pdf', 'done')",
+            [],
+        ).unwrap();
+        conn.execute("INSERT INTO ocr_queue (pdf_id, position) VALUES (1, 0)", []).unwrap();
+        conn.execute("INSERT INTO ocr_queue (pdf_id, position) VALUES (2, 1)", []).unwrap();
+        conn.execute("INSERT INTO ocr_queue (pdf_id, position) VALUES (3, 2)", []).unwrap();
+        conn.execute("INSERT INTO ocr_queue (pdf_id, position) VALUES (99, 3)", []).unwrap(); // 孤儿行
+
+        let mut queue = TaskQueue::new();
+        let ids = restore_persisted_queue(&conn, &mut queue);
+        assert_eq!(ids, vec![1, 2], "done 与孤儿行不应恢复，顺序按 position");
+
+        // processing 已被崩溃恢复为 pending
+        let st: String = conn
+            .query_row("SELECT status FROM pdfs WHERE id = 2", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(st, "pending");
+
+        // 失效行已清理，仅剩 2 行
+        let cnt: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ocr_queue", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cnt, 2);
+
+        // 装载顺序正确且 running 未被占用（等待 resume 取队首）
+        assert_eq!(queue.len(), 2);
+        assert!(!queue.is_busy());
+        assert_eq!(queue.get_next().unwrap().pdf_id, 1);
+        queue.complete(1);
+        assert_eq!(queue.get_next().unwrap().pdf_id, 2);
+    }
+
+    /// 空队列恢复：不产生任何副作用
+    #[test]
+    fn test_restore_empty() {
+        let conn = mem_conn();
+        let mut queue = TaskQueue::new();
+        assert!(restore_persisted_queue(&conn, &mut queue).is_empty());
+        assert_eq!(queue.len(), 0);
     }
 }

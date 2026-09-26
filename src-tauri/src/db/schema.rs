@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- OCR 持久化任务队列（重启恢复 pending 任务）
+-- position = 入队时的顺序号（完成后删行，MAX(position)+1 保证恢复顺序）
+CREATE TABLE IF NOT EXISTS ocr_queue (
+    pdf_id INTEGER PRIMARY KEY,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_pdfs_folder ON pdfs(folder_id);
 CREATE INDEX IF NOT EXISTS idx_pdfs_status ON pdfs(status);

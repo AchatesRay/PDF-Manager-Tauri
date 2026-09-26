@@ -351,13 +351,21 @@ pub fn delete_pdf(
         .query_row("SELECT filename FROM pdfs WHERE id = ?1", params![pdf_id], |row| row.get(0))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    // 删除数据库记录
+    // 删除数据库记录（外键级联未开启，须显式清页面，避免孤儿行）
     match conn.execute("DELETE FROM pdfs WHERE id = ?1", params![pdf_id]) {
         Ok(rows) => debug!("删除了 {} 条PDF记录", rows),
         Err(e) => {
             error!("删除PDF记录失败 (id={}): {}", pdf_id, e);
             return Err(format!("数据库删除失败: {}", e));
         }
+    }
+    if let Err(e) = conn.execute("DELETE FROM pdf_pages WHERE pdf_id = ?1", params![pdf_id]) {
+        warn!("清理页面记录失败 (pdf_id={}): {}", pdf_id, e);
+    }
+
+    // 同步清理持久化 OCR 队列（避免重启恢复出已删除的 PDF）
+    if let Err(e) = conn.execute("DELETE FROM ocr_queue WHERE pdf_id = ?1", params![pdf_id]) {
+        warn!("清理持久化队列行失败 (pdf_id={}): {}", pdf_id, e);
     }
 
     drop(conn);

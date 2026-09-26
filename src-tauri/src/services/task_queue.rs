@@ -23,7 +23,8 @@ pub struct QueueStatus {
 ///
 /// 设计决策：
 /// - 单任务串行：一次只处理一个 PDF
-/// - 不持久化：重启后队列清空
+/// - 持久化：pending 任务落库 `ocr_queue` 表（见 db/schema.rs），重启由
+///   `restore` 装载后自动续跑；本结构本身仍保持纯内存（DB 访问在 commands 层）
 pub struct TaskQueue {
     /// 等待中的任务
     pending: VecDeque<OcrTask>,
@@ -38,6 +39,31 @@ impl TaskQueue {
             pending: VecDeque::new(),
             running: None,
         }
+    }
+
+    /// 启动时装载持久化任务（按给定顺序全部进入 pending，running 保持 None）
+    ///
+    /// 返回实际装载的任务数（去重后）。消费方随后应取队首任务开始执行。
+    pub fn restore(&mut self, tasks: Vec<OcrTask>) -> usize {
+        if self.running.is_some() {
+            warn!("队列已有运行中任务，restore 跳过: running={:?}", self.running);
+            return 0;
+        }
+
+        let mut restored = 0;
+        for task in tasks {
+            if self.pending.iter().any(|t| t.pdf_id == task.pdf_id) {
+                warn!("恢复任务已在队列中，跳过: pdf_id={}", task.pdf_id);
+                continue;
+            }
+            self.pending.push_back(task);
+            restored += 1;
+        }
+
+        if restored > 0 {
+            info!("恢复持久化任务 {} 个", restored);
+        }
+        restored
     }
 
     /// 将任务加入队列
@@ -165,6 +191,18 @@ impl TaskQueue {
     pub fn contains(&self, pdf_id: i64) -> bool {
         self.running == Some(pdf_id) || self.pending.iter().any(|t| t.pdf_id == pdf_id)
     }
+
+    /// 清空队列（工作线程致命错误时的兜底：放弃本次全部任务，避免重启后反复崩溃）
+    pub fn clear(&mut self) {
+        if let Some(cur) = self.running {
+            warn!("清空队列：放弃运行中任务 pdf_id={}", cur);
+        }
+        if !self.pending.is_empty() {
+            warn!("清空队列：放弃 {} 个排队任务", self.pending.len());
+        }
+        self.running = None;
+        self.pending.clear();
+    }
 }
 
 impl Default for TaskQueue {
@@ -237,5 +275,54 @@ mod tests {
         assert_eq!(queue.get_position(2), Some(1)); // 队列位置 1
         assert_eq!(queue.get_position(3), Some(2)); // 队列位置 2
         assert_eq!(queue.get_position(99), None); // 不存在
+    }
+
+    #[test]
+    fn test_restore_pending_tasks() {
+        let mut queue = TaskQueue::new();
+        let tasks = vec![
+            OcrTask { pdf_id: 7, created_at: Utc::now() },
+            OcrTask { pdf_id: 8, created_at: Utc::now() },
+        ];
+
+        // 恢复：全部进入 pending，running 仍为空（等待消费方取队首）
+        let restored = queue.restore(tasks);
+        assert_eq!(restored, 2);
+        assert!(!queue.is_busy());
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.get_position(7), Some(1));
+        assert_eq!(queue.get_position(8), Some(2));
+
+        // 去重：重复 pdf_id 不会二次入队
+        let again = queue.restore(vec![OcrTask { pdf_id: 7, created_at: Utc::now() }]);
+        assert_eq!(again, 0);
+        assert_eq!(queue.len(), 2);
+
+        // 恢复后按顺序消费：先 7 后 8
+        let first = queue.get_next().unwrap();
+        assert_eq!(first.pdf_id, 7);
+        assert!(queue.is_busy());
+        queue.complete(7);
+        let second = queue.get_next().unwrap();
+        assert_eq!(second.pdf_id, 8);
+    }
+
+    /// 致命错误兜底：clear 必须同时清空 running 与 pending
+    #[test]
+    fn test_clear() {
+        let mut queue = TaskQueue::new();
+        queue.enqueue(1).unwrap();
+        queue.enqueue(2).unwrap();
+        assert!(queue.is_busy());
+        assert_eq!(queue.len(), 1);
+
+        queue.clear();
+        assert!(queue.is_empty());
+        assert!(!queue.is_busy());
+        assert_eq!(queue.get_position(1), None);
+        assert_eq!(queue.get_position(2), None);
+
+        // clear 后可正常复用
+        assert_eq!(queue.enqueue(3), Ok(0));
     }
 }

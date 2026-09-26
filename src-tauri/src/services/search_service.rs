@@ -71,8 +71,9 @@ impl SearchService {
 
         // 索引版本文件，用于检测 schema 变化
         // v5: folder_id 支持 INDEXED 查询下推
+        // v6: 中文 bigram（双字滑窗）索引，支持任意子串查询（Q-1）
         let version_file = index_path.join(".version");
-        let current_version = "5";
+        let current_version = "6";
 
         let existing_version = if version_file.exists() {
             Some(std::fs::read_to_string(&version_file).unwrap_or_default())
@@ -193,6 +194,84 @@ impl SearchService {
         matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
     }
 
+    /// 把字符串拆成「连续中文段 / 非中文段」交替序列
+    /// 用于索引侧构建中文单字与 bigram、查询侧拆解混合 token
+    fn split_runs(s: &str) -> Vec<(bool, String)> {
+        let mut runs: Vec<(bool, String)> = Vec::new();
+        let mut current: Option<(bool, String)> = None;
+        for ch in s.chars() {
+            let is_cn = Self::is_chinese(ch);
+            match &mut current {
+                Some((flag, buf)) if *flag == is_cn => buf.push(ch),
+                Some(prev) => {
+                    runs.push(std::mem::replace(prev, (is_cn, ch.to_string())));
+                }
+                None => current = Some((is_cn, ch.to_string())),
+            }
+        }
+        if let Some(prev) = current {
+            runs.push(prev);
+        }
+        runs
+    }
+
+    /// 为一段中文（长度 ≥1）构建查询子句：
+    /// - 单字 → 单字 TermQuery
+    /// - 多字 → 所有相邻双字 bigram 的 Must 组合（任一子串必含其全部 bigram，
+    ///   因此索引了 bigram 后任意长度的中文子串查询都能命中，且不会误命中不相邻字）
+    fn build_chinese_query(content_field: Field, run: &str) -> Box<dyn tantivy::query::Query> {
+        let chars: Vec<char> = run.chars().collect();
+        if chars.len() == 1 {
+            let term = Term::from_field_text(content_field, &chars[0].to_string());
+            return Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+        }
+        let clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = chars
+            .windows(2)
+            .map(|w| {
+                let bigram: String = w.iter().collect();
+                let term = Term::from_field_text(content_field, &bigram);
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
+                        as Box<dyn tantivy::query::Query>,
+                )
+            })
+            .collect();
+        Box::new(BooleanQuery::new(clauses))
+    }
+
+    /// 为一个查询 token 构建内容字段子句（纯 ASCII → 精确 term；含中文 → 按段拆分）
+    fn build_token_query(&self, content_field: Field, token: &str) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
+        if !token.chars().any(Self::is_chinese) {
+            // 纯 ASCII / 标点：精确匹配（STRING 字段不分词不转小写，与旧行为一致）
+            let term = Term::from_field_text(content_field, token);
+            return vec![(
+                Occur::Should,
+                Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
+                    as Box<dyn tantivy::query::Query>,
+            )];
+        }
+
+        let mut out = Vec::new();
+        for (is_cn, run) in Self::split_runs(token) {
+            if run.trim().is_empty() {
+                continue;
+            }
+            if is_cn {
+                out.push((Occur::Should, Self::build_chinese_query(content_field, &run)));
+            } else if run.chars().any(|c| c.is_ascii_alphanumeric()) {
+                // 混合 token 中的 ASCII 片段（如「第3章」中的 "3"）仍按精确 term 匹配
+                let term = Term::from_field_text(content_field, &run);
+                out.push((
+                    Occur::Should,
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
+                        as Box<dyn tantivy::query::Query>,
+                ));
+            }
+        }
+        out
+    }
+
     /// 待索引页面（批量提交用）
     fn build_document(&self, entry: &PageIndexEntry) -> TantivyDocument {
         let page_id_field = self.schema.get_field("page_id").unwrap();
@@ -220,20 +299,29 @@ impl SearchService {
         doc.add_u64(page_number_field, entry.page_number as u64);
         doc.add_text(filename_field, &entry.filename);
 
+        // 1) jieba 整词：保留词级匹配与打分
         for token in &tokens {
             doc.add_text(content_field, token);
-            if token.chars().count() > 1 {
-                for ch in token.chars() {
-                    if Self::is_chinese(ch) {
-                        doc.add_text(content_field, &ch.to_string());
-                    }
-                }
-            }
         }
 
-        for ch in cleaned_content.chars() {
-            if Self::is_chinese(ch) {
-                doc.add_text(content_field, &ch.to_string());
+        // 2) 按连续段构建 n-gram（Q-1 中文子串搜索）：
+        //    中文段 → 逐字（单字查询）+ 滑窗 bigram（任意子串查询，跨 jieba 词边界）
+        //    ASCII 段 → 整串 term（不依赖 jieba 对英文的切分粒度）
+        for (is_cn, run) in Self::split_runs(&cleaned_content) {
+            if run.trim().is_empty() {
+                continue;
+            }
+            if is_cn {
+                let chars: Vec<char> = run.chars().collect();
+                for ch in &chars {
+                    doc.add_text(content_field, &ch.to_string());
+                }
+                for w in chars.windows(2) {
+                    let bigram: String = w.iter().collect();
+                    doc.add_text(content_field, &bigram);
+                }
+            } else if run.chars().any(|c| c.is_ascii_alphanumeric()) {
+                doc.add_text(content_field, &run);
             }
         }
 
@@ -320,7 +408,10 @@ impl SearchService {
         let tokens: Vec<String> = self.jieba.cut(query, true).into_iter().map(|s| s.to_string()).collect();
         info!("搜索查询分词: '{}' -> {:?}", query, tokens);
 
-        // 构建 BooleanQuery：每个分词结果作为一个 TermQuery，使用 Should 组合
+        // 构建 BooleanQuery：
+        // - 纯 ASCII token → 精确 TermQuery（旧行为）
+        // - 含中文 token → 按连续段拆分，中文段用「单字/全 bigram Must」子句（Q-1 子串查询）
+        // 每个子句之间用 Should（OR）组合，与旧行为一致
         let mut queries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
 
         for token in &tokens {
@@ -329,9 +420,7 @@ impl SearchService {
                 continue;
             }
             info!("添加搜索词: '{}'", token);
-            let term = Term::from_field_text(content_field, token);
-            let term_query = Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
-            queries.push((Occur::Should, term_query));
+            queries.extend(self.build_token_query(content_field, token));
         }
 
         // 也搜索文件名
@@ -424,6 +513,11 @@ impl SearchService {
 
         info!("搜索完成: query='{}', 结果数={}", query, results.len());
         Ok(results)
+    }
+
+    /// 索引中的文档（页）数量——用于判断索引是否为空（版本升级重建后的回填门控）
+    pub fn doc_count(&self) -> u64 {
+        self.reader.searcher().num_docs()
     }
 
     pub fn delete_pdf(&mut self, pdf_id: u64) -> Result<(), SearchError> {
@@ -689,5 +783,96 @@ mod tests {
 
         let results = service.search("人工智能", None, 10).unwrap();
         assert!(!results.is_empty());
+    }
+
+    /// Q-1 回归：jieba 整词精确匹配曾导致子串查询漏检（`北斗` 查不到「北斗七星」）
+    #[test]
+    fn test_chinese_substring_query() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        // 「北斗七星」在 jieba 中会被切成整词，查询「北斗」必须仍能命中
+        service
+            .index_page(1, 100, None, 1, "北斗专册.pdf", "北斗七星在夜空中格外明亮。")
+            .unwrap();
+        service
+            .index_page(2, 101, None, 1, "紫微星.pdf", "紫微星垣是另一片星域。")
+            .unwrap();
+
+        // 任意长度子串（含跨词边界）都应命中同一篇
+        for q in ["北斗", "斗七", "七星", "北斗七星", "夜空"] {
+            let hits = service.search(q, None, 10).unwrap();
+            assert!(
+                hits.iter().any(|h| h.pdf_id == 100),
+                "子串查询 '{}' 应命中北斗文档, got {:?}",
+                q,
+                hits.iter().map(|h| h.pdf_id).collect::<Vec<_>>()
+            );
+        }
+
+        // 不相关的查询不得误命中
+        let miss = service.search("银河", None, 10).unwrap();
+        assert!(miss.is_empty(), "不应命中: {:?}", miss);
+
+        // 单字查询仍可用
+        let single = service.search("紫", None, 10).unwrap();
+        assert!(single.iter().any(|h| h.pdf_id == 101));
+    }
+
+    /// 中文/ASCII 混合查询：英文词仍精确、中文子串仍可拆
+    #[test]
+    fn test_mixed_query_chinese_and_ascii() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+
+        let mut service = SearchService::open(&index_path).unwrap();
+        service
+            .index_page(
+                1,
+                100,
+                None,
+                1,
+                "mixed.pdf",
+                "配置单 NewTokenBeta 已归档到北斗专册",
+            )
+            .unwrap();
+
+        let hits = service.search("NewTokenBeta", None, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+
+        let hits = service.search("Token", None, 10).unwrap();
+        assert!(hits.is_empty(), "ASCII 词不匹配子串（未索引 ASCII n-gram）: {:?}", hits);
+
+        let hits = service.search("NewTokenBeta 北斗", None, 10).unwrap();
+        assert_eq!(hits.len(), 1, "混合查询应命中");
+    }
+
+    #[test]
+    fn test_clean_ocr_text() {
+        // 中文之间的空格被去除
+        assert_eq!(SearchService::clean_ocr_text("奇 安 信 集 团"), "奇安信集团");
+        // 英文/数字之间的空格保留
+        assert_eq!(SearchService::clean_ocr_text("Hello World 123"), "Hello World 123");
+        // 中英边界空格保留（中文之间的空格被去除）
+        assert_eq!(SearchService::clean_ocr_text("配置 单 ABC 配置"), "配置单 ABC 配置");
+    }
+
+    #[test]
+    fn test_split_runs() {
+        assert_eq!(
+            SearchService::split_runs("北斗ABC七星"),
+            vec![
+                (true, "北斗".to_string()),
+                (false, "ABC".to_string()),
+                (true, "七星".to_string()),
+            ]
+        );
+        assert_eq!(SearchService::split_runs(""), Vec::<(bool, String)>::new());
+        assert_eq!(
+            SearchService::split_runs("NewToken"),
+            vec![(false, "NewToken".to_string())]
+        );
     }
 }

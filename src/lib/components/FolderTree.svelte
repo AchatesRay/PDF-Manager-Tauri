@@ -1,10 +1,11 @@
 <script lang="ts">
   import { open, confirm } from '@tauri-apps/plugin-dialog';
   import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
-  import { getFolders, createFolder, deleteFolder, getSettings, setDataDir, resetDataDir, setPdfReader, setOcrMaxImageDimension } from '../api';
+  import { getFolders, createFolder, deleteFolder } from '../api';
   import { onMount, tick } from 'svelte';
   import FolderNode from './FolderNode.svelte';
-  import type { Folder, AppSettings } from '../api';
+  import SettingsPanel from './SettingsPanel.svelte';
+  import type { Folder } from '../api';
 
   interface TreeNode extends Folder {
     children: TreeNode[];
@@ -15,9 +16,7 @@
   let newFolderParentId: number | null = null;
   let selectedStoragePath: string | null = null;
   let showSettings = false;
-  let settings: AppSettings | null = null;
   let newFolderInput: HTMLInputElement;
-  let ocrDimensionInput: string = '';
 
   // 展开的文件夹 ID 集合
   let expandedFolders = new Set<number>();
@@ -42,9 +41,8 @@
 
   onMount(async () => {
     try {
-      // 只加载 folders，pdfList 由 PdfList 负责加载
+      // 只加载 folders，pdfList 由 PdfList 负责加载；设置面板自管设置加载
       folders.set(await getFolders());
-      settings = await getSettings();
     } catch (e) {
       console.error('Failed to load folders:', e);
     }
@@ -200,95 +198,6 @@
     selectedFolderId.set(id);
   }
 
-  async function selectDataDir() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: '选择数据存储目录',
-    });
-
-    if (selected) {
-      try {
-        await setDataDir(selected as string);
-        settings = await getSettings();
-        alert('数据目录已更新，重启应用后生效');
-      } catch (e) {
-        alert('设置失败: ' + e);
-      }
-    }
-  }
-
-  async function handleResetDataDir() {
-    const confirmed = await confirm('确定重置数据目录为默认值？', {
-      title: '确认重置',
-      kind: 'warning',
-    });
-
-    if (confirmed) {
-      try {
-        await resetDataDir();
-        settings = await getSettings();
-        alert('数据目录已重置，重启应用后生效');
-      } catch (e) {
-        alert('重置失败: ' + e);
-      }
-    }
-  }
-
-  async function selectPdfReader() {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: '可执行文件', extensions: ['exe'] }],
-      title: '选择PDF阅读器',
-    });
-
-    if (selected) {
-      try {
-        await setPdfReader(selected as string);
-        settings = await getSettings();
-        alert('PDF阅读器已设置');
-      } catch (e) {
-        alert('设置失败: ' + e);
-      }
-    }
-  }
-
-  async function clearPdfReader() {
-    const confirmed = await confirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。', {
-      title: '确认清除',
-      kind: 'warning',
-    });
-
-    if (confirmed) {
-      try {
-        await setPdfReader(null);
-        settings = await getSettings();
-        alert('PDF阅读器设置已清除');
-      } catch (e) {
-        alert('清除失败: ' + e);
-      }
-    }
-  }
-
-  async function saveOcrDimension() {
-    const dimension = parseInt(ocrDimensionInput, 10);
-    if (isNaN(dimension) || dimension < 500 || dimension > 4000) {
-      alert('请输入 500-4000 之间的数字');
-      return;
-    }
-    try {
-      await setOcrMaxImageDimension(dimension);
-      settings = await getSettings();
-      alert('OCR 图像尺寸已保存');
-    } catch (e) {
-      alert('保存失败: ' + e);
-    }
-  }
-
-  $: if (settings && !ocrDimensionInput) {
-    ocrDimensionInput = settings.ocr_max_image_dimension.toString();
-  }
-
   // 响应式计算 - 显式依赖 $pdfList 确保更新
   $: allStats = (() => {
     // 直接访问 $pdfList 确保响应式依赖
@@ -320,49 +229,7 @@
   </div>
 
   {#if showSettings}
-    <div class="settings-panel">
-      <div class="settings-title">存储设置</div>
-      <div class="settings-item">
-        <label>数据目录</label>
-        <div class="settings-path">{settings?.data_dir || '加载中...'}</div>
-        <div class="settings-actions">
-          <button on:click={selectDataDir}>选择目录</button>
-          <button class="secondary-btn" on:click={handleResetDataDir}>重置</button>
-        </div>
-      </div>
-      <div class="settings-item">
-        <label>日志目录</label>
-        <div class="settings-path">{settings?.log_dir || '加载中...'}</div>
-      </div>
-      <div class="settings-divider"></div>
-      <div class="settings-title">PDF阅读器</div>
-      <div class="settings-item">
-        <label>外部阅读器</label>
-        <div class="settings-path">{settings?.pdf_reader_path || '使用系统默认'}</div>
-        <div class="settings-actions">
-          <button on:click={selectPdfReader}>选择阅读器</button>
-          {#if settings?.pdf_reader_path}
-            <button class="secondary-btn" on:click={clearPdfReader}>清除</button>
-          {/if}
-        </div>
-      </div>
-      <div class="settings-divider"></div>
-      <div class="settings-title">OCR 设置</div>
-      <div class="settings-item">
-        <label>最大图像尺寸 (像素)</label>
-        <div class="settings-hint">控制 OCR 处理时的图像大小，较小值可减少内存占用。范围: 500-4000</div>
-        <div class="settings-row">
-          <input
-            type="number"
-            min="500"
-            max="4000"
-            bind:value={ocrDimensionInput}
-            placeholder="2000"
-          />
-          <button on:click={saveOcrDimension}>保存</button>
-        </div>
-      </div>
-    </div>
+    <SettingsPanel />
   {/if}
 
   <ul class="folder-list">
@@ -565,114 +432,7 @@
     color: #16a34a;
   }
 
-  .settings-panel {
-    background: var(--bg-tertiary, #f5f7f9);
-    border-bottom: 1px solid var(--border, #e5e7eb);
-    padding: 12px;
-    font-size: 12px;
-  }
-
-  .settings-title {
-    font-weight: 600;
-    color: var(--text-primary, #1f2937);
-    margin-bottom: 10px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-
-  .settings-item {
-    margin-bottom: 10px;
-  }
-
-  .settings-item label {
-    display: block;
-    color: var(--text-secondary, #6b7280);
-    margin-bottom: 4px;
-    font-size: 11px;
-  }
-
-  .settings-path {
-    background: var(--bg-secondary, #ffffff);
-    padding: 6px 10px;
-    border-radius: 6px;
-    word-break: break-all;
-    margin-bottom: 6px;
-    font-size: 11px;
-    color: var(--text-primary, #1f2937);
-    border: 1px solid var(--border-light, #f3f4f6);
-  }
-
-  .settings-actions {
-    display: flex;
-    gap: 6px;
-  }
-
-  .settings-actions button {
-    padding: 5px 10px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 11px;
-    background: var(--accent, #3b82f6);
-    color: white;
-    transition: background 0.15s;
-  }
-
-  .settings-actions button:hover {
-    background: #2563eb;
-  }
-
-  .settings-actions .secondary-btn {
-    background: var(--text-muted, #9ca3af);
-  }
-
-  .settings-divider {
-    height: 1px;
-    background: var(--border, #e5e7eb);
-    margin: 12px 0;
-  }
-
-  .settings-hint {
-    font-size: 10px;
-    color: var(--text-muted, #9ca3af);
-    margin-bottom: 6px;
-  }
-
-  .settings-row {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-
-  .settings-row input {
-    flex: 1;
-    padding: 5px 10px;
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 5px;
-    font-size: 11px;
-    background: var(--bg-secondary, #ffffff);
-  }
-
-  .settings-row input:focus {
-    outline: none;
-    border-color: var(--accent, #3b82f6);
-  }
-
-  .settings-row button {
-    padding: 5px 10px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 11px;
-    background: var(--accent, #3b82f6);
-    color: white;
-    transition: background 0.15s;
-  }
-
-  .settings-row button:hover {
-    background: #2563eb;
-  }
+  /* 设置面板样式已随组件拆分移至 SettingsPanel.svelte */
 
   .new-folder-item {
     display: flex;

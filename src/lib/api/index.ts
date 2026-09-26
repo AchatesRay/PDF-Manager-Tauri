@@ -158,11 +158,14 @@ export async function getMemoryInfo(): Promise<MemoryInfo> {
 }
 
 // Settings API
+export type PreprocessMode = 'auto' | 'off' | 'on';
+
 export interface AppSettings {
   data_dir: string;
   log_dir: string;
   pdf_reader_path: string | null;
   ocr_max_image_dimension: number;
+  ocr_preprocess_mode: PreprocessMode;
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -183,6 +186,10 @@ export async function setPdfReader(path: string | null): Promise<void> {
 
 export async function setOcrMaxImageDimension(dimension: number): Promise<void> {
   return invoke('set_ocr_max_image_dimension', { dimension });
+}
+
+export async function setOcrPreprocessMode(mode: PreprocessMode): Promise<void> {
+  return invoke('set_ocr_preprocess_mode', { mode });
 }
 
 export async function openPdfExternally(pdfPath: string): Promise<void> {

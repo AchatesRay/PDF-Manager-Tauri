@@ -1,4 +1,5 @@
-use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, SETTING_OCR_MAX_IMAGE_DIMENSION, default_data_dir};
+use crate::db::{Db, get_setting, set_setting, SETTING_DATA_DIR, SETTING_PDF_READER, SETTING_OCR_MAX_IMAGE_DIMENSION, SETTING_OCR_PREPROCESS_MODE, default_data_dir};
+use crate::services::ocr_service::PreprocessMode;
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,6 +18,8 @@ pub struct AppSettings {
     pub log_dir: String,
     pub pdf_reader_path: Option<String>,
     pub ocr_max_image_dimension: u32,
+    /// OCR 预处理模式：auto / off / on（T6）
+    pub ocr_preprocess_mode: String,
 }
 
 /// 获取应用设置
@@ -47,9 +50,14 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(DEFAULT_OCR_MAX_IMAGE_DIMENSION);
 
-    debug!("应用设置: data_dir={}, log_dir={}, pdf_reader_path={:?}, ocr_max_image_dimension={}",
-           data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension);
-    Ok(AppSettings { data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension })
+    // 非法值回退 auto（保证 UI 与后端口径一致）
+    let ocr_preprocess_mode = get_setting(&conn, SETTING_OCR_PREPROCESS_MODE)
+        .and_then(|v| PreprocessMode::parse(&v).map(|m| m.as_str().to_string()))
+        .unwrap_or_else(|| PreprocessMode::default().as_str().to_string());
+
+    debug!("应用设置: data_dir={}, log_dir={}, pdf_reader_path={:?}, ocr_max_image_dimension={}, ocr_preprocess_mode={}",
+           data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension, ocr_preprocess_mode);
+    Ok(AppSettings { data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension, ocr_preprocess_mode })
 }
 
 /// 设置数据目录
@@ -227,6 +235,32 @@ pub fn set_ocr_max_image_dimension(db: State<'_, Db>, dimension: u32) -> Result<
     }
 
     Ok(())
+}
+
+/// 设置 OCR 预处理模式（T6：auto=自动 / off=关闭 / on=强制增强）
+#[tauri::command]
+pub fn set_ocr_preprocess_mode(db: State<'_, Db>, mode: String) -> Result<(), String> {
+    info!("开始设置 OCR 预处理模式: {}", mode);
+
+    // 严格校验：非法值直接拒绝，不落库
+    let parsed = PreprocessMode::parse(&mode)
+        .ok_or_else(|| format!("无效的预处理模式 '{}'（可选: auto/off/on）", mode))?;
+
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    match set_setting(&conn, SETTING_OCR_PREPROCESS_MODE, parsed.as_str()) {
+        Ok(_) => {
+            info!("OCR 预处理模式已保存: {}", parsed.as_str());
+            Ok(())
+        }
+        Err(e) => {
+            error!("保存预处理模式失败: {}", e);
+            Err(format!("保存失败: {}", e))
+        }
+    }
 }
 
 /// 使用外部阅读器打开PDF

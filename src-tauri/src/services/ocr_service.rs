@@ -85,6 +85,43 @@ fn analyze_image_quality(image: &DynamicImage) -> ImageQuality {
     }
 }
 
+/// 预处理模式（T6：可配置预处理，设置键 `ocr_preprocess_mode`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PreprocessMode {
+    /// 自动：按图像质量决定是否增强（默认，历史行为）
+    Auto,
+    /// 关闭：原图直出，完全跳过预处理
+    Off,
+    /// 强制：总是做轻度对比度增强（仍受 P0-7 动态范围保护）
+    On,
+}
+
+impl Default for PreprocessMode {
+    fn default() -> Self {
+        PreprocessMode::Auto
+    }
+}
+
+impl PreprocessMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PreprocessMode::Auto => "auto",
+            PreprocessMode::Off => "off",
+            PreprocessMode::On => "on",
+        }
+    }
+
+    /// 严格解析：非法值返回 None（设置层用它校验）
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(PreprocessMode::Auto),
+            "off" => Some(PreprocessMode::Off),
+            "on" => Some(PreprocessMode::On),
+            _ => None,
+        }
+    }
+}
+
 /// 预处理图像以提高 OCR 识别正确率
 /// 根据图像质量动态选择预处理方式
 fn preprocess_image(image: &DynamicImage) -> DynamicImage {
@@ -108,22 +145,47 @@ fn preprocess_image(image: &DynamicImage) -> DynamicImage {
 
     // 低光照：亮度调整
     if quality.brightness < 100.0 {
-        // 简单的亮度调整
-        let rgb = image.to_rgb8();
-        let factor = 128.0 / quality.brightness as f64;
-        let enhanced: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
-            image::ImageBuffer::from_fn(rgb.width(), rgb.height(), |x, y| {
-                let pixel = rgb.get_pixel(x, y);
-                image::Rgb([
-                    (pixel[0] as f64 * factor).min(255.0) as u8,
-                    (pixel[1] as f64 * factor).min(255.0) as u8,
-                    (pixel[2] as f64 * factor).min(255.0) as u8,
-                ])
-            });
-        return DynamicImage::ImageRgb8(enhanced);
+        return enhance_brightness(image, quality.brightness);
     }
 
     image.clone()
+}
+
+/// 亮度提升（把平均亮度拉到 128）
+fn enhance_brightness(image: &DynamicImage, brightness: f32) -> DynamicImage {
+    let rgb = image.to_rgb8();
+    let factor = 128.0 / brightness.max(1.0) as f64;
+    let enhanced: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
+        image::ImageBuffer::from_fn(rgb.width(), rgb.height(), |x, y| {
+            let pixel = rgb.get_pixel(x, y);
+            image::Rgb([
+                ((pixel[0] as f64 * factor).min(255.0)) as u8,
+                ((pixel[1] as f64 * factor).min(255.0)) as u8,
+                ((pixel[2] as f64 * factor).min(255.0)) as u8,
+            ])
+        });
+    DynamicImage::ImageRgb8(enhanced)
+}
+
+/// 按模式应用预处理（纯函数入口，便于单测；T6）
+fn apply_preprocess(image: &DynamicImage, mode: PreprocessMode) -> DynamicImage {
+    match mode {
+        PreprocessMode::Off => {
+            debug!("预处理已关闭 (off)，原图直出");
+            image.clone()
+        }
+        PreprocessMode::Auto => preprocess_image(image),
+        PreprocessMode::On => {
+            let quality = analyze_image_quality(image);
+            // 强制增强：先对比度（enhance_contrast 自带 P0-7 动态范围保护），偏暗再提亮
+            let out = DynamicImage::ImageLuma8(enhance_contrast(&image.to_luma8()));
+            if quality.brightness < 100.0 {
+                enhance_brightness(&out, quality.brightness)
+            } else {
+                out
+            }
+        }
+    }
 }
 
 /// 轻度对比度增强
@@ -191,6 +253,136 @@ fn enhance_contrast(image: &image::GrayImage) -> image::GrayImage {
 pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
+    preprocess_mode: PreprocessMode,
+}
+
+/// 计算分块布局：返回 (x0, y0, x1, y1) 列表，**完整覆盖** [0,sw)×[0,sh)。
+///
+/// 两处根因修复：
+/// 1. **只做纵向全宽横带切分（x 恒为 [0,sw)）**：2D 方块分块会把超过分块宽度的
+///    横向文本行拦腰裁剪（dim=2000 时 A4 标题行 ~1225px > 1200px tile，
+///    `NewTokenBeta` 被切成 `NewTokenBe` —— 历史 Q-2 的真实根因）。改为横带后
+///    文本行只可能被上下边界截断，而行高 ≪ 重叠带宽（300px），任何行都完整落在
+///    至少一个横带内。
+/// 2. **数量向上取整改良**：旧 floor 公式 `((size-tile)/step + 1)` 会把右/下侧
+///    不足一个 step 的条带整块丢掉（1414×2000 旧版只覆盖左上 1200×1200）。
+fn compute_tiles(sw: u32, sh: u32, tile_size: u32, overlap: u32) -> Vec<(u32, u32, u32, u32)> {
+    let step = tile_size.saturating_sub(overlap).max(1);
+    let rows = if sh <= tile_size {
+        1
+    } else {
+        (sh - tile_size).div_ceil(step) + 1
+    };
+
+    let mut tiles = Vec::new();
+    for row in 0..rows {
+        // 末带贴边：y0 封顶在 sh - tile（row>0 时 sh>tile 保证不下溢）
+        let y0 = if row == 0 { 0 } else { (row * step).min(sh - tile_size) };
+        let y1 = (y0 + tile_size).min(sh);
+        if y0 < y1 {
+            tiles.push((0, y0, sw, y1));
+        }
+    }
+    tiles
+}
+
+/// 带整页坐标的识别区域（分块 OCR 结果合并用）
+#[derive(Debug, Clone, PartialEq)]
+struct OcrRegion {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    text: String,
+    conf: f32,
+}
+
+impl OcrRegion {
+    fn area(&self) -> f32 {
+        ((self.x1 - self.x0).max(0.0)) * ((self.y1 - self.y0).max(0.0))
+    }
+
+    /// 从识别区域构造：置信度 < MIN_CONFIDENCE 丢弃；分块局部坐标换算为整页坐标
+    fn from_text_region(
+        region: &TextRegion,
+        origin_x: f32,
+        origin_y: f32,
+        scale: f32,
+    ) -> Option<Self> {
+        let (text, conf) = region.text_with_confidence()?;
+        if conf < MIN_CONFIDENCE {
+            debug!("过滤低置信度文本: {} (置信度: {:.2})", text, conf);
+            return None;
+        }
+        let pts = &region.bounding_box.points;
+        if pts.is_empty() {
+            return None;
+        }
+        let min_x = pts.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+        let max_x = pts.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
+        let min_y = pts.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+        let max_y = pts.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
+
+        Some(Self {
+            x0: origin_x + min_x * scale,
+            y0: origin_y + min_y * scale,
+            x1: origin_x + max_x * scale,
+            y1: origin_y + max_y * scale,
+            text: text.to_string(),
+            conf,
+        })
+    }
+}
+
+/// 两区域是否为「同一条被相邻横带重复识别」：交叠面积 / 较小面积 ≥ 0.5
+fn is_duplicate_region(a: &OcrRegion, b: &OcrRegion) -> bool {
+    let ix = (a.x1.min(b.x1) - a.x0.max(b.x0)).max(0.0);
+    let iy = (a.y1.min(b.y1) - a.y0.max(b.y0)).max(0.0);
+    let inter = ix * iy;
+    if inter <= 0.0 {
+        return false;
+    }
+    let min_area = a.area().min(b.area());
+    min_area > 0.0 && inter / min_area >= 0.5
+}
+
+/// 合并分块识别结果：按阅读顺序排序 + 去除相邻横带的重复行。
+///
+/// 重复时**保留包围盒更大的那份**：被横带边界裁掉一半的行识别结果框更小，
+/// 完整识别的框覆盖整行——按面积取大即可保证「完整版胜出」。
+fn merge_regions(mut regions: Vec<OcrRegion>) -> Vec<OcrRegion> {
+    // 阅读顺序：行带（y0 归到 16px 带）优先，同行按 x
+    regions.sort_by(|a, b| {
+        let band_a = (a.y0 / 16.0).round() as i64;
+        let band_b = (b.y0 / 16.0).round() as i64;
+        band_a
+            .cmp(&band_b)
+            .then_with(|| a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
+    let mut kept: Vec<OcrRegion> = Vec::new();
+    for region in regions {
+        let dup_idx = kept.iter().position(|k| is_duplicate_region(k, &region));
+        match dup_idx {
+            Some(i) => {
+                // 完整（更大包围盒）的识别胜出
+                if region.area() > kept[i].area() {
+                    kept[i] = region;
+                }
+            }
+            None => kept.push(region),
+        }
+    }
+    kept
+}
+
+/// 从一批 predict 结果收集整页坐标区域（origin = 分块在整页中的偏移）
+fn collect_regions(results: &[OAROCRResult], origin_x: f32, origin_y: f32, scale: f32) -> Vec<OcrRegion> {
+    results
+        .iter()
+        .flat_map(|r| r.text_regions.iter())
+        .filter_map(|region| OcrRegion::from_text_region(region, origin_x, origin_y, scale))
+        .collect()
 }
 
 impl OcrService {
@@ -215,7 +407,21 @@ impl OcrService {
         Ok(Self {
             model_manager,
             ocr: None,
+            preprocess_mode: PreprocessMode::default(),
         })
+    }
+
+    /// 设置预处理模式（T6 可配置预处理）
+    pub fn set_preprocess_mode(&mut self, mode: PreprocessMode) {
+        if self.preprocess_mode != mode {
+            info!("OCR 预处理模式: {} -> {}", self.preprocess_mode.as_str(), mode.as_str());
+            self.preprocess_mode = mode;
+        }
+    }
+
+    /// 当前预处理模式
+    pub fn preprocess_mode(&self) -> PreprocessMode {
+        self.preprocess_mode
     }
 
     /// 获取 OCR 状态
@@ -308,9 +514,9 @@ impl OcrService {
             return self.recognize_with_tiling(image, max_dimension);
         }
 
-        // 小图像：应用预处理以提高识别正确率
-        let preprocessed = preprocess_image(image);
-        debug!("图像预处理完成");
+        // 小图像：按配置应用预处理以提高识别正确率（T6：auto/off/on 三模式）
+        let preprocessed = apply_preprocess(image, self.preprocess_mode);
+        debug!("图像预处理完成 (mode={})", self.preprocess_mode.as_str());
 
         // 小图像直接处理，带有内存不足重试
         let mut current_tile_size = TILE_MAX_DIMENSION;
@@ -390,6 +596,11 @@ impl OcrService {
     }
 
     /// 分块处理大图像
+    ///
+    /// 相对旧实现的两处根因修复：
+    /// 1. 分块数量改用 `compute_tiles`（向上取整）——旧公式 floor 会把右/下侧
+    ///    不足一个 step 的条带整块丢掉（1414×2000 旧版只处理左上 1200×1200）
+    /// 2. 结果按整页坐标合并 + 重叠去重——补齐覆盖后相邻分块的重叠区会重复识别
     fn recognize_with_tiling(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
         let ocr = self.ocr.as_ref().ok_or_else(|| {
             OcrError::OcrFailed("OCR 模型未初始化".to_string())
@@ -413,120 +624,76 @@ impl OcrService {
         // 分块重叠比例（避免文字被截断）- 使用常量 OVERLAP_RATIO = 0.25
         let tile_size = TILE_MAX_DIMENSION;
         let overlap = (tile_size as f32 * OVERLAP_RATIO) as u32;
-        let step = tile_size - overlap; // 实际步进距离
+        let tiles = compute_tiles(sw, sh, tile_size, overlap);
 
-        // 计算分块数量（考虑重叠）
-        let cols = if sw > tile_size { ((sw - tile_size) / step + 1) as usize } else { 1 };
-        let rows = if sh > tile_size { ((sh - tile_size) / step + 1) as usize } else { 1 };
+        info!("分块处理: {}x{} 图像分为 {} 块 (tile={}, 重叠 {}px)", sw, sh, tiles.len(), tile_size, overlap);
 
-        info!("分块处理: {}x{} 图像分为 {}x{} = {} 块 (重叠 {}px)", sw, sh, cols, rows, cols * rows, overlap);
-
-        let mut all_texts: Vec<String> = Vec::new();
+        let mut regions: Vec<OcrRegion> = Vec::new();
         let mut memory_retry_count = 0;
 
-        for row in 0..rows {
-            for col in 0..cols {
-                // 计算分块位置（带重叠）
-                let x0 = if col == 0 { 0 } else { (col as u32 * step).min(sw.saturating_sub(tile_size)) };
-                let y0 = if row == 0 { 0 } else { (row as u32 * step).min(sh.saturating_sub(tile_size)) };
-                let x1 = (x0 + tile_size).min(sw);
-                let y1 = (y0 + tile_size).min(sh);
+        for (idx, &(x0, y0, x1, y1)) in tiles.iter().enumerate() {
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
 
-                if x0 >= x1 || y0 >= y1 {
-                    continue;
-                }
+            debug!("处理分块 #{}: ({},{}) - ({},{})", idx, x0, y0, x1, y1);
 
-                debug!("处理分块 [{},{}]: ({},{}) - ({},{})", row, col, x0, y0, x1, y1);
+            // 裁剪分块
+            let tile = scaled.crop(x0, y0, x1 - x0, y1 - y0);
 
-                // 裁剪分块
-                let tile = scaled.crop(x0, y0, x1 - x0, y1 - y0);
+            // 带重试的识别
+            loop {
+                let rgb_tile = tile.to_rgb8();
 
-                // 带重试的识别
-                loop {
-                    let rgb_tile = tile.to_rgb8();
+                match ocr.predict(vec![rgb_tile]) {
+                    Ok(results) => {
+                        regions.extend(collect_regions(&results, x0 as f32, y0 as f32, 1.0));
+                        // 重置重试计数
+                        memory_retry_count = 0;
+                        break;
+                    }
+                    Err(e) => {
+                        let error_str = e.to_string();
+                        // 检查是否是内存分配错误
+                        if error_str.contains("allocate") || error_str.contains("memory") || error_str.contains("Failed to allocate") {
+                            warn!("分块 #{} 内存分配失败: {}", idx, e);
+                            memory_retry_count += 1;
 
-                    match ocr.predict(vec![rgb_tile]) {
-                        Ok(results) => {
-                            if let Some(result) = results.first() {
-                                let tile_text: String = result.text_regions
-                                    .iter()
-                                    .filter_map(|region| region.text_with_confidence())
-                                    .filter_map(|(t, conf)| {
-                                        if conf >= MIN_CONFIDENCE {
-                                            Some(t)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-
-                                if !tile_text.is_empty() {
-                                    all_texts.push(tile_text);
-                                }
+                            if memory_retry_count >= MAX_MEMORY_RETRIES {
+                                error!("分块处理达到最大重试次数，跳过此分块");
+                                memory_retry_count = 0;
+                                break;
                             }
-                            // 重置重试计数
-                            memory_retry_count = 0;
-                            break;
-                        }
-                        Err(e) => {
-                            let error_str = e.to_string();
-                            // 检查是否是内存分配错误
-                            if error_str.contains("allocate") || error_str.contains("memory") || error_str.contains("Failed to allocate") {
-                                warn!("分块 [{},{}] 内存分配失败: {}", row, col, e);
-                                memory_retry_count += 1;
 
-                                if memory_retry_count >= MAX_MEMORY_RETRIES {
-                                    error!("分块处理达到最大重试次数，跳过此分块");
+                            // 缩小图像后重试此分块
+                            let retry_scale = 0.75f64;
+                            let retry_w = ((x1 - x0) as f64 * retry_scale) as u32;
+                            let retry_h = ((y1 - y0) as f64 * retry_scale) as u32;
+                            info!("重试分块 #{}，缩小至 {}x{}", idx, retry_w, retry_h);
+
+                            // 创建缩小的分块
+                            let smaller_tile = tile.resize(retry_w, retry_h, imageops::FilterType::Lanczos3);
+                            let rgb_tile = smaller_tile.to_rgb8();
+                            // 缩放后的局部坐标需要乘回比例才能落到整页坐标系
+                            let coord_scale = (x1 - x0) as f32 / retry_w.max(1) as f32;
+
+                            // 再次尝试
+                            match ocr.predict(vec![rgb_tile]) {
+                                Ok(results) => {
+                                    regions.extend(collect_regions(&results, x0 as f32, y0 as f32, coord_scale));
                                     memory_retry_count = 0;
                                     break;
                                 }
-
-                                // 缩小图像后重试此分块
-                                let retry_scale = 0.75f64;
-                                let retry_w = ((x1 - x0) as f64 * retry_scale) as u32;
-                                let retry_h = ((y1 - y0) as f64 * retry_scale) as u32;
-                                info!("重试分块 [{},{}]，缩小至 {}x{}", row, col, retry_w, retry_h);
-
-                                // 创建缩小的分块
-                                let smaller_tile = tile.resize(retry_w, retry_h, imageops::FilterType::Lanczos3);
-                                let rgb_tile = smaller_tile.to_rgb8();
-
-                                // 再次尝试
-                                match ocr.predict(vec![rgb_tile]) {
-                                    Ok(results) => {
-                                        if let Some(result) = results.first() {
-                                            let tile_text: String = result.text_regions
-                                                .iter()
-                                                .filter_map(|region| region.text_with_confidence())
-                                                .filter_map(|(t, conf)| {
-                                                    if conf >= MIN_CONFIDENCE {
-                                                        Some(t)
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-
-                                            if !tile_text.is_empty() {
-                                                all_texts.push(tile_text);
-                                            }
-                                        }
-                                        memory_retry_count = 0;
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        // 再次失败，跳过此分块
-                                        warn!("分块 [{},{}] 重试后仍失败，跳过", row, col);
-                                        memory_retry_count = 0;
-                                        break;
-                                    }
+                                Err(_) => {
+                                    // 再次失败，跳过此分块
+                                    warn!("分块 #{} 重试后仍失败，跳过", idx);
+                                    memory_retry_count = 0;
+                                    break;
                                 }
-                            } else {
-                                warn!("分块 [{},{}] 识别失败: {}", row, col, e);
-                                break;
                             }
+                        } else {
+                            warn!("分块 #{} 识别失败: {}", idx, e);
+                            break;
                         }
                     }
                 }
@@ -537,8 +704,13 @@ impl OcrService {
         drop(scaled);
         std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
 
-        // 合并分块结果并应用后处理
-        let raw_text = all_texts.join("\n\n");
+        // 合并分块结果（阅读顺序 + 重叠去重）并应用后处理
+        let merged = merge_regions(regions);
+        let raw_text = merged
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         let text = if !raw_text.is_empty() {
             let lang = detect_text_language(&raw_text);
             optimize_by_language(&raw_text, lang)
@@ -546,7 +718,7 @@ impl OcrService {
             raw_text
         };
 
-        info!("分块 OCR 完成: {} 字符", text.len());
+        info!("分块 OCR 完成: {} 字符 ({} 个区域)", text.len(), merged.len());
         Ok(text)
     }
 
@@ -570,5 +742,382 @@ impl OcrService {
     /// 检查模型是否已加载
     pub fn is_model_loaded(&self) -> bool {
         self.ocr.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Luma;
+
+    // ===== 测试工具 =====
+
+    fn gray(w: u32, h: u32, v: u8) -> image::GrayImage {
+        image::ImageBuffer::from_pixel(w, h, Luma([v]))
+    }
+
+    /// 底色 base + 按索引改写部分像素的灰度图
+    fn gray_mut(w: u32, h: u32, base: u8, paint: impl Fn(usize) -> Option<u8>) -> image::GrayImage {
+        let mut raw = vec![base; (w * h) as usize];
+        for (i, v) in raw.iter_mut().enumerate() {
+            if let Some(nv) = paint(i) {
+                *v = nv;
+            }
+        }
+        image::GrayImage::from_raw(w, h, raw).unwrap()
+    }
+
+    fn mean_luma(img: &image::GrayImage) -> f64 {
+        let raw = img.as_raw();
+        raw.iter().map(|&p| p as f64).sum::<f64>() / raw.len() as f64
+    }
+
+    fn region(x0: f32, y0: f32, x1: f32, y1: f32, text: &str, conf: f32) -> OcrRegion {
+        OcrRegion { x0, y0, x1, y1, text: text.to_string(), conf }
+    }
+
+    // ===== T5：分块几何（覆盖 bug + 行裁剪 bug 回归） =====
+
+    /// 分块必须完整覆盖整页——旧 floor 公式在 1414×2000 下只覆盖左上 1200×1200
+    #[test]
+    fn test_compute_tiles_full_coverage() {
+        let cases: [(u32, u32); 9] = [
+            (1414, 2000), // dim=2000 的 A4：旧版只出 1 块，右 214px + 下 800px 丢失
+            (999, 1400),  // dim=1400 的 A4：旧版下 200px 丢失
+            (2500, 1600), // 旧版右 400px 丢失
+            (3000, 4000), // 旧版末行下 100px 丢失
+            (816, 1056),  // 样本页
+            (1200, 1200), // 恰好一块
+            (500, 500),   // 小于分块
+            (1415, 2001), // 非对齐余量
+            (2100, 2100), // 恰为 step 整数倍边界
+        ];
+
+        for (sw, sh) in cases {
+            let tiles = compute_tiles(sw, sh, TILE_MAX_DIMENSION, (TILE_MAX_DIMENSION as f32 * OVERLAP_RATIO) as u32);
+            assert!(!tiles.is_empty(), "{sw}x{sh} 应至少有 1 块");
+
+            let mut covered = vec![false; (sw * sh) as usize];
+            for &(x0, y0, x1, y1) in &tiles {
+                assert!(x0 < x1 && y0 < y1, "{sw}x{sh} 出现空块 {:?}", (x0, y0, x1, y1));
+                assert!(x1 <= sw && y1 <= sh, "{sw}x{sh} 块越界 {:?}", (x0, y0, x1, y1));
+                assert!((y1 - y0) <= TILE_MAX_DIMENSION, "{sw}x{sh} 横带高度超过 TILE_MAX: {:?}", (x0, y0, x1, y1));
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        covered[(y * sw + x) as usize] = true;
+                    }
+                }
+            }
+            assert!(covered.iter().all(|&c| c), "{sw}x{sh} 存在未覆盖像素, tiles={:?}", tiles);
+        }
+    }
+
+    /// 文本行绝不能被左右裁剪：分块必须是全宽横带（Q-2 根因回归）
+    #[test]
+    fn test_compute_tiles_never_split_horizontally() {
+        for (sw, sh) in [(1414u32, 2000u32), (1545, 1999), (3000, 4000), (816, 1056)] {
+            let tiles = compute_tiles(sw, sh, TILE_MAX_DIMENSION, 300);
+            for &(x0, _, x1, _) in &tiles {
+                assert_eq!(x0, 0, "{sw}x{sh} 横带必须从 x=0 开始");
+                assert_eq!(x1, sw, "{sw}x{sh} 横带必须覆盖全宽");
+            }
+        }
+    }
+
+    /// 行容纳性质：任何高度 ≤ overlap 的文本行都完整落在至少一个横带内
+    /// （step = tile - overlap ⇒ 行顶距某带起点 < step，行底 < step + overlap ≤ tile）
+    #[test]
+    fn test_compute_tiles_line_containment() {
+        let overlap = (TILE_MAX_DIMENSION as f32 * OVERLAP_RATIO) as u32; // 300
+        for (sw, sh) in [(1545u32, 1999u32), (1414, 2000), (999, 1400), (3000, 4000)] {
+            let tiles = compute_tiles(sw, sh, TILE_MAX_DIMENSION, overlap);
+            for line_h in [40u32, 80, 160, overlap] {
+                if line_h >= sh {
+                    continue;
+                }
+                for line_top in (0..sh - line_h).step_by(37) {
+                    let line_bottom = line_top + line_h;
+                    let contained = tiles.iter().any(|&(_, y0, _, y1)| y0 <= line_top && line_bottom <= y1);
+                    assert!(
+                        contained,
+                        "{sw}x{sh} 行 [{line_top},{line_bottom}) 未被任何横带完整包含, tiles={:?}",
+                        tiles
+                    );
+                }
+            }
+        }
+    }
+
+    /// 相邻横带必须纵向重叠（防文字跨边界被截断）
+    #[test]
+    fn test_compute_tiles_overlap_between_adjacent() {
+        let overlap = (TILE_MAX_DIMENSION as f32 * OVERLAP_RATIO) as u32;
+        let tiles = compute_tiles(2500, 1600, TILE_MAX_DIMENSION, overlap);
+        assert!(tiles.len() >= 2, "应产生多块: {:?}", tiles);
+
+        for pair in tiles.windows(2) {
+            let first = pair[0];
+            let second = pair[1];
+            assert_eq!(first.0, 0);
+            assert!(second.1 < first.3, "相邻横带应纵向重叠: 上={:?} 下={:?}", first, second);
+            assert!(first.3 - second.1 >= overlap, "重叠量应 ≥ overlap: 上={:?} 下={:?}", first, second);
+        }
+    }
+
+    /// 小图不切块
+    #[test]
+    fn test_compute_tiles_small_image_single() {
+        assert_eq!(compute_tiles(816, 1056, TILE_MAX_DIMENSION, 300).len(), 1);
+        assert_eq!(compute_tiles(1200, 1200, TILE_MAX_DIMENSION, 300), vec![(0, 0, 1200, 1200)]);
+    }
+
+    // ===== T5：区域合并（阅读顺序 + 重叠去重） =====
+
+    #[test]
+    fn test_merge_regions_dedup_overlap_and_order() {
+        let regions = vec![
+            // 相邻分块把同一行识别了两次（整页坐标下高度重叠）
+            region(100.0, 10.0, 600.0, 40.0, "同一行", 0.9),
+            region(105.0, 12.0, 610.0, 42.0, "同一行", 0.8),
+            // 不同行：保留
+            region(100.0, 60.0, 500.0, 90.0, "第二行", 0.9),
+            // 同行带靠右：保留（x 更大，不算重复）
+            region(700.0, 11.0, 1100.0, 41.0, "同行右侧", 0.9),
+        ];
+
+        let merged = merge_regions(regions);
+        let texts: Vec<&str> = merged.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(texts.len(), 3, "重叠的重复行应只保留一次: {:?}", texts);
+        assert!(texts.contains(&"同一行") && texts.contains(&"第二行") && texts.contains(&"同行右侧"));
+
+        // 阅读顺序：先按行带（y），同行按 x
+        assert_eq!(merged[0].text, "同一行");
+        assert_eq!(merged[1].text, "同行右侧");
+        assert_eq!(merged[2].text, "第二行");
+    }
+
+    #[test]
+    fn test_merge_regions_no_false_dedup() {
+        // 上下相邻、无交叠的两行不得被误删
+        let regions = vec![
+            region(0.0, 0.0, 500.0, 30.0, "行一", 0.9),
+            region(0.0, 35.0, 500.0, 65.0, "行二", 0.9),
+        ];
+        assert_eq!(merge_regions(regions).len(), 2);
+    }
+
+    /// Q-2 回归：被横带边界裁掉一部分的行 vs 完整识别 → 必须保留完整的那份
+    #[test]
+    fn test_merge_regions_prefers_larger_complete_box() {
+        // partial 先进入阅读顺序（y0 更小），但包围盒小（被裁）
+        let partial = region(50.0, 1160.0, 600.0, 1200.0, "新词贝塔NewTokenBe", 0.9);
+        let full = region(95.0, 1165.0, 1330.0, 1232.0, "新词贝塔 NewTokenBeta", 0.95);
+
+        let merged = merge_regions(vec![partial, full]);
+        assert_eq!(merged.len(), 1, "同一行应去重: {:?}", merged);
+        assert_eq!(merged[0].text, "新词贝塔 NewTokenBeta", "必须保留完整识别而非裁剪版");
+        assert!(merged[0].text.ends_with("Beta"));
+    }
+
+    #[test]
+    fn test_is_duplicate_region() {
+        let a = region(0.0, 0.0, 100.0, 30.0, "a", 0.9);
+        let dup = region(5.0, 2.0, 105.0, 32.0, "b", 0.9);
+        let far = region(500.0, 0.0, 600.0, 30.0, "c", 0.9);
+        let partial = region(60.0, 0.0, 160.0, 30.0, "d", 0.9); // 交叠 40/100 < 0.5
+
+        assert!(is_duplicate_region(&a, &dup));
+        assert!(!is_duplicate_region(&a, &far));
+        assert!(!is_duplicate_region(&a, &partial));
+    }
+
+    #[test]
+    fn test_from_text_region_confidence_and_offset() {
+        use oar_ocr::processors::BoundingBox;
+
+        let tr = TextRegion::with_recognition(
+            BoundingBox::from_coords(10.0, 20.0, 110.0, 50.0),
+            Some("识别行".into()),
+            Some(0.92),
+        );
+        let r = OcrRegion::from_text_region(&tr, 900.0, 300.0, 1.0).expect("高置信度应保留");
+        assert_eq!(r.text, "识别行");
+        assert_eq!(r.x0, 910.0);
+        assert_eq!(r.y0, 320.0);
+        assert_eq!(r.x1, 1010.0);
+        assert_eq!(r.y1, 350.0);
+        assert_eq!(r.conf, 0.92);
+
+        // 缩放分块（内存降级重试路径）：局部坐标乘 scale
+        let r2 = OcrRegion::from_text_region(&tr, 0.0, 0.0, 1.333).expect("缩放路径应保留");
+        assert!((r2.x1 - 110.0 * 1.333).abs() < 0.001);
+
+        // 低置信度丢弃
+        let low = TextRegion::with_recognition(
+            BoundingBox::from_coords(0.0, 0.0, 10.0, 10.0),
+            Some("噪声".into()),
+            Some(MIN_CONFIDENCE - 0.1),
+        );
+        assert!(OcrRegion::from_text_region(&low, 0.0, 0.0, 1.0).is_none());
+
+        // 无文本/无置信度丢弃
+        let none = TextRegion::with_recognition(
+            BoundingBox::from_coords(0.0, 0.0, 10.0, 10.0),
+            None,
+            Some(0.9),
+        );
+        assert!(OcrRegion::from_text_region(&none, 0.0, 0.0, 1.0).is_none());
+    }
+
+    // ===== T5：预处理 P0-7 回归 =====
+
+    /// 大面积留白扫描件：直方图拉伸不得把整页压黑（P0-7 根因）
+    #[test]
+    fn test_enhance_contrast_p07_near_white_not_blackened() {
+        // 30000×250 + 6000×254 + 4000×255 → min=250 max=255（范围 5 级 < 16）必须原样返回。
+        // 若无动态范围保护（P0-7 旧码），250 会被拉到 0 → 整页压黑（均值会掉到 ~56）。
+        let img = gray_mut(200, 200, 250, |i| {
+            if i < 30_000 {
+                None
+            } else if i < 36_000 {
+                Some(254)
+            } else {
+                Some(255)
+            }
+        });
+        let before = mean_luma(&img);
+        let out = enhance_contrast(&img);
+        assert_eq!(out.as_raw(), img.as_raw(), "动态范围过小时应原样返回（P0-7 回归）");
+        assert!(mean_luma(&out) >= before - 0.5);
+        assert!(mean_luma(&out) > 200.0, "页面被压黑: mean={:.1}", mean_luma(&out));
+
+        // 纯白页同样安全
+        let white = gray(100, 100, 255);
+        assert_eq!(enhance_contrast(&white).as_raw(), white.as_raw());
+    }
+
+    /// 正常动态范围必须真的被拉伸（保护不能误伤正常增强）
+    #[test]
+    fn test_enhance_contrast_stretches_normal_range() {
+        let img = gray_mut(200, 200, 50, |i| if i % 2 == 0 { Some(200) } else { None });
+        let out = enhance_contrast(&img);
+        let raw = out.as_raw();
+        assert!(raw.contains(&0), "低值应被拉到 0");
+        assert!(raw.contains(&255), "高值应被拉到 255");
+    }
+
+    #[test]
+    fn test_analyze_image_quality() {
+        // 纯平图：不清晰
+        let flat = gray(200, 200, 255);
+        let q = analyze_image_quality(&DynamicImage::ImageLuma8(flat));
+        assert!(!q.is_clear);
+        assert!(q.contrast < 40.0);
+
+        // 黑白棋盘：清晰
+        let board = gray_mut(200, 200, 255, |i| {
+            let x = (i % 200) as u32;
+            let y = (i / 200) as u32;
+            if ((x / 20) + (y / 20)) % 2 == 0 {
+                Some(0)
+            } else {
+                None
+            }
+        });
+        let q2 = analyze_image_quality(&DynamicImage::ImageLuma8(board));
+        assert!(q2.is_clear, "对比度={:.1}", q2.contrast);
+    }
+
+    // ===== T6：可配置预处理 =====
+
+    #[test]
+    fn test_preprocess_mode_parse() {
+        assert_eq!(PreprocessMode::parse("auto"), Some(PreprocessMode::Auto));
+        assert_eq!(PreprocessMode::parse(" OFF "), Some(PreprocessMode::Off));
+        assert_eq!(PreprocessMode::parse("On"), Some(PreprocessMode::On));
+        assert_eq!(PreprocessMode::parse("yes"), None);
+        assert_eq!(PreprocessMode::default(), PreprocessMode::Auto);
+        // as_str ↔ parse 往返
+        for m in [PreprocessMode::Auto, PreprocessMode::Off, PreprocessMode::On] {
+            assert_eq!(PreprocessMode::parse(m.as_str()), Some(m));
+        }
+    }
+
+    #[test]
+    fn test_apply_preprocess_off_returns_original() {
+        let img = gray_mut(120, 120, 100, |i| if i % 3 == 0 { Some(30) } else { None });
+        let src = DynamicImage::ImageLuma8(img);
+        let out = apply_preprocess(&src, PreprocessMode::Off);
+        assert_eq!(out.to_luma8().as_raw(), src.to_luma8().as_raw(), "off 必须原图直出");
+    }
+
+    #[test]
+    fn test_apply_preprocess_auto_keeps_clear_image() {
+        // 黑白棋盘（is_clear）→ auto 不动
+        let board = gray_mut(200, 200, 255, |i| {
+            let x = (i % 200) as u32;
+            let y = (i / 200) as u32;
+            if ((x / 20) + (y / 20)) % 2 == 0 {
+                Some(0)
+            } else {
+                None
+            }
+        });
+        let src = DynamicImage::ImageLuma8(board);
+        let out = apply_preprocess(&src, PreprocessMode::Auto);
+        assert_eq!(out.to_luma8().as_raw(), src.to_luma8().as_raw());
+    }
+
+    #[test]
+    fn test_apply_preprocess_auto_protects_near_white() {
+        // P0-7 场景：近白低对比页走 auto 不得压黑
+        let img = gray_mut(200, 200, 250, |i| {
+            if i < 30_000 {
+                None
+            } else if i < 36_000 {
+                Some(254)
+            } else {
+                Some(255)
+            }
+        });
+        let src = DynamicImage::ImageLuma8(img);
+        let out = apply_preprocess(&src, PreprocessMode::Auto);
+        let mean = mean_luma(&out.to_luma8());
+        assert!(mean > 200.0, "auto 模式下近白页被压黑: mean={:.1}", mean);
+    }
+
+    #[test]
+    fn test_apply_preprocess_on_enhances_low_contrast() {
+        // 强制模式：低对比灰图必须被增强（值域拉开）
+        let img = gray_mut(200, 200, 100, |i| if i % 2 == 0 { Some(140) } else { None });
+        let src = DynamicImage::ImageLuma8(img);
+        let out = apply_preprocess(&src, PreprocessMode::On);
+        let raw = out.to_luma8().into_raw();
+        assert!(raw.contains(&0), "on 模式应把低值拉到 0");
+        assert!(raw.contains(&255), "on 模式应把高值拉到 255");
+    }
+
+    // ===== 模型集成测试（默认忽略） =====
+
+    /// 端到端模型测试：`PDF_MANAGER_TEST_DATA_DIR=<含 models/ 的目录> `
+    /// `PDF_MANAGER_TEST_IMAGE=<图片>` 后运行：
+    /// `cargo test --lib -- --ignored ocr_model_integration`
+    #[test]
+    #[ignore = "需要本地模型与图片：PDF_MANAGER_TEST_DATA_DIR / PDF_MANAGER_TEST_IMAGE"]
+    fn ocr_model_integration_recognize() {
+        let data_dir = std::env::var("PDF_MANAGER_TEST_DATA_DIR")
+            .expect("请设置 PDF_MANAGER_TEST_DATA_DIR（其下需有 models/）");
+        let image_path = std::env::var("PDF_MANAGER_TEST_IMAGE")
+            .expect("请设置 PDF_MANAGER_TEST_IMAGE（待识别图片路径）");
+
+        let mut svc = OcrService::new(Path::new(&data_dir)).expect("OCR service init failed");
+        svc.init_ocr().expect("模型加载失败");
+        assert!(svc.is_available());
+
+        let img = image::open(&image_path).expect("读取测试图片失败");
+        let text = svc
+            .recognize_with_limit(&img, 1000)
+            .expect("OCR 识别失败");
+        assert!(!text.trim().is_empty(), "OCR 输出不应为空");
     }
 }

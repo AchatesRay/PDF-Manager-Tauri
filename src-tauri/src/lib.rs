@@ -106,7 +106,7 @@ pub fn run() {
             // 初始化搜索服务
             debug!("初始化搜索服务...");
             let index_path = data_dir.join("index");
-            let search_service = match services::search_service::SearchService::open(&index_path) {
+            let mut search_service = match services::search_service::SearchService::open(&index_path) {
                 Ok(s) => {
                     info!("搜索服务初始化成功");
                     s
@@ -119,12 +119,55 @@ pub fn run() {
                     )));
                 }
             };
+            // T1 安全网：索引版本升级（如 v5→v6）会重建空索引；
+            // 若不回填，老用户升级后搜索会静默变空（只能靠 force 重识别恢复）
+            let refilled = {
+                let db_state = app.state::<std::sync::Mutex<rusqlite::Connection>>();
+                let n = match db_state.lock() {
+                    Ok(conn) => match commands::search::refill_index_from_db(&conn, &mut search_service) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            warn!("索引回填失败: {}", e);
+                            0
+                        }
+                    },
+                    Err(e) => {
+                        warn!("索引回填获取数据库锁失败: {}", e);
+                        0
+                    }
+                };
+                n
+            };
+            if refilled > 0 {
+                info!("索引版本升级后从数据库回填: {} 页", refilled);
+            }
             app.manage(std::sync::Mutex::new(search_service));
 
             // 初始化任务队列
             debug!("初始化任务队列...");
-            let task_queue = TaskQueue::new();
+            let mut task_queue = TaskQueue::new();
+
+            // T4：启动时恢复上次持久化的 pending OCR 任务
+            let restored_ids: Vec<i64> = {
+                let db_state = app.state::<std::sync::Mutex<rusqlite::Connection>>();
+                let restored = match db_state.lock() {
+                    Ok(conn) => commands::ocr::restore_persisted_queue(&conn, &mut task_queue),
+                    Err(e) => {
+                        warn!("恢复持久化 OCR 队列失败: {}", e);
+                        Vec::new()
+                    }
+                };
+                restored
+            };
             app.manage(std::sync::Mutex::new(task_queue));
+
+            if !restored_ids.is_empty() {
+                info!("检测到持久化 OCR 队列，后台自动续跑: {:?}", restored_ids);
+                let resume_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    commands::ocr::resume_ocr_queue(resume_handle);
+                });
+            }
 
             info!("应用初始化完成, 数据目录: {:?}", data_dir);
             info!("日志文件位置: {:?}", data_dir.join("logs"));
@@ -157,6 +200,7 @@ pub fn run() {
             commands::settings::reset_data_dir,
             commands::settings::set_pdf_reader,
             commands::settings::set_ocr_max_image_dimension,
+            commands::settings::set_ocr_preprocess_mode,
             commands::settings::open_pdf_externally,
         ])
         .run(tauri::generate_context!())
