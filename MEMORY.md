@@ -15,7 +15,7 @@
 - **`.gitignore` 忽略 `src-tauri/Cargo.lock` 不当**：桌面应用应提交 lock 以保证可复现构建。
 - **ort 必须钉在 2.0.0-rc.12**：oar-ocr-core 0.6.3 依赖 rc.12 API；rc.13 删除 `CPUExecutionProvider` 导致编译失败。`Cargo.toml` 已加 `ort = "=2.0.0-rc.12"`，勿随意 `cargo update -p ort`。
 - **tauri `frontendDist: ../dist` 必须存在**：否则 `generate_context!` 编译报错；`npm install && npm run build` 或至少保留 `dist/` 目录。
-- **勿恢复 `.github/workflows`**：提交 `9648c08` 曾刻意移除 CI workflows，除非用户明确要求。
+- **勿恢复 `.github/workflows`（除非用户明确要求）**：提交 `9648c08` 曾刻意移除 CI workflows。**2026-09-26 用户明确要求「在 github 构建可运行 exe（不含模型）」→ 已恢复 `.github/workflows/build-windows.yml`**：产物 `pdf-manager-win-x64.zip` = exe + pdfium.dll + 使用说明（**打包步骤断言无 .onnx/字典，Guard 步骤断言仓库未跟踪模型**）；pdfium 不入库，CI 从 bblanchon/pdfium-binaries `chromium/8066`（=本地 156.0.8066.0）下载 `pdfium-win-x64.tgz`。
 - **持 `Mutex` 期间回调会重取同一把锁 = 自死锁**：`add_pdf` 持 `Db` 锁时调用 `get_pdfs_dir()` → 内部再次 `db.lock()`，`std::sync::Mutex` 非可重入，全新安装根级导入 PDF 必挂死**全部后续 IPC**（P0-6，2026-09-26 修复）。凡持锁中可能回调取同一把锁的路径，先 `drop(conn)` 再回调。
 - **pdf-extract 对真实 PDF 会 panic 而非返回 Err（P0-8，2026-09-26）**：`pdf_extract::extract_text` 内部 `assert!(name == "Identity-H")`，真实合同（非 Identity-H 字体 CMap）导入必炸且**整个应用退出**（Phase 5 合成样本不触发）。唯一入口 `PdfService::extract_text` 已 `catch_unwind` 兜底并回退扫描型；**任何新代码不得绕过该封装直接调 pdf-extract**。
 - **同步命令是串行分发的（P0-9，2026-09-26）**：Tauri 同步命令同一时刻只执行一个；`start_ocr` 若在命令内跑完整个队列 → 期间**全部其它 IPC 冻结**（UI 卡死）、第二个 start_ocr 无法入队 → pending 队列/排队中/取消全部不可达。Phase 5「OCR 期间 IPC 7~10ms」系误读（首样本 9194ms=整轮 OCR 才是阻塞证据）。修复：`start_ocr` 只做校验/入队，执行转交独立工作线程（`spawn_queue_worker`），致命错误 `fail_fast_worker` 兜底 + 外层 `catch_unwind`（线程 panic 不再静默死亡）。

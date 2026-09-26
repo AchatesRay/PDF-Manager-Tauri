@@ -1,0 +1,110 @@
+# Windows 可运行包构建（用户明确要求恢复 CI，2026-09-26）
+# 产物：pdf-manager.exe + pdfium.dll + 使用说明（**不含 OCR 模型文件**，模型由用户按 README 放入 models/）
+name: build-windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # 与本机开发一致的 pdfium 版本（src-tauri/pdfium.dll FileVersion 156.0.8066.0）
+  PDFIUM_TAG: chromium/8066
+  PDFIUM_ASSET: pdfium-win-x64.tgz
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust (stable, msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Guard - repository must not contain OCR model files
+        shell: pwsh
+        run: |
+          $bad = git ls-files | Where-Object { $_ -match '\.onnx$|ppocrv5_dict\.txt$' }
+          if ($bad) { Write-Host $bad; throw "仓库不应跟踪 OCR 模型文件（构建产物同样不包含）" }
+          Write-Host "OK: 仓库无模型文件"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build frontend (embedded into exe via tauri generate_context)
+        run: npm run build
+
+      - name: Fetch pdfium.dll (runtime renderer, not committed to repo)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/bblanchon/pdfium-binaries/releases/download/$env:PDFIUM_TAG/$env:PDFIUM_ASSET"
+          Write-Host "downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile pdfium.tgz
+          tar -xzf pdfium.tgz
+          if (-not (Test-Path bin/pdfium.dll)) { throw "解压后未找到 bin/pdfium.dll" }
+          Copy-Item bin/pdfium.dll src-tauri/pdfium.dll -Force
+          Write-Host ("pdfium.dll version: " + (Get-Item src-tauri/pdfium.dll).VersionInfo.FileVersion)
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Build release exe
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: Package (exe + pdfium.dll, NO models)
+        shell: pwsh
+        run: |
+          $out = "pdf-manager-win-x64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item src-tauri/target/release/pdf-manager.exe $out
+          Copy-Item src-tauri/pdfium.dll $out
+
+          # 使用说明：模型不含在包内（数组拼接，避免 here-string 破坏 YAML 缩进）
+          $readme = @(
+            'PDF Manager - Windows x64（不含 OCR 模型）',
+            '',
+            '1. 解压后直接运行 pdf-manager.exe（前端已内嵌；Windows 10/11 自带 WebView2 运行时）。',
+            '2. OCR 模型需自行准备：在本目录创建 models\ 并放入以下 3 个文件',
+            '   （详见仓库 README「OCR 模型」章节；应用内点“重新检测”亦可自动下载）：',
+            '   - pp-ocrv5_mobile_det.onnx',
+            '   - pp-ocrv5_mobile_rec.onnx',
+            '   - ppocrv5_dict.txt',
+            '3. 数据目录默认为本程序所在目录（pdfs\ index\ logs\ 等自动创建），可在设置中更改。',
+            '4. 版本信息见仓库 tag / Actions 构建。'
+          ) -join "`n"
+          [System.IO.File]::WriteAllText((Join-Path $out '使用说明.txt'), $readme + "`n", [System.Text.UTF8Encoding]::new($true))
+
+          # 断言：包内不含任何模型文件
+          $leak = Get-ChildItem $out -Recurse -File | Where-Object { $_.Extension -eq '.onnx' -or $_.Name -eq 'ppocrv5_dict.txt' }
+          if ($leak) { throw ("包内不应包含模型文件: " + ($leak.Name -join ', ')) }
+          # 断言：可执行文件与 pdfium 都在
+          if (-not (Test-Path "$out\pdf-manager.exe")) { throw "缺少 pdf-manager.exe" }
+          if (-not (Test-Path "$out\pdfium.dll")) { throw "缺少 pdfium.dll" }
+          Get-ChildItem $out | Format-Table Name, Length
+
+          Compress-Archive -Path "$out\*" -DestinationPath pdf-manager-win-x64.zip -Force
+          Write-Host ("zip size: " + (Get-Item pdf-manager-win-x64.zip).Length)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-manager-win-x64
+          path: pdf-manager-win-x64.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -32,6 +32,9 @@
 
 从 [Releases](https://github.com/AchatesRay/PDF-Manager-Tauri/releases) 页面下载对应平台的安装包。
 
+亦可从 GitHub Actions 的 **`build-windows`** 工作流产物（Artifacts）下载 `pdf-manager-win-x64.zip`
+（`pdf-manager.exe` + `pdfium.dll` + 使用说明，**不含 OCR 模型**，push 到 main 或手动触发即构建）。
+
 ### OCR 模型
 
 首次使用时，程序会自动检测 OCR 模型。如未安装，点击"重新检测"按钮即可：
@@ -135,8 +138,14 @@
 - 同批真机测试发现并修复 **P0-8**（pdf-extract 对真实 PDF 断言 panic 导致导入崩溃 → catch_unwind 兜底）、
   **P0-9**（同步命令串行分发：OCR 期间全部 IPC 冻结、排队/取消不可达 → 执行转交独立工作线程）、
   **P0-10**（pdfium 二次 `FPDF_InitLibrary` 死锁 → 全进程唯一渲染线程）
-- 真机功能测试：CDP 驱动真实应用，`PDF file/` 15 份真实合同全流程（34 项断言），
+- 真机功能测试：CDP 驱动真实应用，`PDF file/` 15 份真实合同全流程（29 项断言，29/29 PASS），
   见 `Output/待办执行与真机功能测试/`
+
+### CI（2026-09-26，应用户要求恢复）
+
+- `build-windows` 工作流（push `main` / 手动触发）：单测门禁 → 构建 release exe → 打包
+  `pdf-manager-win-x64.zip`（`pdf-manager.exe` + `pdfium.dll` + 使用说明，**不含 OCR 模型**，
+  仓库与产物双重断言），产物在 Actions Artifacts 保留 30 天
 
 ### v1.0.0 (2026-03-24)
 
