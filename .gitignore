@@ -8,6 +8,9 @@ src-tauri/target/
 # 会话产出（过程脚本/报告/备份，见 AGENTS.md「文件产出存放规则」）
 Output/
 
+# 用户测试数据（真实合同扫描件，非仓库内容，禁止提交）
+PDF file/
+
 # IDE
 .idea/
 .vscode/
