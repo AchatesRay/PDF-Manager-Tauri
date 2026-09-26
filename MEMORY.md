@@ -29,7 +29,7 @@
   - `src/lib/components/` — App、FolderTree、PdfList、PdfViewer、Search*、OcrModelSetup
   - `src/lib/api/index.ts`、`src/lib/stores/index.ts`
   - `docs/superpowers/` — 历史计划（2026-03-26 OCR 优化、2026-03-27 OCR 重构）
-  - `docs/optimization/2026-09-24-optimization-plan.md` — **现行优化方案（Phase 0–4 已完成并 push）**
+  - `docs/optimization/2026-09-24-optimization-plan.md` — **现行优化方案 + §6 现役状态与待办快照（Phase 0–5 已完成并 push）**
 - **技术栈要点**：PP-OCRv5 Mobile 识别（运行时标识 Balanced，~300MB）、Tantivy+jieba 搜索（**索引版本 "5"**，folder_id INDEXED，重建时备份 `index.bak`）、分块 1200/重叠 0.25/置信度 0.35、ocrProgress 事件驱动（无轮询）
 
 ## 用户工作背景

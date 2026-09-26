@@ -11,6 +11,9 @@ Output/
 # 用户测试数据（真实合同扫描件，非仓库内容，禁止提交）
 PDF file/
 
+# AI 工具工作目录（非项目内容，整目录忽略）
+.mimocode/
+
 # IDE
 .idea/
 .vscode/
