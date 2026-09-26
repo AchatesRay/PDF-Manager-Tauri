@@ -1,6 +1,6 @@
 # PDF Manager 优化方案（2026-09-24）
 
-> 状态：**Phase 0–4 全部完成并已 push**（`9648c08..0d16d3c`）。CI 不添加（workflows 曾于 `9648c08` 被刻意移除）。
+> 状态：**Phase 0–5 已完成**（`9648c08..7feb241` 已 push；Phase 5 缺陷修复已于 2026-09-26 真机复验 9/9，**待 commit**）。CI 不添加（workflows 曾于 `9648c08` 被刻意移除）。
 > 验证基线：`cargo check` 零警告 · `cargo test --lib` 57/57 · `npm run build` 通过。
 > 历史计划见 `docs/superpowers/plans/`（2026-03-26 OCR 优化、2026-03-27 OCR 重构），与本方案冲突处以本方案为准。
 
@@ -48,10 +48,10 @@
 ### Phase 0 — 止血（本轮执行）
 
 1. [x] 方案落盘 + 更新 MEMORY/AGENTS
-2. [ ] `git checkout -- src-tauri/src/services/ocr_service.rs src-tauri/src/services/pdf_service.rs`
-3. [ ] **修队列**：任务完成后后端自动启动 `next`（不依赖前端）
-4. [ ] **修状态**：存在失败页 → `error` + `error_message`（schema 无 partial）
-5. [ ] （若继续）force 同步 `delete_pdf` 索引；统一模型口径；Cargo.lock
+2. [x] `git checkout -- src-tauri/src/services/ocr_service.rs src-tauri/src/services/pdf_service.rs`
+3. [x] **修队列**：任务完成后后端自动启动 `next`（不依赖前端）— Phase 5 真机验收1 通过
+4. [x] **修状态**：存在失败页 → `error` + `error_message`（schema 无 partial）
+5. [x] （若继续）force 同步 `delete_pdf` 索引 — Phase 5 真机验收2 通过；统一模型口径；Cargo.lock
 
 **验收**：`cargo check` 通过；≥2 个 PDF 连续入队能自动串行跑完；有失败页时状态为 `error`。
 
@@ -71,15 +71,17 @@
 
 - 删 folder_service 空壳与 sauvola/deskew 死代码；修 README（平台/数据目录/更新日志）；版本 1.1.0；CI 不添加
 
-### Phase 5 — 未定义（2026-09-25 待用户拍板）
+### Phase 5 — 真机验收 ✅ 2026-09-26
 
-方案原本只到 Phase 4。候选（按建议优先级）：
+报告：`Output/环境安装与OCR验证/2026-09-26-Phase5真机验收报告.md`（CDP 驱动真实应用执行，非 mock）
 
-1. **真机验收**（推荐先做）：多 PDF 连续 OCR 自动串行、force 重识别后旧词不可搜、folder 过滤结果数正确
-2. **拆大组件**：FolderTree ~684 行 / PdfList ~600 行
-3. 队列持久化（重启恢复 pending）
-4. 旧计划残余：可配置预处理（2026-03-26 Chunk 6）、OCR 单测套件（Chunk 7）
-5. 搜索测试偶发 flake 排查（`test_index_and_search` 曾 1 次失败，单跑/重跑通过）
+- 三项验收全 PASS：多 PDF 连续 OCR 自动串行 / force 重识别后旧词不可搜 / folder 过滤结果数正确
+- 新发现并修复 2 个 P0（已真机复验 9/9，**待 commit**）：
+  - **P0-6** 根级 `add_pdf` 持 `Db` 锁回调 `get_pdfs_dir()` 自死锁 → 全部 IPC 挂起（全新安装必现）
+  - **P0-7** `enhance_contrast` 在留白扫描件上选出 254~255 伪动态范围 → 整页压黑 → OCR 空文本静默标 `done`（默认尺寸 1000 触发；已加动态范围保护 + 空白文本 WARN）
+
+未启动候选：拆大组件（FolderTree/PdfList）/ 队列持久化 / OCR 单测套件 / 搜索 flake 排查。
+新登记质量问题：Q-1 jieba 整词精确匹配致中文子串查询漏检；Q-2 OCR 截断长 ASCII 词。
 
 ## 4. 明确不做
 

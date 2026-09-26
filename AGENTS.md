@@ -2,9 +2,9 @@
 
 ## 全局规范（先读这个）
 
-会话启动时，首先读取并严格遵守全局规范正本：
-
-`C:\Users\LeiChuanhou\AppData\Roaming\QAgentWork\qagent-share\gateway\user_sso\05e0b07df010253e\AGENTS-GLOBAL.md`
+会话启动时，首先接受随会话注入的全局规范（本机正本：`$DSH_HOME/AGENTS.md`，
+即 `C:\Users\ray\AppData\Roaming\dsh-desktop\harness\AGENTS.md`；原 QAgentWork/LeiChuanhou
+路径属其他环境，本机不存在，勿尝试读取）。
 
 全局规范承载所有工作区共同遵守的通用规则（含 Python / PowerShell 工程规范），**章节清单以正本为准，本文件不复制**。
 
@@ -17,7 +17,7 @@
 ## 本工作区特有事实
 
 - **项目名称**：PDF Manager
-- **工作目录**：`D:\Qagent\Project\PDF-Manager-Tauri`
+- **工作目录**：`C:\DS_Project\PDF-Manager-Tauri`
 - **业务定位**：开发类 — 本地 PDF 管理 + 扫描 OCR + 中文全文搜索（Tauri 2 / Rust / Svelte 4）
 - **目录结构摘要**：
   - `src-tauri/` — Rust 后端（commands / services / db / models）
@@ -38,5 +38,5 @@
 
 ## 会话启动流程（本工作区）
 
-1. 读取 `AGENTS-GLOBAL.md`（全局规范正本）
+1. 读取随会话注入的全局规范（`$DSH_HOME/AGENTS.md`）
 2. 读取 `MEMORY.md`（与本文件同目录；如不存在，按全局规范初始化后再继续）

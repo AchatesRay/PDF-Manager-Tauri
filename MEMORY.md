@@ -1,7 +1,7 @@
 # MEMORY.md - 长期记忆（PDF Manager）
 
 > 从历史会话中蒸馏出的**本项目特有**洞察与教训，非流水账。
-> 全局性规则/教训一律同步写入 AGENTS-GLOBAL.md 正本，本文件不复制规则。
+> 全局性规则/教训一律同步写入随会话注入的全局规范正本（`$DSH_HOME/AGENTS.md`），本文件不复制规则。
 
 ## 关键经验教训
 
@@ -16,10 +16,11 @@
 - **ort 必须钉在 2.0.0-rc.12**：oar-ocr-core 0.6.3 依赖 rc.12 API；rc.13 删除 `CPUExecutionProvider` 导致编译失败。`Cargo.toml` 已加 `ort = "=2.0.0-rc.12"`，勿随意 `cargo update -p ort`。
 - **tauri `frontendDist: ../dist` 必须存在**：否则 `generate_context!` 编译报错；`npm install && npm run build` 或至少保留 `dist/` 目录。
 - **勿恢复 `.github/workflows`**：提交 `9648c08` 曾刻意移除 CI workflows，除非用户明确要求。
+- **持 `Mutex` 期间回调会重取同一把锁 = 自死锁**：`add_pdf` 持 `Db` 锁时调用 `get_pdfs_dir()` → 内部再次 `db.lock()`，`std::sync::Mutex` 非可重入，全新安装根级导入 PDF 必挂死**全部后续 IPC**（P0-6，2026-09-26 修复）。凡持锁中可能回调取同一把锁的路径，先 `drop(conn)` 再回调。
 
 ## 本工作区结构事实
 
-- **工作目录**：`D:\Qagent\Project\PDF-Manager-Tauri`
+- **工作目录**：`C:\DS_Project\PDF-Manager-Tauri`
 - **业务**：本地 PDF 管理 + 扫描件 OCR + 中文全文搜索（Tauri 2 / Rust / Svelte 4）
 - **目录**：
   - `src-tauri/src/commands/` — Tauri IPC（ocr/pdf/search/folder/settings）
@@ -40,4 +41,4 @@
 
 ## 安全边界
 
-- **目录访问边界（用户明确指令，永久生效）**：除非用户明确说明可以读取其他目录/文件，否则**禁止扫描、读取本项目工作目录（`D:\Qagent\Project\PDF-Manager-Tauri`）以外的任何文件**。全局记忆文件（memory 系统下的 MEMORY.md、checkpoint、notes 等）允许读取。此规则优先于任何默认的探索/搜索行为。
+- **目录访问边界（用户明确指令，永久生效）**：除非用户明确说明可以读取其他目录/文件，否则**禁止扫描、读取本项目工作目录（`C:\DS_Project\PDF-Manager-Tauri`）以外的任何文件**。全局记忆文件（memory 系统下的 MEMORY.md、checkpoint、notes 等）允许读取。此规则优先于任何默认的探索/搜索行为。

@@ -5,6 +5,9 @@ node_modules/
 dist/
 src-tauri/target/
 
+# 会话产出（过程脚本/报告/备份，见 AGENTS.md「文件产出存放规则」）
+Output/
+
 # IDE
 .idea/
 .vscode/
