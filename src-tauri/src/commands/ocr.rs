@@ -115,7 +115,9 @@ pub fn get_model_overview(
     let active = svc.active_model();
     let models_dir = mm.models_dir().to_string_lossy().to_string();
 
-    let overview = [ModelType::Lite, ModelType::Mobile, ModelType::Server, ModelType::Balanced]
+    // 卡片只保留 Mobile / Balanced（用户要求删除 lite/server 卡片；
+    // ModelType 枚举与下载命令仍保留 lite/server 能力，仅 overview 不再产出这两类）
+    let overview = [ModelType::Mobile, ModelType::Balanced]
         .iter()
         .map(|&t| {
             let status = mm.check_models(t);

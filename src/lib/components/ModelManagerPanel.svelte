@@ -12,6 +12,15 @@
   export let onClose: () => void = () => {};
 
   const DOWNLOAD_SITE = 'https://github.com/GreatV/oar-ocr/releases/tag/v0.3.0';
+  // 备份镜像（2026-09-27 实测：三者均可用文件直链；ghproxy.net 页面亦可）
+  // 用法 = 镜像前缀 + GitHub 完整地址
+  const MIRRORS = [
+    { prefix: 'https://ghproxy.net/', pageOk: true },
+    { prefix: 'https://gh-proxy.com/', pageOk: false },
+    { prefix: 'https://ghfast.top/', pageOk: true },
+  ];
+  // mobile / balanced 套件（同一套文件）的直链示例
+  const DIRECT_SAMPLE = 'https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx';
 
   let overview: ModelOverview[] = [];
   let loading = false;
@@ -94,9 +103,12 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  // 当前启用模型（用于顶部显示）
-  $: activeType = overview.find(m => m.is_active)?.model_type ?? null;
-  $: activeLabel = overview.find(m => m.is_active)?.label ?? null;
+  // 当前启用模型（用于顶部显示）：
+  // 兼容旧设置（如 lite/server —— 卡片已删除但设置可能残留）：overview 找不到时回退显示原始类型
+  $: activeRaw = overview.find(m => m.is_active) ?? null;
+  $: activeTag = activeRaw
+    ? `当前启用：${activeRaw.label}`
+    : ($ocrModelStatus?.active_model ? `当前启用：${$ocrModelStatus.active_model}` : null);
   // 本地已完整下载的模型套件数：>=2 才显示启用/禁用切换（规则见模板内联条件）
   $: readySuites = overview.filter(m => m.ready).length;
 </script>
@@ -115,14 +127,14 @@
       </div>
 
       <div class="panel-status">
-        {#if activeType}
-          <span class="active-tag">当前启用：{activeLabel}</span>
+        {#if activeTag}
+          <span class="active-tag">{activeTag}</span>
         {:else}
           <span class="disabled-tag">已禁用所有模型（OCR 暂不可用）</span>
         {/if}
       </div>
 
-      <!-- 文字说明：下载网站 + 存放位置（替代应用内下载） -->
+      <!-- 文字说明：下载网站 + 备用镜像 + 存放位置 + 详细步骤（替代应用内下载） -->
       <div class="download-info">
         <div class="info-row">
           <span class="info-label">模型下载网站：</span>
@@ -131,17 +143,52 @@
           <button class="mini-btn" on:click={() => copyText(DOWNLOAD_SITE)}>
             {copiedText === DOWNLOAD_SITE ? '已复制' : '复制'}
           </button>
+          <button class="mini-btn" on:click={() => openUrl(MIRRORS[0].prefix + DOWNLOAD_SITE)} title="通过镜像打开下载页">
+            镜像打开
+          </button>
+        </div>
+        <div class="info-row">
+          <span class="info-label">备用下载镜像：</span>
+          <span class="info-sub">下载慢或打不开时，给下方文件直链加前缀：</span>
+          {#each MIRRORS as m}
+            <button class="mini-btn" on:click={() => copyText(m.prefix)} title="复制镜像前缀，粘贴到文件直链最前面">
+              {copiedText === m.prefix ? '已复制' : m.prefix}
+            </button>
+          {/each}
+        </div>
+        <div class="info-row">
+          <span class="info-label">文件直链示例：</span>
+          <span class="info-dir" title={DIRECT_SAMPLE}>{DIRECT_SAMPLE}</span>
+          <button class="mini-btn" on:click={() => copyText(DIRECT_SAMPLE)}>
+            {copiedText === DIRECT_SAMPLE ? '已复制' : '复制'}
+          </button>
         </div>
         <div class="info-row">
           <span class="info-label">模型文件存放位置：</span>
           <span class="info-dir" title={overview[0]?.models_dir || $ocrModelStatus?.models_dir || ''}>
             {overview[0]?.models_dir || $ocrModelStatus?.models_dir || ''}
           </span>
-          <button class="mini-btn" on:click={() => copyText(overview[0]?.models_dir || $ocrModelStatus?.models_dir || '')}>复制</button>
+          <button class="mini-btn" on:click={() => copyText(overview[0]?.models_dir || $ocrModelStatus?.models_dir || '')}>
+            {copiedText === (overview[0]?.models_dir || $ocrModelStatus?.models_dir) ? '已复制' : '复制'}
+          </button>
         </div>
-        <p class="info-hint">
-          从下载网站获取模型文件（.onnx 与字典 .txt），按下方文件名放入存放位置后点击右上角「刷新」即可生效。
-        </p>
+        <ol class="info-steps">
+          <li>
+            <b>需成套下载</b>：每套 3 个文件（det 检测模型 + rec 识别模型 + 字典 .txt）必须全部下载，缺一不可；
+            Mobile 与 Balanced 是同一套文件（PP-OCRv5 Mobile），<b>下载一套即可通用</b>，无需重复下载。
+          </li>
+          <li>
+            <b>文件名必须原样保留</b>，不要重命名，3 个文件分别为：
+            <code>pp-ocrv5_mobile_det.onnx</code>、<code>pp-ocrv5_mobile_rec.onnx</code>、<code>ppocrv5_dict.txt</code>
+            （下载得到的名字就是这些，直接用即可）。
+          </li>
+          <li>
+            <b>存放位置</b>：下载后直接放入上方「模型文件存放位置」目录，无需新建子目录。
+          </li>
+          <li>
+            放好后点击右上角<b>「刷新」</b>，确认下方文件清单全部变成 ✓ 后再启用。
+          </li>
+        </ol>
       </div>
 
       {#if error}
@@ -328,10 +375,33 @@
     word-break: break-all;
   }
 
-  .info-hint {
-    margin: 6px 0 0;
+  .info-sub {
     color: var(--text-muted, #9ca3af);
-    line-height: 1.5;
+  }
+
+  .info-steps {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--text-secondary, #6b7280);
+    line-height: 1.6;
+  }
+
+  .info-steps li {
+    margin-bottom: 4px;
+  }
+
+  .info-steps b {
+    color: var(--text-primary, #1f2937);
+  }
+
+  .info-steps code {
+    background: var(--bg-secondary, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 10px;
+    color: var(--text-primary, #1f2937);
+    word-break: break-all;
   }
 
   .error-box {
