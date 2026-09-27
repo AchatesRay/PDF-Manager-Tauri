@@ -50,3 +50,6 @@ export const filteredPdfList = derived(
 
 // 是否显示下载对话框
 export const showDownloadDialog = writable(false);
+
+// 模型管理面板开关（打开入口在 PdfList 的「模型配置」按钮）
+export const showModelPanel = writable(false);

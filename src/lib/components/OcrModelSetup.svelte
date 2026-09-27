@@ -4,6 +4,7 @@
   import {
     getOcrStatus,
     getOcrDownloadGuide,
+    refreshOcrStatus,
     downloadOcrModels,
     cancelOcrDownload,
     type OcrStatus,
@@ -15,12 +16,13 @@
     ocrDownloadProgress,
     isDownloading,
     showDownloadDialog,
+    showModelPanel,
   } from '../stores';
   import ModelManagerPanel from './ModelManagerPanel.svelte';
 
   let error: string | null = null;
   let downloadGuides: DownloadGuide[] = [];
-  let showModelPanel = false;
+  let isRefreshing = false;
 
   onMount(() => {
     checkStatus();
@@ -55,6 +57,23 @@
       unlistenError?.();
     };
   });
+
+  // 点击状态文字：刷新模型状态（原「重新检测」行为）；未就绪时弹下载对话框
+  async function handleRefreshClick() {
+    if (isRefreshing) return;
+    isRefreshing = true;
+    try {
+      const status = await refreshOcrStatus();
+      ocrModelStatus.set(status);
+      if (!status.models_ready) {
+        showDownloadDialog.set(true);
+      }
+    } catch (e) {
+      console.error('Refresh OCR status failed:', e);
+    } finally {
+      isRefreshing = false;
+    }
+  }
 
   async function checkStatus() {
     try {
@@ -101,18 +120,20 @@
     : '✗ 模型未安装';
 </script>
 
-<!-- 状态显示（嵌入在 PdfList header 中）：点击打开模型管理面板 -->
+<!-- 状态显示（嵌入在 PdfList header 中）：显示模型状态，点击刷新模型状态 -->
 <button
   class="status-text"
   class:ready={$ocrModelStatus?.models_ready}
-  on:click={() => showModelPanel = true}
-  title="点击查看/下载/启用/禁用 OCR 模型"
+  class:spinning={isRefreshing}
+  disabled={isRefreshing}
+  on:click={handleRefreshClick}
+  title="点击刷新模型状态"
 >
   {statusText}
 </button>
 
-<!-- 模型管理面板 -->
-<ModelManagerPanel show={showModelPanel} onClose={() => showModelPanel = false} />
+<!-- 模型管理面板（打开入口：header 的「模型配置」按钮） -->
+<ModelManagerPanel show={$showModelPanel} onClose={() => showModelPanel.set(false)} />
 
 <!-- 错误提示 -->
 {#if error}
@@ -205,13 +226,26 @@
     transition: all 0.15s;
   }
 
-  .status-text:hover {
+  .status-text:hover:not(:disabled) {
     color: var(--accent, #3b82f6);
     background: var(--accent-soft, #eff6ff);
   }
 
+  .status-text:disabled {
+    cursor: wait;
+    opacity: 0.7;
+  }
+
+  .status-text.spinning {
+    animation: spin 0.8s linear infinite;
+  }
+
   .status-text.ready {
     color: var(--success, #10b981);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .error-message {

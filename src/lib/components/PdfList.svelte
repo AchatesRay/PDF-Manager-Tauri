@@ -1,14 +1,12 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showDownloadDialog } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, refreshOcrStatus, movePdfs } from '../api';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showModelPanel } from '../stores';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
   import type { OcrProgress } from '../stores';
   import OcrModelSetup from './OcrModelSetup.svelte';
   import PdfListItem from './PdfListItem.svelte';
-
-  let isRefreshing = false;
 
   // ===== 批量选择状态 =====
   let selectionMode = false;
@@ -297,21 +295,6 @@
     }
   }
 
-  async function handleRefresh() {
-    isRefreshing = true;
-    try {
-      const status = await refreshOcrStatus();
-      ocrModelStatus.set(status);
-      if (!status.models_ready) {
-        showDownloadDialog.set(true);
-      }
-    } catch (e) {
-      console.error('Refresh OCR status failed:', e);
-    } finally {
-      isRefreshing = false;
-    }
-  }
-
   async function selectPdf(id: number) {
     selectedPdfId.set(id);
     try {
@@ -380,19 +363,14 @@
         <OcrModelSetup />
         <button
           class="refresh-btn"
-          on:click={handleRefresh}
-          disabled={isRefreshing}
-          title={$ocrModelStatus?.models_ready ? '模型状态正常' : '重新检测模型'}
+          on:click={() => showModelPanel.set(true)}
+          title="模型配置：查看/下载/启用/禁用 OCR 模型"
         >
-          <svg class:spinning={isRefreshing} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M23 4v6h-6M1 20v-6h6"/>
-            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
           </svg>
-          {#if $ocrModelStatus?.models_ready}
-            模型正常
-          {:else}
-            重新检测
-          {/if}
+          模型配置
         </button>
       </div>
       <button class="add-btn" on:click={handleAddPdf}>
