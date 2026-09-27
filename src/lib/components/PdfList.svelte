@@ -1,6 +1,6 @@
 <script lang="ts">
   import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showDownloadDialog } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, refreshOcrStatus } from '../api';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, refreshOcrStatus, movePdfs } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, confirm, message } from '@tauri-apps/plugin-dialog';
@@ -9,6 +9,12 @@
   import PdfListItem from './PdfListItem.svelte';
 
   let isRefreshing = false;
+
+  // ===== 批量选择状态 =====
+  let selectionMode = false;
+  let selectedIds: number[] = [];
+  let showMoveDialog = false;
+  let isBatchWorking = false;
 
   onMount(() => {
     loadPdfs();
@@ -120,15 +126,156 @@
 
     const files = Array.isArray(selected) ? selected : [selected];
 
+    let added = 0;
+    const skipped: string[] = []; // 文件名已存在 / 已添加过
+    const failed: string[] = [];  // 其它错误
+
     for (const filePath of files) {
       try {
         await addPdf(filePath, $selectedFolderId ?? undefined);
+        added++;
       } catch (err) {
-        console.error('Failed to add PDF:', err);
-        alert('添加PDF失败: ' + err);
+        const msg = String(err);
+        const base = filePath.split(/[\\/]/).pop() || filePath;
+        if (msg.includes('文件名已存在') || msg.includes('已添加过')) {
+          skipped.push(base);
+        } else {
+          failed.push(`${base}: ${msg}`);
+        }
       }
     }
     await loadPdfs();
+
+    // 汇总提示（重名跳过不中断导入，结束后一条消息）
+    if (skipped.length > 0 || failed.length > 0) {
+      let text = `导入完成：成功 ${added} 个`;
+      if (skipped.length > 0) {
+        text += `，跳过 ${skipped.length} 个（文件名已存在）：\n${skipped.join('\n')}`;
+      }
+      if (failed.length > 0) {
+        text += `\n失败 ${failed.length} 个：\n${failed.join('\n')}`;
+      }
+      await message(text, { title: '导入结果', kind: skipped.length > 0 || failed.length > 0 ? 'warning' : 'info' });
+    }
+  }
+
+  // ===== 批量操作 =====
+
+  function toggleSelect(id: number) {
+    if (selectedIds.includes(id)) {
+      selectedIds = selectedIds.filter(x => x !== id);
+    } else {
+      selectedIds = [...selectedIds, id];
+    }
+  }
+
+  function selectAll() {
+    selectedIds = filteredPdfs.map(p => p.id);
+  }
+
+  function clearSelection() {
+    selectedIds = [];
+  }
+
+  function exitSelectionMode() {
+    selectionMode = false;
+    selectedIds = [];
+  }
+
+  function toggleSelectionMode() {
+    if (selectionMode) {
+      exitSelectionMode();
+    } else {
+      selectionMode = true;
+      selectedIds = [];
+    }
+  }
+
+  // 批量 OCR：pending → 普通识别；done/error → 强制重识别；processing/排队中 → 跳过
+  async function handleBatchOcr() {
+    if (selectedIds.length === 0) return;
+    isBatchWorking = true;
+    let queued = 0;
+    let skipped = 0;
+    const failList: string[] = [];
+
+    for (const id of [...selectedIds]) {
+      const pdf = $pdfList.find(p => p.id === id);
+      if (!pdf) continue;
+      if (pdf.status === 'processing' || getQueuePosition(id) !== null) {
+        skipped++;
+        continue;
+      }
+      try {
+        await startOcr(id, pdf.status !== 'pending');
+        queued++;
+      } catch (e) {
+        failList.push(`${pdf.filename}: ${e}`);
+      }
+    }
+
+    await refreshQueueStatus();
+    isBatchWorking = false;
+
+    let text = `批量 OCR：已加入队列 ${queued} 个`;
+    if (skipped > 0) text += `，跳过 ${skipped} 个（处理中/已排队）`;
+    if (failList.length > 0) text += `\n失败：\n${failList.join('\n')}`;
+    await message(text, { title: '批量 OCR', kind: 'info' });
+  }
+
+  // 批量删除：一次确认，循环删除，汇总结果
+  async function handleBatchDelete() {
+    if (selectedIds.length === 0) return;
+    const confirmed = await confirm(
+      `确定要删除选中的 ${selectedIds.length} 个 PDF 吗？文件与 OCR 结果将一并删除。`,
+      { title: '确认批量删除', kind: 'warning' }
+    );
+    if (!confirmed) return;
+
+    isBatchWorking = true;
+    let deleted = 0;
+    const failList: string[] = [];
+    for (const id of [...selectedIds]) {
+      const pdf = $pdfList.find(p => p.id === id);
+      try {
+        await deletePdf(id);
+        deleted++;
+      } catch (e) {
+        failList.push(`${pdf?.filename || id}: ${e}`);
+      }
+    }
+    isBatchWorking = false;
+    clearSelection();
+    await loadPdfs();
+
+    let text = `删除完成：成功 ${deleted} 个`;
+    if (failList.length > 0) text += `\n失败：\n${failList.join('\n')}`;
+    await message(text, { title: '批量删除', kind: failList.length > 0 ? 'warning' : 'info' });
+  }
+
+  // 批量移动：选择目标文件夹 → 调 move_pdfs
+  async function handleBatchMoveConfirm(targetFolderId: number | null) {
+    if (selectedIds.length === 0) return;
+    showMoveDialog = false;
+    isBatchWorking = true;
+    try {
+      const report = await movePdfs([...selectedIds], targetFolderId ?? undefined);
+      let text = `移动完成：成功 ${report.moved.length} 个`;
+      if (report.skipped.length > 0) {
+        const names = report.skipped.map(([pid, reason]) => {
+          const pdf = $pdfList.find(p => p.id === pid);
+          return `${pdf?.filename || pid}（${reason}）`;
+        });
+        text += `，跳过 ${report.skipped.length} 个：\n${names.join('\n')}`;
+      }
+      await message(text, { title: '批量移动', kind: report.skipped.length > 0 ? 'warning' : 'info' });
+      clearSelection();
+      await loadPdfs();
+    } catch (e) {
+      await message('移动失败: ' + e, { title: '批量移动', kind: 'error' });
+    } finally {
+      isBatchWorking = false;
+    }
   }
 
   async function handleDelete(id: number) {
@@ -255,8 +402,34 @@
         </svg>
         添加
       </button>
+      <button
+        class="add-btn"
+        class:active-toggle={selectionMode}
+        on:click={toggleSelectionMode}
+        disabled={filteredPdfs.length === 0}
+        title="批量管理"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 11 12 14 22 4"/>
+          <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+        </svg>
+        {selectionMode ? '退出选择' : '批量管理'}
+      </button>
     </div>
   </div>
+
+  <!-- 批量操作栏 -->
+  {#if selectionMode}
+    <div class="batch-bar">
+      <button class="batch-btn" on:click={selectAll} disabled={isBatchWorking}>全选</button>
+      <button class="batch-btn" on:click={clearSelection} disabled={isBatchWorking || selectedIds.length === 0}>清空</button>
+      <span class="batch-count">已选 {selectedIds.length} 项</span>
+      <div class="batch-spacer"></div>
+      <button class="batch-btn primary" on:click={handleBatchOcr} disabled={isBatchWorking || selectedIds.length === 0}>批量OCR</button>
+      <button class="batch-btn move" on:click={() => showMoveDialog = true} disabled={isBatchWorking || selectedIds.length === 0}>批量移动</button>
+      <button class="batch-btn danger" on:click={handleBatchDelete} disabled={isBatchWorking || selectedIds.length === 0}>批量删除</button>
+    </div>
+  {/if}
 
   {#if $isLoading}
     <div class="loading-state">
@@ -280,6 +453,9 @@
           active={$selectedPdfId === pdf.id}
           queuePosition={getQueuePosition(pdf.id)}
           progress={$ocrProgress.get(pdf.id)}
+          selectable={selectionMode}
+          checked={selectedIds.includes(pdf.id)}
+          onToggle={toggleSelect}
           onSelect={selectPdf}
           onStartOcr={handleStartOcr}
           onCancel={handleCancelTask}
@@ -289,6 +465,36 @@
     </ul>
   {/if}
 </div>
+
+<!-- 批量移动：目标文件夹选择 -->
+{#if showMoveDialog}
+  <div class="move-overlay" on:click={() => showMoveDialog = false}>
+    <div class="move-dialog" on:click|stopPropagation>
+      <h4>移动 {selectedIds.length} 个 PDF 到</h4>
+      <ul class="folder-pick">
+        {#each $folders as folder}
+          <li>
+            <button class="folder-item" on:click={() => handleBatchMoveConfirm(folder.id)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+              </svg>
+              {folder.name}
+            </button>
+          </li>
+        {/each}
+        <li>
+          <button class="folder-item" on:click={() => handleBatchMoveConfirm(null)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 7h18v12a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+            </svg>
+            根目录（未分类）
+          </button>
+        </li>
+      </ul>
+      <button class="move-cancel" on:click={() => showMoveDialog = false}>取消</button>
+    </div>
+  </div>
+{/if}
 
 <style>
   .pdf-list {
@@ -449,5 +655,166 @@
 
   .empty-state span {
     font-size: 11px;
+  }
+
+  /* ===== 批量操作 ===== */
+  .add-btn.active-toggle {
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+    background: var(--accent-soft, #eff6ff);
+  }
+
+  .batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border-light, #f3f4f6);
+    background: var(--bg-tertiary, #f9fafb);
+  }
+
+  .batch-count {
+    font-size: 11px;
+    color: var(--text-muted, #9ca3af);
+    white-space: nowrap;
+  }
+
+  .batch-spacer {
+    flex: 1;
+  }
+
+  .batch-btn {
+    padding: 4px 10px;
+    background: var(--bg-secondary, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary, #1f2937);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .batch-btn:hover:not(:disabled) {
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+
+  .batch-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .batch-btn.primary {
+    background: var(--success, #10b981);
+    border-color: var(--success, #10b981);
+    color: white;
+  }
+
+  .batch-btn.primary:hover:not(:disabled) {
+    background: #059669;
+    border-color: #059669;
+    color: white;
+  }
+
+  .batch-btn.move {
+    background: var(--accent, #3b82f6);
+    border-color: var(--accent, #3b82f6);
+    color: white;
+  }
+
+  .batch-btn.move:hover:not(:disabled) {
+    background: var(--accent-dark, #2563eb);
+    border-color: var(--accent-dark, #2563eb);
+    color: white;
+  }
+
+  .batch-btn.danger {
+    color: var(--error, #ef4444);
+    border-color: var(--error, #ef4444);
+    background: transparent;
+  }
+
+  .batch-btn.danger:hover:not(:disabled) {
+    background: var(--error, #ef4444);
+    color: white;
+  }
+
+  /* 移动对话框 */
+  .move-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .move-dialog {
+    background: var(--bg-secondary, #ffffff);
+    border-radius: 8px;
+    padding: 16px;
+    max-width: 360px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+
+  .move-dialog h4 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+  }
+
+  .folder-pick {
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .folder-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 7px 8px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-primary, #1f2937);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .folder-item:hover {
+    background: var(--accent-soft, #eff6ff);
+    color: var(--accent, #3b82f6);
+  }
+
+  .folder-item svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .move-cancel {
+    width: 100%;
+    padding: 6px;
+    background: none;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-secondary, #6b7280);
+    cursor: pointer;
+  }
+
+  .move-cancel:hover {
+    border-color: var(--text-muted, #9ca3af);
   }
 </style>

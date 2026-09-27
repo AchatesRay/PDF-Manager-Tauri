@@ -120,6 +120,12 @@ pub const SETTING_PDF_READER: &str = "pdf_reader_path";
 pub const SETTING_OCR_MAX_IMAGE_DIMENSION: &str = "ocr_max_image_dimension";
 /// OCR 预处理模式：auto / off / on（T6 可配置预处理，默认 auto）
 pub const SETTING_OCR_PREPROCESS_MODE: &str = "ocr_preprocess_mode";
+/// 当前启用的 OCR 模型：mobile / server / lite / balanced，或 "disabled"（全部禁用）
+/// 未设置时默认 balanced（与历史行为一致）
+pub const SETTING_OCR_ACTIVE_MODEL: &str = "ocr_active_model";
+/// 数据目录迁移源标记（仅写入 exe 引导 DB）：记录「本次 data_dir 指向的目标目录
+/// 是从哪个旧目录迁移来的」，启动期据此刷新复制（补迁 set_data_dir 之后产生的新数据）
+pub const SETTING_DATA_DIR_MIGRATE_FROM: &str = "data_dir_migrate_from";
 
 /// 获取设置值
 pub fn get_setting(conn: &Connection, key: &str) -> Option<String> {

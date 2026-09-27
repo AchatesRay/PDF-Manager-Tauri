@@ -6,6 +6,9 @@
   export let active: boolean = false;
   export let queuePosition: number | null = null;
   export let progress: OcrProgress | undefined = undefined;
+  export let selectable: boolean = false;
+  export let checked: boolean = false;
+  export let onToggle: (id: number) => void = () => {};
   export let onSelect: (id: number) => void;
   export let onStartOcr: (id: number, force?: boolean) => void;
   export let onCancel: (id: number) => void;
@@ -34,8 +37,18 @@
 <li
   class="pdf-item"
   class:active={active}
+  class:checked={checked}
   on:click={() => onSelect(pdf.id)}
 >
+  {#if selectable}
+    <input
+      type="checkbox"
+      class="select-box"
+      checked={checked}
+      on:click|stopPropagation={() => onToggle(pdf.id)}
+      aria-label="选择 {pdf.filename}"
+    />
+  {/if}
   <span class="filename" title={pdf.filename}>{pdf.filename}</span>
   <span class="meta">{pdf.page_count} 页</span>
   <span class="meta">{getTypeText(pdf.pdf_type)}</span>
@@ -107,6 +120,19 @@
   .pdf-item.active {
     border-color: var(--accent, #3b82f6);
     background: var(--accent-soft, #eff6ff);
+  }
+
+  .pdf-item.checked {
+    border-color: var(--success, #10b981);
+    background: var(--success-soft, #ecfdf5);
+  }
+
+  .select-box {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--success, #10b981);
   }
 
   .filename {

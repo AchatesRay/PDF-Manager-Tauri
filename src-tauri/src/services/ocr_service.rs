@@ -26,6 +26,8 @@ pub struct OcrStatus {
     pub models_ready: bool,
     pub missing_files: Vec<String>,
     pub models_dir: String,
+    /// 当前启用的模型（None = 已禁用所有模型，OCR 不可用）
+    pub active_model: Option<String>,
 }
 
 /// 默认最大图像尺寸 - 优化：2000 -> 3000，提升小字体识别率
@@ -254,6 +256,8 @@ pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
     preprocess_mode: PreprocessMode,
+    /// 当前启用的模型（None = 已禁用，OCR 不可用；默认 Balanced 与历史行为一致）
+    active_model: Option<ModelType>,
 }
 
 /// 计算分块布局：返回 (x0, y0, x1, y1) 列表，**完整覆盖** [0,sw)×[0,sh)。
@@ -408,7 +412,27 @@ impl OcrService {
             model_manager,
             ocr: None,
             preprocess_mode: PreprocessMode::default(),
+            active_model: Some(ModelType::Balanced),
         })
+    }
+
+    /// 当前启用的模型（None = 已禁用）
+    pub fn active_model(&self) -> Option<ModelType> {
+        self.active_model
+    }
+
+    /// 启用/禁用（切换）当前识别模型。
+    ///
+    /// 切换会卸载已加载的模型，下次识别时按新模型重新加载；
+    /// 调用方负责把选择持久化到 settings（`ocr_active_model`）。
+    pub fn set_active_model(&mut self, model: Option<ModelType>) {
+        if self.active_model == model {
+            return;
+        }
+        info!("切换启用模型: {:?} -> {:?}", self.active_model, model);
+        self.active_model = model;
+        // 卸载旧模型，保证下次 recognize 加载的是新模型
+        self.unload_ocr();
     }
 
     /// 设置预处理模式（T6 可配置预处理）
@@ -426,13 +450,22 @@ impl OcrService {
 
     /// 获取 OCR 状态
     pub fn get_status(&self) -> OcrStatus {
-        let status = self.model_manager.check_models(ModelType::Balanced);
+        // 已禁用（active_model=None）→ 模型未就绪、OCR 不可用
+        let status = match self.active_model {
+            Some(t) => self.model_manager.check_models(t),
+            None => crate::services::model_manager::ModelStatus {
+                ready: false,
+                missing_files: Vec::new(),
+                models_dir: self.model_manager.models_dir().to_string_lossy().to_string(),
+            },
+        };
 
         OcrStatus {
             available: self.ocr.is_some(),
             models_ready: status.ready,
             missing_files: status.missing_files,
             models_dir: status.models_dir,
+            active_model: self.active_model.map(|t| t.to_string()),
         }
     }
 
@@ -441,19 +474,26 @@ impl OcrService {
         self.ocr.is_some()
     }
 
-    /// 检查模型文件是否存在
+    /// 检查模型文件是否存在（按当前启用模型）
     pub fn check_models(&self) -> bool {
-        self.model_manager.check_models(ModelType::Balanced).ready
+        match self.active_model {
+            Some(t) => self.model_manager.check_models(t).ready,
+            None => false,
+        }
     }
 
-    /// 初始化 OCR（加载模型）
+    /// 初始化 OCR（加载当前启用的模型）
     pub fn init_ocr(&mut self) -> Result<(), OcrError> {
         if self.ocr.is_some() {
             debug!("OCR 模型已加载");
             return Ok(());
         }
 
-        let status = self.model_manager.check_models(ModelType::Balanced);
+        let active = self.active_model.ok_or_else(|| {
+            OcrError::ModelsMissing("OCR 模型已被禁用，请先启用一个模型".to_string())
+        })?;
+
+        let status = self.model_manager.check_models(active);
 
         if !status.ready {
             return Err(OcrError::ModelsMissing(format!(
@@ -464,15 +504,20 @@ impl OcrService {
 
         let models_dir = self.model_manager.models_dir();
 
-        // 使用 PP-OCRv5 Mobile 模型
-        let (det_name, rec_name, dict_name) = ("pp-ocrv5_mobile_det.onnx", "pp-ocrv5_mobile_rec.onnx", "ppocrv5_dict.txt");
+        // 按启用模型解析文件清单：[det, rec, dict]（get_model_files 各类型均按此顺序）
+        let files = ModelManager::get_model_files_static(active);
+        if files.len() < 3 {
+            return Err(OcrError::InitFailed(format!(
+                "模型 {} 文件清单不完整",
+                active
+            )));
+        }
+        let det_path = models_dir.join(&files[0].name);
+        let rec_path = models_dir.join(&files[1].name);
+        let dict_path = models_dir.join(&files[2].name);
 
-        let det_path = models_dir.join(det_name);
-        let rec_path = models_dir.join(rec_name);
-        let dict_path = models_dir.join(dict_name);
-
-        info!("加载 OCR 模型: det={:?}, rec={:?}, dict={:?}",
-            det_path, rec_path, dict_path);
+        info!("加载 OCR 模型 ({}): det={:?}, rec={:?}, dict={:?}",
+            active, det_path, rec_path, dict_path);
 
         let ocr = OAROCRBuilder::new(&det_path, &rec_path, &dict_path)
             .region_batch_size(4)  // 限制识别器批处理大小，避免内存溢出

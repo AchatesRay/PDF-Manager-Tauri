@@ -17,6 +17,30 @@ pub struct OcrStatus {
     pub models_ready: bool,
     pub missing_files: Vec<String>,
     pub models_dir: String,
+    /// 当前启用的模型（None = 已禁用）
+    pub active_model: Option<String>,
+}
+
+/// 单个模型文件信息（overview 用）
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelFileInfo {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub downloaded: bool,
+}
+
+/// 单个模型类型概览
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelOverview {
+    pub model_type: String,
+    pub label: String,
+    pub files: Vec<ModelFileInfo>,
+    /// 该类型文件是否齐全
+    pub ready: bool,
+    /// 是否当前启用
+    pub is_active: bool,
+    pub models_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,13 +78,121 @@ pub fn get_ocr_status(
         models_ready: status.models_ready,
         missing_files: status.missing_files,
         models_dir: status.models_dir,
+        active_model: status.active_model,
     })
 }
 
-/// 获取下载指导
+/// 获取下载指导（可选指定模型类型，默认 balanced）
 #[tauri::command]
-pub fn get_ocr_download_guide() -> Vec<DownloadGuide> {
-    ModelManager::get_download_guide(ModelType::Balanced)
+pub fn get_ocr_download_guide(model_type: Option<String>) -> Vec<DownloadGuide> {
+    let mt = parse_model_type(model_type);
+    ModelManager::get_download_guide(mt)
+}
+
+/// 解析模型类型字符串（非法值/缺省回退 Balanced，保持历史行为）
+fn parse_model_type(s: Option<String>) -> ModelType {
+    s.and_then(|v| v.parse::<ModelType>().ok())
+        .unwrap_or(ModelType::Balanced)
+}
+
+/// 模型类型展示名
+fn model_type_label(t: ModelType) -> String {
+    match t {
+        ModelType::Lite => "PP-OCRv4 轻量版（~200MB，低内存）".to_string(),
+        ModelType::Mobile => "PP-OCRv5 Mobile（~300MB，与平衡版同文件）".to_string(),
+        ModelType::Server => "PP-OCRv5 Server（~1.5GB，高精度）".to_string(),
+        ModelType::Balanced => "PP-OCRv5 平衡版（~300MB，默认）".to_string(),
+    }
+}
+
+/// 获取全部模型概览：每个模型类型的文件清单、下载 URL、下载状态、启用状态
+#[tauri::command]
+pub fn get_model_overview(
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Result<Vec<ModelOverview>, String> {
+    let svc = ocr_service.lock().map_err(|e| format!("OCR服务锁定失败: {}", e))?;
+    let mm = svc.model_manager();
+    let active = svc.active_model();
+    let models_dir = mm.models_dir().to_string_lossy().to_string();
+
+    let overview = [ModelType::Lite, ModelType::Mobile, ModelType::Server, ModelType::Balanced]
+        .iter()
+        .map(|&t| {
+            let status = mm.check_models(t);
+            let files = ModelManager::get_model_files_static(t)
+                .into_iter()
+                .map(|f| ModelFileInfo {
+                    downloaded: mm.models_dir().join(&f.name).exists(),
+                    name: f.name,
+                    url: f.url,
+                    size: f.size,
+                })
+                .collect();
+            ModelOverview {
+                model_type: t.to_string(),
+                label: model_type_label(t),
+                files,
+                ready: status.ready,
+                is_active: active == Some(t),
+                models_dir: models_dir.clone(),
+            }
+        })
+        .collect();
+
+    Ok(overview)
+}
+
+/// 启用/禁用当前识别模型。
+///
+/// `model_type = None` → 禁用（OCR 不可用，直到启用一个模型）；
+/// `Some("lite"|"mobile"|"server"|"balanced")` → 启用该模型。
+/// 选择持久化到 settings（重启保留）。
+#[tauri::command]
+pub fn set_active_model(
+    model_type: Option<String>,
+    db: State<'_, Db>,
+    ocr_service: State<'_, Mutex<OcrService>>,
+) -> Result<OcrStatus, String> {
+    let parsed: Option<ModelType> = match model_type {
+        Some(s) => {
+            let t: ModelType = s.parse().map_err(|e| format!("未知模型类型: {}", e))?;
+            // 启用前检查文件齐全（禁用不需要）
+            let ready = {
+                let svc = ocr_service.lock().map_err(|e| format!("OCR服务锁定失败: {}", e))?;
+                svc.model_manager().check_models(t).ready
+            };
+            if !ready {
+                return Err(format!("模型 {} 文件不齐全，请先下载", t));
+            }
+            Some(t)
+        }
+        None => None,
+    };
+
+    // 持久化
+    {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+        let value = match &parsed {
+            Some(t) => t.to_string(),
+            None => "disabled".to_string(),
+        };
+        crate::db::set_setting(&conn, crate::db::SETTING_OCR_ACTIVE_MODEL, &value)
+            .map_err(|e| format!("保存设置失败: {}", e))?;
+    }
+
+    // 应用到服务（内部会卸载旧模型）
+    {
+        let mut svc = ocr_service.lock().map_err(|e| format!("OCR服务锁定失败: {}", e))?;
+        svc.set_active_model(parsed);
+        let s = svc.get_status();
+        Ok(OcrStatus {
+            available: s.available,
+            models_ready: s.models_ready,
+            missing_files: s.missing_files,
+            models_dir: s.models_dir,
+            active_model: s.active_model,
+        })
+    }
 }
 
 /// 重新检测模型状态并尝试加载
@@ -94,16 +226,19 @@ pub fn refresh_ocr_status(
         models_ready: final_status.models_ready,
         missing_files: final_status.missing_files,
         models_dir: final_status.models_dir,
+        active_model: final_status.active_model,
     })
 }
 
-/// 下载 OCR 模型
+/// 下载 OCR 模型（可选指定模型类型，默认 balanced）
 #[tauri::command]
 pub async fn download_ocr_models(
+    model_type: Option<String>,
     ocr_service: State<'_, Mutex<OcrService>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    info!("开始下载 OCR 模型");
+    let mt = parse_model_type(model_type);
+    info!("开始下载 OCR 模型: {}", mt);
 
     let model_manager = {
         let svc = ocr_service.lock().map_err(|e| {
@@ -113,10 +248,9 @@ pub async fn download_ocr_models(
         svc.model_manager()
     };
 
-    // 使用固定的 Balanced 模型
-    model_manager.download_models(app_handle, ModelType::Balanced).await?;
+    model_manager.download_models(app_handle, mt).await?;
 
-    info!("OCR 模型下载完成");
+    info!("OCR 模型下载完成: {}", mt);
     Ok(())
 }
 
@@ -445,7 +579,7 @@ pub fn start_ocr(
     }
 
     // 获取模型类型并检查 OCR 服务是否可用
-    {
+    let active_model = {
         let mut ocr_svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
@@ -460,12 +594,15 @@ pub fn start_ocr(
 
         if !ocr_svc.is_available() {
             error!("OCR服务不可用");
-            return Err("OCR服务不可用，请先下载模型文件".to_string());
+            return Err("OCR服务不可用，请先下载并启用模型文件".to_string());
         }
-    }
 
-    // 估算所需内存（使用 Balanced 模型）
-    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension, &ModelType::Balanced);
+        // 内存估算跟随实际启用的模型（防「模型口径分裂」）
+        ocr_svc.active_model().unwrap_or(ModelType::Balanced)
+    };
+
+    // 估算所需内存（按当前启用模型）
+    let required_memory = estimate_task_memory(page_count as u32, max_image_dimension, &active_model);
     info!("估算任务内存: {} MB", required_memory / 1024 / 1024);
 
     // 检查内存是否足够

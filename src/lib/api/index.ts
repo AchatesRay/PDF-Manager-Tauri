@@ -75,6 +75,16 @@ export async function deletePdf(pdfId: number): Promise<void> {
   return invoke('delete_pdf', { pdfId });
 }
 
+// 批量移动
+export interface MoveReport {
+  moved: number[];
+  skipped: Array<[number, string]>;
+}
+
+export async function movePdfs(pdfIds: number[], targetFolderId?: number): Promise<MoveReport> {
+  return invoke('move_pdfs', { pdfIds, targetFolderId });
+}
+
 export async function getPdfDetail(pdfId: number): Promise<PdfDetail> {
   return invoke('get_pdf_detail', { pdfId });
 }
@@ -94,7 +104,8 @@ export interface OcrStatus {
   models_ready: boolean;
   missing_files: string[];
   models_dir: string;
-  model_type: string;
+  /** 当前启用的模型（null = 已禁用） */
+  active_model: string | null;
 }
 
 export interface DownloadProgress {
@@ -117,12 +128,38 @@ export async function refreshOcrStatus(): Promise<OcrStatus> {
   return invoke('refresh_ocr_status');
 }
 
-export async function getOcrDownloadGuide(): Promise<DownloadGuide[]> {
-  return invoke('get_ocr_download_guide');
+export async function getOcrDownloadGuide(modelType?: string): Promise<DownloadGuide[]> {
+  return invoke('get_ocr_download_guide', { modelType });
 }
 
-export async function downloadOcrModels(): Promise<void> {
-  return invoke('download_ocr_models');
+export async function downloadOcrModels(modelType?: string): Promise<void> {
+  return invoke('download_ocr_models', { modelType });
+}
+
+// 模型管理面板
+export interface ModelFileInfo {
+  name: string;
+  url: string;
+  size: number;
+  downloaded: boolean;
+}
+
+export interface ModelOverview {
+  model_type: string;
+  label: string;
+  files: ModelFileInfo[];
+  ready: boolean;
+  is_active: boolean;
+  models_dir: string;
+}
+
+export async function getModelOverview(): Promise<ModelOverview[]> {
+  return invoke('get_model_overview');
+}
+
+/** 启用 modelType；传 null 禁用当前模型 */
+export async function setActiveModel(modelType: string | null): Promise<OcrStatus> {
+  return invoke('set_active_model', { modelType });
 }
 
 export async function cancelOcrDownload(): Promise<void> {

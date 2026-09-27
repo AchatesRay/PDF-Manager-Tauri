@@ -17,11 +17,17 @@ pub fn run() {
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-    // 先初始化基本日志到文件和控制台
-    init_early_logging(&exe_dir);
+    // 数据目录迁移刷新：必须在日志初始化之前 —— ① 补迁 set_data_dir 与重启之间
+    // 产生的新数据（DB/索引/模型/日志）② 决定本次会话日志写入哪个目录。
+    // 失败时内部回退引导设置到源目录，应用按旧数据完整启动（零丢失）。
+    let effective_data_dir = commands::settings::finish_pending_data_dir_migration(&exe_dir);
+
+    // 初始化基本日志到文件和控制台（写 <数据目录>/logs，与 get_settings 上报口径一致）
+    init_early_logging(&effective_data_dir);
 
     info!("启动应用程序");
     info!("可执行文件目录: {:?}", exe_dir);
+    info!("生效数据目录: {:?}", effective_data_dir);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -81,6 +87,30 @@ pub fn run() {
                 }
             };
             app.manage(std::sync::Mutex::new(ocr_service));
+
+            // 应用持久化的「启用模型」设置（ocr_active_model；缺省=balanced，与历史行为一致）
+            {
+                let active = app
+                    .state::<std::sync::Mutex<rusqlite::Connection>>()
+                    .lock()
+                    .ok()
+                    .and_then(|conn| db::get_setting(&conn, db::SETTING_OCR_ACTIVE_MODEL));
+                let parsed: Option<services::model_manager::ModelType> = match active.as_deref() {
+                    None | Some("balanced") => Some(services::model_manager::ModelType::Balanced),
+                    Some("disabled") => None,
+                    Some(v) => match v.parse::<services::model_manager::ModelType>() {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            warn!("持久化模型设置无法解析: {}, {}", v, e);
+                            Some(services::model_manager::ModelType::Balanced)
+                        }
+                    },
+                };
+                if let Ok(mut svc) = app.state::<std::sync::Mutex<services::ocr_service::OcrService>>().lock() {
+                    svc.set_active_model(parsed);
+                    info!("启动应用启用模型设置: {:?}", parsed);
+                }
+            }
 
             // 确保数据目录存在
             debug!("创建数据目录...");
@@ -182,12 +212,15 @@ pub fn run() {
             commands::pdf::add_pdf,
             commands::pdf::get_pdf_list,
             commands::pdf::delete_pdf,
+            commands::pdf::move_pdfs,
             commands::pdf::get_pdf_detail,
             commands::pdf::render_pdf_page,
             commands::search::search,
             commands::search::search_filename,
             commands::ocr::get_ocr_status,
             commands::ocr::get_ocr_download_guide,
+            commands::ocr::get_model_overview,
+            commands::ocr::set_active_model,
             commands::ocr::refresh_ocr_status,
             commands::ocr::download_ocr_models,
             commands::ocr::cancel_ocr_download,
@@ -208,12 +241,16 @@ pub fn run() {
 }
 
 /// 初始化早期日志（生成日志文件）
-fn init_early_logging(exe_dir: &std::path::Path) {
+///
+/// `base_dir` = 生效数据目录（`finish_pending_data_dir_migration` 返回）：
+/// 日志写 `<data_dir>/logs`，与 `get_settings.log_dir` 上报一致；
+/// 默认用户 data_dir = exe 目录 → 行为与历史完全一致。
+fn init_early_logging(base_dir: &std::path::Path) {
     use tracing_subscriber::fmt::time::LocalTime;
     use time::macros::format_description;
     use time::OffsetDateTime;
 
-    let log_dir = exe_dir.join("logs");
+    let log_dir = base_dir.join("logs");
 
     // 创建日志目录
     let _ = std::fs::create_dir_all(&log_dir);

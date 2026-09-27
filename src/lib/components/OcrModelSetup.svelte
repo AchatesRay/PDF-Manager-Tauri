@@ -16,9 +16,11 @@
     isDownloading,
     showDownloadDialog,
   } from '../stores';
+  import ModelManagerPanel from './ModelManagerPanel.svelte';
 
   let error: string | null = null;
   let downloadGuides: DownloadGuide[] = [];
+  let showModelPanel = false;
 
   onMount(() => {
     checkStatus();
@@ -99,10 +101,18 @@
     : '✗ 模型未安装';
 </script>
 
-<!-- 状态显示（嵌入在 PdfList header 中） -->
-<div class="status-text" class:ready={$ocrModelStatus?.models_ready}>
+<!-- 状态显示（嵌入在 PdfList header 中）：点击打开模型管理面板 -->
+<button
+  class="status-text"
+  class:ready={$ocrModelStatus?.models_ready}
+  on:click={() => showModelPanel = true}
+  title="点击查看/下载/启用/禁用 OCR 模型"
+>
   {statusText}
-</div>
+</button>
+
+<!-- 模型管理面板 -->
+<ModelManagerPanel show={showModelPanel} onClose={() => showModelPanel = false} />
 
 <!-- 错误提示 -->
 {#if error}
@@ -187,6 +197,17 @@
   .status-text {
     font-size: 11px;
     color: var(--text-muted, #9ca3af);
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .status-text:hover {
+    color: var(--accent, #3b82f6);
+    background: var(--accent-soft, #eff6ff);
   }
 
   .status-text.ready {
