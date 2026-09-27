@@ -163,6 +163,32 @@ fn write_guide_settings(
     Ok(())
 }
 
+/// 目标库是否「空」（旧版遗留半迁移的自动修复判定）：
+/// 不存在 → 空；存在但 pdfs/folders/pdf_pages 全为 0 → 空；
+/// 打不开或查询失败 → **非空**（保守：不动作，避免误覆盖有数据的库）。
+fn target_db_is_fresh(target: &Path) -> bool {
+    let db = target.join("pdf-manager.db");
+    if !db.exists() {
+        return true;
+    }
+    match rusqlite::Connection::open_with_flags(
+        &db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) {
+        Ok(conn) => conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM pdfs)
+                       + (SELECT COUNT(*) FROM folders)
+                       + (SELECT COUNT(*) FROM pdf_pages)",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(-1)
+            == 0,
+        Err(_) => false,
+    }
+}
+
 /// 取当前活跃 DB 文件路径（`PRAGMA database_list` = 本连接真实打开的文件）。
 /// 不能用「data_dir 设置值」当数据源目录：上一次 set_data_dir 已把设置改成新目录，
 /// 但运行期数据（连接、物理文件）仍在旧目录 —— 以活跃 DB 所在目录为迁移源才准确。
@@ -368,6 +394,12 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
 /// 启动期刷新迁移：补迁 `set_data_dir` 与重启之间产生的新数据（新导入 PDF、
 /// OCR 结果、索引增量、日志、新下载模型），并再次修正目标 DB 路径。
 ///
+/// 迁移源判定：
+/// ① 有 `data_dir_migrate_from` 标记 → 标记目录（本会话 set_data_dir 的刷新补迁）；
+/// ② 无标记但「引导 data_dir=X ≠ exe 目录，且引导库有数据、X 库为空」→
+///    **旧版遗留半迁移状态自动修复**（旧 set_data_dir 只写设置不迁 DB：记录留在
+///    引导库、应用却打开 X 的空库 —— 升级用户会看到「数据全部消失」），source=exe。
+///
 /// 由 `lib::run` 在 `init_early_logging` **之前**调用。失败时回退引导设置到源目录
 /// （应用按旧数据完整启动，零丢失）。返回**生效的数据目录**。
 pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
@@ -377,7 +409,7 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
         return default_dir;
     }
 
-    let (target, source) = {
+    let (target, marker, guide_has_data) = {
         let conn = match rusqlite::Connection::open(&guide) {
             Ok(c) => c,
             Err(e) => {
@@ -385,14 +417,49 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
                 return default_dir;
             }
         };
+        // 引导库自身是否承载数据（pdfs/folders/pdf_pages 任一非空）
+        let has_data: bool = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM pdfs)
+                       + (SELECT COUNT(*) FROM folders)
+                       + (SELECT COUNT(*) FROM pdf_pages)",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
         (
             get_setting(&conn, SETTING_DATA_DIR),
             get_setting(&conn, SETTING_DATA_DIR_MIGRATE_FROM),
+            has_data,
         )
     };
 
+    // 判定迁移源（详见函数文档 ①②）
+    let source: Option<String> = match marker {
+        Some(m) => Some(m),
+        None => target.as_deref().and_then(|t_raw| {
+            let t = PathBuf::from(t_raw);
+            if normalize_dir(&t) == normalize_dir(exe_dir) {
+                return None; // 目标就是 exe 目录：正常默认场景
+            }
+            if !guide_has_data {
+                return None; // 引导库无数据：没有可迁的东西
+            }
+            if target_db_is_fresh(&t) {
+                info!(
+                    "检测到旧版遗留半迁移状态（引导库指向 {:?} 但其库为空、引导库有数据），自动修复: {:?} -> {:?}",
+                    t, exe_dir, t
+                );
+                Some(exe_dir.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }),
+    };
+
     let (Some(target), Some(source)) = (target.clone(), source) else {
-        // 无迁移标记：正常路径 —— 引导设置指向哪就用哪（无标记的老配置 = 原行为）
+        // 无迁移源：正常路径 —— 引导设置指向哪就用哪（无标记的老配置 = 原行为）
         return target
             .map(PathBuf::from)
             .or_else(|| {
@@ -800,5 +867,115 @@ mod tests {
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(dst.join("pdf-manager.db"), b"").unwrap();
         assert!(dst.join("pdf-manager.db").exists(), "冲突检测条件：目标含 db 文件");
+    }
+
+    /// 旧版遗留半迁移自动修复：引导库有数据 + 目标库空 + 无标记 → 自动 exe→目标 迁移
+    #[test]
+    fn test_auto_heal_legacy_half_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let exe_dir = root.path().join("app");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+
+        // 引导库（= exe 库）：有真实数据 + data_dir 指向目标（旧版 set_data_dir 现场）
+        let dst = root.path().join("legacy_dst");
+        let guide = exe_dir.join("pdf-manager.db");
+        let conn = rusqlite::Connection::open(&guide).unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (1, 'a.pdf', ?1, 'done')",
+            [exe_dir.join("pdfs").join("a.pdf").to_string_lossy().to_string()],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO folders (id, name) VALUES (1, '组')", []).unwrap();
+        conn.execute(
+            "INSERT INTO pdf_pages (pdf_id, page_number, ocr_text, ocr_status) VALUES (1, 1, '正文', 'done')",
+            [],
+        )
+        .unwrap();
+        set_setting(&conn, SETTING_DATA_DIR, &dst.to_string_lossy()).unwrap();
+        // 无 data_dir_migrate_from 标记（旧版切换不写标记）
+        drop(conn);
+
+        // exe 库侧的 models/index 也应随迁
+        std::fs::create_dir_all(exe_dir.join("models")).unwrap();
+        std::fs::write(exe_dir.join("models").join("m.onnx"), b"m").unwrap();
+
+        let effective = finish_pending_data_dir_migration(&exe_dir);
+        assert_eq!(normalize_dir(&effective), normalize_dir(&dst), "应返回目标目录");
+
+        // 目标库已从空变为有数据
+        let dconn = rusqlite::Connection::open(dst.join("pdf-manager.db")).unwrap();
+        let n: i64 = dconn
+            .query_row("SELECT COUNT(*) FROM pdfs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "引导库的 pdfs 记录应迁入目标库");
+        let pages: i64 = dconn
+            .query_row("SELECT COUNT(*) FROM pdf_pages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pages, 1);
+        // storage_path 前缀已修正到目标目录
+        let sp: String = dconn
+            .query_row("SELECT storage_path FROM pdfs WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(sp, dst.join("pdfs").join("a.pdf").to_string_lossy());
+        drop(dconn);
+
+        // models 已复制
+        assert!(dst.join("models").join("m.onnx").exists());
+
+        // 第二次启动：目标库已有数据 → 不再触发自动修复（不会重复迁移）
+        let exe_db_size_after = std::fs::metadata(&guide).unwrap().len();
+        std::fs::write(dst.join("marker.txt"), b"1").unwrap(); // 目标侧标记物
+        let effective2 = finish_pending_data_dir_migration(&exe_dir);
+        assert_eq!(normalize_dir(&effective2), normalize_dir(&dst));
+        assert_eq!(
+            std::fs::metadata(&guide).unwrap().len(),
+            exe_db_size_after,
+            "目标库非空时不应再执行迁移"
+        );
+    }
+
+    /// 反向：目标库已有数据 → 不自动修复（避免误把引导库覆盖到用户已在使用的新库）
+    #[test]
+    fn test_auto_heal_skips_when_target_has_data() {
+        let root = tempfile::tempdir().unwrap();
+        let exe_dir = root.path().join("app");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let dst = root.path().join("busy_dst");
+
+        // 引导库有数据、data_dir=dst（无标记）
+        let guide = exe_dir.join("pdf-manager.db");
+        let conn = rusqlite::Connection::open(&guide).unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (1, 'old.pdf', '/x/old.pdf', 'done')",
+            [],
+        )
+        .unwrap();
+        set_setting(&conn, SETTING_DATA_DIR, &dst.to_string_lossy()).unwrap();
+        drop(conn);
+
+        // 目标库已有自己的数据 → 不可动
+        std::fs::create_dir_all(&dst).unwrap();
+        let dconn = rusqlite::Connection::open(dst.join("pdf-manager.db")).unwrap();
+        dconn.execute_batch(crate::db::SCHEMA).unwrap();
+        dconn.execute(
+            "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (9, 'mine.pdf', '/y/mine.pdf', 'done')",
+            [],
+        )
+        .unwrap();
+        drop(dconn);
+
+        let effective = finish_pending_data_dir_migration(&exe_dir);
+        assert_eq!(normalize_dir(&effective), normalize_dir(&dst));
+
+        let dconn = rusqlite::Connection::open(dst.join("pdf-manager.db")).unwrap();
+        let n: i64 = dconn.query_row("SELECT COUNT(*) FROM pdfs", [], |r| r.get(0)).unwrap();
+        let mine: i64 = dconn
+            .query_row("SELECT COUNT(*) FROM pdfs WHERE id = 9", [], |r| r.get(0))
+            .unwrap();
+        drop(dconn);
+        assert_eq!(n, 1, "目标库数据不应被引导库覆盖");
+        assert_eq!(mine, 1, "目标库自己的记录必须完好");
     }
 }
