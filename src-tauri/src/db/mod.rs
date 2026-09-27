@@ -41,6 +41,9 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
     let db_path = data_dir.join("pdf-manager.db");
     info!("数据库路径: {:?}", db_path);
 
+    let size_now = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    info!("[migrate] init: open 前 db 大小={}", size_now(&db_path));
+
     let conn = match Connection::open(&db_path) {
         Ok(c) => {
             debug!("数据库连接成功");
@@ -51,6 +54,7 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
             return Err(Box::new(e));
         }
     };
+    info!("[migrate] init: open 后 db 大小={}", size_now(&db_path));
 
     // WAL：读写并发更好（搜索读不阻塞 OCR 写）
     // journal_mode 会返回查询结果，用 query_row 而非 pragma_update
@@ -80,6 +84,12 @@ pub fn init_database(app_handle: &tauri::AppHandle) -> Result<Connection, Box<dy
     }
 
     info!("数据库初始化完成: {:?}", db_path);
+    info!(
+        "[migrate] init: 完成后 db 大小={} pdfs={} folders={}",
+        size_now(&db_path),
+        conn.query_row("SELECT COUNT(*) FROM pdfs", [], |r| r.get::<_, i64>(0)).unwrap_or(-1),
+        conn.query_row("SELECT COUNT(*) FROM folders", [], |r| r.get::<_, i64>(0)).unwrap_or(-1),
+    );
     Ok(conn)
 }
 

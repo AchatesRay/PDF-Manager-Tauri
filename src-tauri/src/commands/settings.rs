@@ -77,6 +77,24 @@ fn copy_data_dir_core(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst)
         .map_err(|e| format!("创建目标目录 {:?} 失败: {}", dst, e))?;
 
+    // 防御：目标残留的孤儿 WAL/SHM（上一会话被硬杀、或目标库曾是另一个库）若不清理，
+    // 会与即将复制的新主库组成「新 db + 旧 journal」的不一致状态，SQLite 恢复行为不可控。
+    // 源有 journal → 三件套一起复制（下方循环）；源没有 → 目标的残留改名挪开（不删除，留痕可回查）。
+    let src_has_wal = src.join("pdf-manager.db-wal").exists();
+    if !src_has_wal {
+        for suffix in ["-wal", "-shm"] {
+            let orphan = dst.join(format!("pdf-manager.db{}", suffix));
+            if orphan.exists() {
+                let aside = dst.join(format!("pdf-manager.db{}.stale.bak", suffix));
+                if let Err(e) = std::fs::rename(&orphan, &aside) {
+                    warn!("挪开孤儿 journal 失败 {:?}: {}", orphan, e);
+                } else {
+                    info!("已挪开目标残留 journal: {:?} -> {:?}", orphan, aside);
+                }
+            }
+        }
+    }
+
     for name in MIGRATE_DB_FILES {
         let from = src.join(name);
         if from.exists() {
@@ -161,6 +179,21 @@ fn write_guide_settings(
         }
     }
     Ok(())
+}
+
+/// 迁移诊断轨迹（不依赖 tracing subscriber —— finish_pending 在日志系统初始化前执行）
+fn mig_trace(exe_dir: &Path, msg: &str) {
+    use std::io::Write;
+    let dir = exe_dir.join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("migration-trace.log"))
+    {
+        let _ = writeln!(f, "{} {}", chrono::Utc::now().to_rfc3339(), msg);
+    }
+    info!("[migrate] {}", msg);
 }
 
 /// 目标库是否「空」（旧版遗留半迁移的自动修复判定）：
@@ -428,6 +461,12 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
             )
             .map(|n| n > 0)
             .unwrap_or(false);
+        mig_trace(exe_dir, &format!(
+            "entry: guide_has_data={}, target={:?}, marker={:?}",
+            has_data,
+            get_setting(&conn, SETTING_DATA_DIR),
+            get_setting(&conn, SETTING_DATA_DIR_MIGRATE_FROM),
+        ));
         (
             get_setting(&conn, SETTING_DATA_DIR),
             get_setting(&conn, SETTING_DATA_DIR_MIGRATE_FROM),
@@ -447,12 +486,13 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
                 return None; // 引导库无数据：没有可迁的东西
             }
             if target_db_is_fresh(&t) {
-                info!(
-                    "检测到旧版遗留半迁移状态（引导库指向 {:?} 但其库为空、引导库有数据），自动修复: {:?} -> {:?}",
-                    t, exe_dir, t
-                );
+                mig_trace(exe_dir, &format!(
+                    "auto-heal: legacy half-migration detected, source={:?} target={:?}",
+                    exe_dir, t
+                ));
                 Some(exe_dir.to_string_lossy().to_string())
             } else {
+                mig_trace(exe_dir, &format!("auto-heal skipped: target db not fresh ({:?})", t));
                 None
             }
         }),
@@ -491,8 +531,22 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
     }
 
     info!("启动刷新迁移: {:?} -> {:?}", s, t);
+    let size_of = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    mig_trace(exe_dir, &format!(
+        "before copy: src_db={} dst_db={}",
+        size_of(&s.join("pdf-manager.db")),
+        size_of(&t.join("pdf-manager.db"))
+    ));
     let refreshed = copy_data_dir_core(&s, &t)
-        .and_then(|_| fix_db_paths(&t.join("pdf-manager.db"), &s, &t));
+        .and_then(|_| {
+            mig_trace(exe_dir, &format!("after copy: dst_db={}", size_of(&t.join("pdf-manager.db"))));
+            fix_db_paths(&t.join("pdf-manager.db"), &s, &t)
+        });
+    mig_trace(exe_dir, &format!(
+        "after fix: dst_db={} result={:?}",
+        size_of(&t.join("pdf-manager.db")),
+        refreshed.as_ref().map(|_| "ok").map_err(|e| e.clone())
+    ));
 
     match refreshed {
         Ok(_) => {
