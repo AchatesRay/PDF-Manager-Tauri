@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { open, confirm } from '@tauri-apps/plugin-dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { safeConfirm } from '../dialog';
   import { folders, selectedFolderId, isLoading, pdfList } from '../stores';
   import { getFolders, createFolder, deleteFolder } from '../api';
   import { onMount, tick } from 'svelte';
@@ -176,7 +177,7 @@
     const folder = $folders.find(f => f.id === id);
     const folderName = folder?.name || '此文件夹';
 
-    const confirmed = await confirm(`确定要删除文件夹 "${folderName}" 吗？`, {
+    const confirmed = await safeConfirm(`确定要删除文件夹 "${folderName}" 吗？`, {
       title: '确认删除',
       kind: 'warning',
     });

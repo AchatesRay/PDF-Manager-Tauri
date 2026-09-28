@@ -98,6 +98,23 @@ export async function searchFilename(query: string, folderId?: number): Promise<
   return invoke('search_filename', { query, folderId });
 }
 
+/** 命中位置的归一化矩形（0~1，相对页面宽高）——搜索预览高亮 */
+export interface MatchRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** 获取某页命中关键字的归一化矩形（旧数据无坐标返回 []） */
+export async function getPageMatches(
+  pdfId: number,
+  pageNumber: number,
+  query: string
+): Promise<MatchRect[]> {
+  return invoke('get_page_matches', { pdfId, pageNumber, query });
+}
+
 // OCR API
 export interface OcrStatus {
   available: boolean;

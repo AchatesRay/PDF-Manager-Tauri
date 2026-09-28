@@ -301,9 +301,38 @@ struct OcrRegion {
     conf: f32,
 }
 
+/// 识别区域的持久化形态（搜索预览高亮，2026-09-28）。
+///
+/// 坐标为 **0~1 归一化**（÷ 处理图像宽高）：OCR 渲染尺寸（默认 1000）与
+/// 预览渲染尺寸（2000）不同，归一化后与渲染/缩放/适应窗口全部解耦，
+/// 前端直接按百分比定位。
+/// `text` 为 OCR **原始输出**（未 postprocess）；查询侧按整页语言检测
+/// 逐区域跑同一后处理再匹配（见 `search_service::match_page_regions`）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RegionBox {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    pub text: String,
+}
+
 impl OcrRegion {
     fn area(&self) -> f32 {
         ((self.x1 - self.x0).max(0.0)) * ((self.y1 - self.y0).max(0.0))
+    }
+
+    /// 转为归一化持久化形态（像素坐标 ÷ 处理图像宽高，钳位到 [0,1]）
+    fn to_region_box(&self, width: u32, height: u32) -> RegionBox {
+        let w = width.max(1) as f32;
+        let h = height.max(1) as f32;
+        RegionBox {
+            x0: (self.x0 / w).clamp(0.0, 1.0),
+            y0: (self.y0 / h).clamp(0.0, 1.0),
+            x1: (self.x1 / w).clamp(0.0, 1.0),
+            y1: (self.y1 / h).clamp(0.0, 1.0),
+            text: self.text.clone(),
+        }
     }
 
     /// 从识别区域构造：置信度 < MIN_CONFIDENCE 丢弃；分块局部坐标换算为整页坐标
@@ -538,8 +567,24 @@ impl OcrService {
         self.recognize_with_limit(image, DEFAULT_MAX_IMAGE_DIMENSION)
     }
 
-    /// 执行 OCR 识别（指定最大尺寸限制）
+    /// 执行 OCR 识别（指定最大尺寸限制）——只要文本
+    ///
+    /// 薄封装：文本结果与 `recognize_with_regions` 完全一致（搜索预览高亮
+    /// 需要坐标时走 `recognize_with_regions`，本函数保持历史签名与输出不变）。
     pub fn recognize_with_limit(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
+        self.recognize_with_regions(image, max_dimension).map(|(text, _)| text)
+    }
+
+    /// 执行 OCR 识别并返回归一化区域坐标（文本 + `RegionBox` 列表）
+    ///
+    /// - 文本生成路径与历史行为**完全一致**（分块：merge_regions 后 join；
+    ///   小图：predict 原序 join；两者均接 `optimize_by_language`）。
+    /// - 区域坐标 ÷ 处理图像宽高 归一化到 [0,1]，供搜索预览高亮定位。
+    pub fn recognize_with_regions(
+        &mut self,
+        image: &DynamicImage,
+        max_dimension: u32,
+    ) -> Result<(String, Vec<RegionBox>), OcrError> {
         // 如果模型未加载，尝试加载
         if self.ocr.is_none() {
             self.init_ocr()?;
@@ -582,9 +627,12 @@ impl OcrService {
 
             let rgb_image = process_image.to_rgb8();
             debug!("图像尺寸: {}x{}", rgb_image.width(), rgb_image.height());
+            // 归一化除数 = 实际送入模型的图像尺寸（内存降级缩放后仍正确）
+            let (norm_w, norm_h) = (rgb_image.width(), rgb_image.height());
 
             match ocr.predict(vec![rgb_image]) {
                 Ok(results) => {
+                    // 文本：保持历史行为（predict 原序、同置信度过滤、join "\n"）
                     let raw_text = results
                         .first()
                         .map(|r| {
@@ -604,6 +652,14 @@ impl OcrService {
                         })
                         .unwrap_or_default();
 
+                    // 区域：与文本同序收集（单 predict 即整页，无重叠去重需求）
+                    let boxes: Vec<RegionBox> = results
+                        .iter()
+                        .flat_map(|r| r.text_regions.iter())
+                        .filter_map(|region| OcrRegion::from_text_region(region, 0.0, 0.0, 1.0))
+                        .map(|r| r.to_region_box(norm_w, norm_h))
+                        .collect();
+
                     // 应用后处理
                     let text = if !raw_text.is_empty() {
                         let lang = detect_text_language(&raw_text);
@@ -612,8 +668,8 @@ impl OcrService {
                         raw_text
                     };
 
-                    info!("OCR 识别完成: {} 字符", text.len());
-                    return Ok(text);
+                    info!("OCR 识别完成: {} 字符, {} 区域", text.len(), boxes.len());
+                    return Ok((text, boxes));
                 }
                 Err(e) => {
                     let error_str = e.to_string();
@@ -640,13 +696,18 @@ impl OcrService {
         }
     }
 
-    /// 分块处理大图像
+    /// 分块处理大图像（返回文本 + 归一化区域坐标）
     ///
     /// 相对旧实现的两处根因修复：
     /// 1. 分块数量改用 `compute_tiles`（向上取整）——旧公式 floor 会把右/下侧
     ///    不足一个 step 的条带整块丢掉（1414×2000 旧版只处理左上 1200×1200）
     /// 2. 结果按整页坐标合并 + 重叠去重——补齐覆盖后相邻分块的重叠区会重复识别
-    fn recognize_with_tiling(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
+    ///
+    /// 坐标归一化除数 = **缩放后**整页尺寸 (sw, sh)（区域坐标即该坐标系），
+    /// 归一化比例与缩放无关（等比缩放），可直接用于任意渲染尺寸的预览。
+    fn recognize_with_tiling(&mut self, image: &DynamicImage, max_dimension: u32)
+        -> Result<(String, Vec<RegionBox>), OcrError>
+    {
         let ocr = self.ocr.as_ref().ok_or_else(|| {
             OcrError::OcrFailed("OCR 模型未初始化".to_string())
         })?;
@@ -751,6 +812,8 @@ impl OcrService {
 
         // 合并分块结果（阅读顺序 + 重叠去重）并应用后处理
         let merged = merge_regions(regions);
+        // 归一化区域（÷ 缩放后整页尺寸），顺序 = merged 阅读顺序 = 文本顺序
+        let boxes: Vec<RegionBox> = merged.iter().map(|r| r.to_region_box(sw, sh)).collect();
         let raw_text = merged
             .iter()
             .map(|r| r.text.as_str())
@@ -764,7 +827,7 @@ impl OcrService {
         };
 
         info!("分块 OCR 完成: {} 字符 ({} 个区域)", text.len(), merged.len());
-        Ok(text)
+        Ok((text, boxes))
     }
 
     /// 获取模型管理器（用于下载等操作）

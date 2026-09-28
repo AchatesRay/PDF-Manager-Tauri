@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { open, confirm } from '@tauri-apps/plugin-dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { safeConfirm } from '../dialog';
   import { getSettings, setDataDir, resetDataDir, setPdfReader, setOcrMaxImageDimension, setOcrPreprocessMode } from '../api';
   import { onMount } from 'svelte';
   import type { AppSettings, PreprocessMode } from '../api';
@@ -43,7 +44,7 @@
   }
 
   async function handleResetDataDir() {
-    const confirmed = await confirm('确定重置数据目录为默认值？', {
+    const confirmed = await safeConfirm('确定重置数据目录为默认值？', {
       title: '确认重置',
       kind: 'warning',
     });
@@ -78,7 +79,7 @@
   }
 
   async function clearPdfReader() {
-    const confirmed = await confirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。', {
+    const confirmed = await safeConfirm('确定清除PDF阅读器设置？将使用系统默认程序打开PDF。', {
       title: '确认清除',
       kind: 'warning',
     });

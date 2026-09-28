@@ -63,4 +63,6 @@ pub const MIGRATIONS: &[&str] = &[
     // 去除 (pdf_id, page_number) 重复行（保留最小 id），再建唯一索引
     "DELETE FROM pdf_pages WHERE id NOT IN (SELECT MIN(id) FROM pdf_pages GROUP BY pdf_id, page_number)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_pdf_page ON pdf_pages(pdf_id, page_number)",
+    // 搜索预览高亮（2026-09-28）：OCR 区域坐标 JSON（0~1 归一化），缺失时前端不高亮
+    "ALTER TABLE pdf_pages ADD COLUMN ocr_regions TEXT",
 ];

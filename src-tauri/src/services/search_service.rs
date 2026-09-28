@@ -8,6 +8,9 @@ use tantivy::{Index, IndexReader, TantivyDocument, Term};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+use crate::services::ocr_service::RegionBox;
+use crate::services::text_postprocess::{detect_text_language, optimize_by_language};
+
 #[derive(Error, Debug)]
 pub enum SearchError {
     #[error("索引错误: {0}")]
@@ -28,6 +31,15 @@ pub struct SearchResult {
     pub score: f32,
     pub snippet: String,
     pub match_count: u32,
+}
+
+/// 命中位置的归一化矩形（0~1，相对页面宽高）——搜索预览高亮 IPC 载荷
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct NormRect {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
 }
 
 pub struct SearchService {
@@ -515,6 +527,66 @@ impl SearchService {
         Ok(results)
     }
 
+    /// 在页面区域中定位 query 的全部命中，返回归一化矩形（搜索预览高亮）。
+    ///
+    /// **口径与 `generate_snippet` 严格一致**（保证「结果 match_count = 高亮框数」）：
+    /// - 语言检测输入 = 各区域原文 join("\n") —— 与 OCR 落库时的检测输入完全相同；
+    /// - 每区域用同一语言跑 `optimize_by_language` 再 `clean_ocr_text`，
+    ///   与「整页后处理 + 整页 clean」等价（join 分隔符 `\n` 隔开了跨区标点去重、
+    ///   千分位判断的上下文窗口，trim 仅影响首尾区域外缘空白）；
+    /// - query **不**清洗（`generate_snippet` 同样拿原始 query 匹配已 clean 的内容）。
+    ///
+    /// 区域顺序 = 落库时的阅读顺序 → 返回顺序与结果列表页内序号对齐。
+    /// 子框切分：OCR 行框内字符近似均匀，按「命中字符区间 / 区域字符总数」比例
+    /// 在 x 方向切分（中文场景精度足够；近似实现已文档化）。
+    pub fn match_page_regions(regions: &[RegionBox], query: &str) -> Vec<NormRect> {
+        if regions.is_empty() || query.is_empty() {
+            return Vec::new();
+        }
+
+        // 与 OCR 落库同一输入做语言检测（detect_text_language 对空白不敏感）
+        let raw_all: String = regions
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lang = detect_text_language(&raw_all);
+
+        let query_chars: Vec<char> = query.chars().collect();
+        let mut out = Vec::new();
+
+        for region in regions {
+            let optimized = optimize_by_language(&region.text, lang);
+            let cleaned = Self::clean_ocr_text(&optimized);
+            let chars: Vec<char> = cleaned.chars().collect();
+            if chars.len() < query_chars.len() {
+                continue;
+            }
+
+            let total = chars.len() as f32;
+            let qlen = query_chars.len();
+            let mut i = 0;
+            while i + qlen <= chars.len() {
+                if chars[i..i + qlen] == query_chars[..] {
+                    // 子框：x 按字符比例切分，y 取整行高度
+                    let fx0 = (region.x0 + (region.x1 - region.x0) * (i as f32) / total).clamp(0.0, 1.0);
+                    let fx1 = (region.x0 + (region.x1 - region.x0) * ((i + qlen) as f32) / total).clamp(0.0, 1.0);
+                    out.push(NormRect {
+                        x0: fx0.min(fx1),
+                        y0: region.y0,
+                        x1: fx0.max(fx1),
+                        y1: region.y1,
+                    });
+                    i += qlen; // 跳过已匹配部分（与 generate_snippet 同：不重叠计数）
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        out
+    }
+
     /// 索引中的文档（页）数量——用于判断索引是否为空（版本升级重建后的回填门控）
     pub fn doc_count(&self) -> u64 {
         self.reader.searcher().num_docs()
@@ -874,5 +946,87 @@ mod tests {
             SearchService::split_runs("NewToken"),
             vec![(false, "NewToken".to_string())]
         );
+    }
+
+    // ===== 搜索预览高亮（2026-09-28）：match_page_regions =====
+
+    fn box_(x0: f32, y0: f32, x1: f32, y1: f32, text: &str) -> RegionBox {
+        RegionBox { x0, y0, x1, y1, text: text.to_string() }
+    }
+
+    /// 单区域命中：子框按字符比例切分且钳位在行框内
+    #[test]
+    fn test_match_page_regions_sub_rect_by_char_ratio() {
+        // 一行10字 "这是一份测试合同文本"，框 x∈[0.1,0.9]
+        let regions = vec![box_(0.1, 0.2, 0.9, 0.3, "这是一份测试合同文本")];
+        let rects = SearchService::match_page_regions(&regions, "测试");
+        assert_eq!(rects.len(), 1, "应命中 1 处");
+        let r = rects[0];
+        // "测试" 在 10 字中占 [4,6) → x0 = 0.1 + 0.8*0.4 = 0.42, x1 = 0.1 + 0.8*0.6 = 0.58
+        assert!((r.x0 - 0.42).abs() < 1e-5, "x0={}", r.x0);
+        assert!((r.x1 - 0.58).abs() < 1e-5, "x1={}", r.x1);
+        assert_eq!(r.y0, 0.2);
+        assert_eq!(r.y1, 0.3);
+        assert!(r.x0 >= 0.0 && r.x1 <= 1.0 && r.x0 <= r.x1);
+    }
+
+    /// 多区域多命中：顺序 = 阅读顺序，不重叠计数（与 generate_snippet 同口径）
+    #[test]
+    fn test_match_page_regions_multi_region_order_and_count() {
+        let regions = vec![
+            box_(0.0, 0.0, 1.0, 0.1, "甲方：北斗科技有限公司"),
+            box_(0.0, 0.12, 1.0, 0.22, "乙方：北斗网络科技公司"),
+            box_(0.0, 0.24, 1.0, 0.34, "无相关内容"),
+        ];
+        let rects = SearchService::match_page_regions(&regions, "北斗");
+        assert_eq!(rects.len(), 2, "应命中 2 处");
+        assert!(rects[0].y0 < rects[1].y0, "顺序应为阅读顺序");
+        assert!(rects[0].x0 > 0.0, "北斗不在行首，x0 应 > 区域 x0");
+
+        // 与 generate_snippet 的 match_count 对齐（高亮框数 = 结果列表页内计数）
+        let page_text = regions
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (_, snippet_count) = SearchService::generate_snippet(&page_text, "北斗", 100);
+        assert_eq!(rects.len() as u32, snippet_count, "框数应等于 snippet match_count");
+    }
+
+    /// OCR 中文逐字空格：clean_ocr_text 口径参与匹配（与索引/snippet 一致）
+    #[test]
+    fn test_match_page_regions_cleans_ocr_spaces() {
+        let regions = vec![box_(0.0, 0.0, 1.0, 0.1, "奇 安 信 集 团")];
+        let rects = SearchService::match_page_regions(&regions, "奇安信");
+        assert_eq!(rects.len(), 1, "中文间空格应被清洗后命中");
+    }
+
+    /// 空 query / 空区域 / 无命中 → 空数组
+    #[test]
+    fn test_match_page_regions_edge_cases() {
+        assert!(SearchService::match_page_regions(&[], "北斗").is_empty());
+        let regions = vec![box_(0.0, 0.0, 1.0, 0.1, "随便什么")];
+        assert!(SearchService::match_page_regions(&regions, "").is_empty());
+        assert!(SearchService::match_page_regions(&regions, "不存在的词").is_empty());
+        assert!(SearchService::match_page_regions(&regions, "太长的查询词一定不匹配").is_empty());
+    }
+
+    /// 序列化往返：RegionBox ↔ JSON（落库/读库路径）
+    #[test]
+    fn test_region_box_json_roundtrip() {
+        let regions = vec![box_(0.1, 0.2, 0.9, 0.3, "合同文本")];
+        let json = serde_json::to_string(&regions).unwrap();
+        let back: Vec<RegionBox> = serde_json::from_str(&json).unwrap();
+        assert_eq!(regions, back);
+    }
+
+    /// NormRect 序列化字段名（前端 TS 接口对齐）
+    #[test]
+    fn test_norm_rect_serialization() {
+        let r = NormRect { x0: 0.1, y0: 0.2, x1: 0.3, y1: 0.4 };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"x0\"") && json.contains("\"y1\""));
+        let back: NormRect = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, r);
     }
 }

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { searchQuery, searchResults, isLoading, showSearchResults, searchMode, filenameSearchResults } from '../stores';
+  import { searchQuery, searchResults, isLoading, showSearchResults, searchMode, filenameSearchResults, pageHighlight, searchRevision } from '../stores';
   import { search, searchFilename } from '../api';
 
   async function handleSearch() {
     if ($searchQuery.trim()) {
       isLoading.set(true);
+      // 新搜索先清旧高亮（旧查询的框不得残留到新查询上）
+      pageHighlight.set(null);
       try {
         if ($searchMode === 'content') {
           searchResults.set(await search($searchQuery.trim()));
@@ -14,6 +16,8 @@
           searchResults.set([]);
         }
         showSearchResults.set(true);
+        // 通知结果面板：有新一次搜索（即使条数与上次相同也要重新定位第一个命中）
+        searchRevision.update((n) => n + 1);
       } catch (e) {
         console.error('Search failed:', e);
         alert('搜索失败: ' + e);
@@ -34,6 +38,7 @@
     searchResults.set([]);
     filenameSearchResults.set([]);
     showSearchResults.set(false);
+    pageHighlight.set(null);
   }
 </script>
 

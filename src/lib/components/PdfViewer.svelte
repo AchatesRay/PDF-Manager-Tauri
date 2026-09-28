@@ -1,6 +1,6 @@
 <script lang="ts">
   import { renderPdfPage } from '../api';
-  import { selectedPdfId, jumpToPage } from '../stores';
+  import { selectedPdfId, jumpToPage, pageHighlight } from '../stores';
   import { onMount, tick } from 'svelte';
 
   export let pdfPath: string | null = null;
@@ -173,6 +173,37 @@
     fitToWidth = true;
     updateContainerWidth();
   }
+
+  // ===== 搜索预览高亮 =====
+  let highlightLayer: HTMLElement | null = null;
+
+  // 仅当高亮数据属于当前展示的 pdf+页时渲染（手动翻页离开命页 → 隐藏，翻回 → 恢复）
+  $: activeHighlight =
+    $pageHighlight &&
+    $pageHighlight.pdfId === $selectedPdfId &&
+    $pageHighlight.page === currentPage &&
+    $pageHighlight.rects.length > 0
+      ? $pageHighlight
+      : null;
+
+  // 焦点索引钳位：snippet 计数与区域框数极端不一致时，焦点落到最后一框
+  $: activeIdx = activeHighlight
+    ? Math.min(Math.max(activeHighlight.activeIndex, 0), activeHighlight.rects.length - 1)
+    : -1;
+
+  // 焦点跟随：高亮数据或页变化后，把当前命中框滚入视野
+  $: if (activeHighlight, imageSrc) {
+    scrollToActiveHighlight(activeHighlight, activeIdx);
+  }
+
+  async function scrollToActiveHighlight(hl: typeof activeHighlight, idx: number) {
+    if (!hl || idx < 0) return;
+    await tick();
+    const el = highlightLayer?.querySelector(`.hit[data-idx="${idx}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    }
+  }
 </script>
 
 <div class="pdf-viewer">
@@ -227,12 +258,26 @@
         </div>
       {:else if imageSrc}
         <div class="image-container">
-          <img
-            src={imageSrc}
-            alt="PDF Page {currentPage}"
-            style="width: {imageWidth * currentScale}px;"
-            on:load={handleImageLoad}
-          />
+          <div class="img-wrap">
+            <img
+              src={imageSrc}
+              alt="PDF Page {currentPage}"
+              style="width: {imageWidth * currentScale}px;"
+              on:load={handleImageLoad}
+            />
+            {#if activeHighlight}
+              <div class="highlight-layer" bind:this={highlightLayer}>
+                {#each activeHighlight.rects as rect, i (i)}
+                  <div
+                    class="hit"
+                    class:active={i === activeIdx}
+                    data-idx={i}
+                    style="left: {rect.x0 * 100}%; top: {rect.y0 * 100}%; width: {(rect.x1 - rect.x0) * 100}%; height: {(rect.y1 - rect.y0) * 100}%;"
+                  ></div>
+                {/each}
+              </div>
+            {/if}
+          </div>
         </div>
       {:else}
         <div class="placeholder">
@@ -381,6 +426,35 @@
   .image-container img {
     box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     border-radius: 4px;
+  }
+
+  /* 搜索预览高亮：img-wrap 与图片同尺寸，命中超按百分比绝对定位（缩放自动跟随） */
+  .img-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+
+  .highlight-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .hit {
+    position: absolute;
+    background: rgba(250, 204, 21, 0.35);   /* 普通命中：半透明黄 */
+    border: 1.5px solid rgba(250, 204, 21, 0.9);
+    border-radius: 2px;
+    box-sizing: border-box;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .hit.active {
+    background: rgba(249, 115, 22, 0.4);    /* 当前命中：橙色加重 */
+    border: 2.5px solid #f97316;
+    box-shadow: 0 0 6px rgba(249, 115, 22, 0.7);
+    z-index: 1;
   }
 
   .loading {

@@ -217,6 +217,7 @@ pub fn run() {
             commands::pdf::render_pdf_page,
             commands::search::search,
             commands::search::search_filename,
+            commands::search::get_page_matches,
             commands::ocr::get_ocr_status,
             commands::ocr::get_ocr_download_guide,
             commands::ocr::get_model_overview,

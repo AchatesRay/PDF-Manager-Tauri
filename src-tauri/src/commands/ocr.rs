@@ -1069,20 +1069,20 @@ fn process_page(
 
     debug!("PDF页面渲染成功: page={}, size={}x{}", page_num, image.width(), image.height());
 
-    // OCR 识别
-    let text = {
+    // OCR 识别（文本 + 归一化区域坐标；文本生成路径不变）
+    let (text, regions) = {
         let mut ocr_svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
         })?;
-        ocr_svc.recognize_with_limit(&image, max_image_dimension)
+        ocr_svc.recognize_with_regions(&image, max_image_dimension)
             .map_err(|e| {
                 error!("OCR识别失败: page={}, 错误: {}", page_num, e);
                 format!("OCR识别失败: {}", e)
             })?
     };
 
-    info!("OCR识别成功: page={}, 文本长度={}", page_num, text.len());
+    info!("OCR识别成功: page={}, 文本长度={}, 区域数={}", page_num, text.len(), regions.len());
 
     // 空文本不再静默标 done：空白页合法，但大面积空白往往意味着预处理/尺寸问题（P0-7），
     // 必须在日志留下可排查的告警信号
@@ -1093,16 +1093,21 @@ fn process_page(
         );
     }
 
-    // 保存到数据库
+    // 保存到数据库（坐标 JSON 序列化失败不阻断文本入库：无坐标的页不高亮但可搜索）
+    let regions_json = serde_json::to_string(&regions).unwrap_or_else(|e| {
+        warn!("区域坐标序列化失败，本页仅存文本: page={}, {}", page_num, e);
+        "[]".to_string()
+    });
+
     let conn = db.lock().map_err(|e| {
         error!("获取数据库锁失败: {}", e);
         format!("数据库锁定失败: {}", e)
     })?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO pdf_pages (pdf_id, page_number, ocr_text, ocr_status)
-         VALUES (?1, ?2, ?3, 'done')",
-        rusqlite::params![pdf_id, page_num, text],
+        "INSERT OR REPLACE INTO pdf_pages (pdf_id, page_number, ocr_text, ocr_status, ocr_regions)
+         VALUES (?1, ?2, ?3, 'done', ?4)",
+        rusqlite::params![pdf_id, page_num, text, regions_json],
     )
     .map_err(|e| {
         error!("保存OCR结果失败: page={}, 错误: {}", page_num, e);

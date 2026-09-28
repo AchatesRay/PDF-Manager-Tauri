@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showModelPanel } from '../stores';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showModelPanel, searchResults, filenameSearchResults, pageHighlight } from '../stores';
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { open, confirm, message } from '@tauri-apps/plugin-dialog';
+  import { open, message } from '@tauri-apps/plugin-dialog';
+  import { safeConfirm } from '../dialog';
   import type { OcrProgress } from '../stores';
   import OcrModelSetup from './OcrModelSetup.svelte';
   import PdfListItem from './PdfListItem.svelte';
@@ -13,6 +14,24 @@
   let selectedIds: number[] = [];
   let showMoveDialog = false;
   let isBatchWorking = false;
+
+  /**
+   * 删除成功后同步清理视图状态（2026-09-28 删除修复补充）：
+   * 后端已把 pdfs/pdf_pages(OCR内容)/索引/文件全删，但前端的搜索结果面板、
+   * 文件名结果、预览高亮仍缓存着已删文档的命中 → 看起来「没删干净」。
+   */
+  function purgeDeletedFromViews(ids: number[]) {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    searchResults.update(rs => rs.filter(r => !idSet.has(r.pdf_id)));
+    filenameSearchResults.update(rs => rs.filter(r => !idSet.has(r.id)));
+    pageHighlight.update(h => (h && idSet.has(h.pdfId) ? null : h));
+    if ($selectedPdfId !== null && idSet.has($selectedPdfId)) {
+      selectedPdfId.set(null);
+      selectedPdfPath.set(null);
+      selectedPdfPageCount.set(0);
+    }
+  }
 
   onMount(() => {
     loadPdfs();
@@ -224,7 +243,7 @@
   // 批量删除：一次确认，循环删除，汇总结果
   async function handleBatchDelete() {
     if (selectedIds.length === 0) return;
-    const confirmed = await confirm(
+    const confirmed = await safeConfirm(
       `确定要删除选中的 ${selectedIds.length} 个 PDF 吗？文件与 OCR 结果将一并删除。`,
       { title: '确认批量删除', kind: 'warning' }
     );
@@ -232,18 +251,21 @@
 
     isBatchWorking = true;
     let deleted = 0;
+    const deletedIds: number[] = [];
     const failList: string[] = [];
     for (const id of [...selectedIds]) {
       const pdf = $pdfList.find(p => p.id === id);
       try {
         await deletePdf(id);
         deleted++;
+        deletedIds.push(id);
       } catch (e) {
         failList.push(`${pdf?.filename || id}: ${e}`);
       }
     }
     isBatchWorking = false;
     clearSelection();
+    purgeDeletedFromViews(deletedIds);
     await loadPdfs();
 
     let text = `删除完成：成功 ${deleted} 个`;
@@ -280,7 +302,7 @@
     const pdf = $pdfList.find(p => p.id === id);
     const filename = pdf?.filename || '此PDF';
 
-    const confirmed = await confirm(`确定要删除 "${filename}" 吗？`, {
+    const confirmed = await safeConfirm(`确定要删除 "${filename}" 吗？`, {
       title: '确认删除',
       kind: 'warning',
     });
@@ -288,6 +310,7 @@
     if (confirmed) {
       try {
         await deletePdf(id);
+        purgeDeletedFromViews([id]);
         await loadPdfs();
       } catch (e) {
         alert('删除失败: ' + e);

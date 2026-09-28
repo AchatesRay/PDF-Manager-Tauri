@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount, folders } from '../stores';
+  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount, folders, searchQuery, pageHighlight, searchRevision } from '../stores';
   import type { SearchResult, PdfInfo } from '../api';
-  import { getPdfDetail } from '../api';
+  import { getPdfDetail, getPageMatches } from '../api';
 
   let currentMatchIndex = 0;
 
@@ -28,10 +28,14 @@
     return { resultIndex: 0, inPageIndex: 0 };
   }
 
-  let lastSearchResultsLength = 0;
-  $: if ($searchResults.length > 0 && $searchResults.length !== lastSearchResultsLength) {
-    lastSearchResultsLength = $searchResults.length;
+  let lastSearchRevision = 0;
+  // 按「搜索提交次数」触发（旧逻辑按结果条数变化触发：同条数/零结果的新搜索
+  // 不会重置导航、旧高亮会残留在预览上）
+  $: if ($searchResults.length > 0 && $searchRevision !== lastSearchRevision) {
+    lastSearchRevision = $searchRevision;
     currentMatchIndex = 0;
+    currentPdfId = null;
+    currentPageNumber = null;
     navigateToMatch(0);
   }
 
@@ -57,7 +61,24 @@
       } catch (e) {
         console.error('Failed to get PDF detail:', e);
         alert('该PDF文件可能已被删除，请重新搜索');
+        return;
       }
+    }
+
+    // 刷新预览高亮（必须在页变更 if 之外：同页翻「下一个」也要切换焦点）。
+    // 旧数据无坐标 → rects=[] → 预览不高亮，导航不受影响（方案甲：force 重识别产出坐标）。
+    try {
+      const rects = await getPageMatches(result.pdf_id, result.page_number, $searchQuery.trim());
+      pageHighlight.set({
+        pdfId: result.pdf_id,
+        page: result.page_number,
+        query: $searchQuery.trim(),
+        rects,
+        activeIndex: inPageIndex,
+      });
+    } catch (e) {
+      console.error('Failed to get page highlights:', e);
+      pageHighlight.set(null);
     }
   }
 
@@ -85,6 +106,8 @@
       selectedPdfPath.set(detail.storage_path);
       selectedPdfPageCount.set(detail.page_count);
       jumpToPage.set(null);
+      // 文件名跳转不带内容命中：清残留高亮（防上一次内容搜索的框串页）
+      pageHighlight.set(null);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
       alert('该PDF文件可能已被删除，请重新搜索');

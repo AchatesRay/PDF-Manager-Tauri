@@ -1,6 +1,7 @@
 use crate::db::Db;
 use crate::models::{PdfInfo, PdfStatus, PdfType};
-use crate::services::search_service::{PageIndexEntry, SearchResult, SearchService};
+use crate::services::ocr_service::RegionBox;
+use crate::services::search_service::{PageIndexEntry, NormRect, SearchResult, SearchService};
 use rusqlite::params;
 use std::sync::Mutex;
 use tauri::State;
@@ -90,6 +91,66 @@ pub fn search(
             Err(format!("搜索失败: {}", e))
         }
     }
+}
+
+/// 获取某页命中关键字的归一化矩形（搜索预览高亮）。
+///
+/// - 只取 Db 锁，不碰 search/ocr 服务锁（与现有只读命令锁序口径一致）；
+/// - `ocr_regions` 为 NULL（升级前的旧数据）或 JSON 损坏 → 返回空数组，
+///   前端不高亮但搜索/导航不受影响；坐标由「强制重识别」产出（方案甲）。
+#[tauri::command]
+pub fn get_page_matches(
+    pdf_id: i64,
+    page_number: i32,
+    query: String,
+    db: State<'_, Db>,
+) -> Result<Vec<NormRect>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let regions_json: Option<String> = {
+        let conn = db.lock().map_err(|e| {
+            error!("获取数据库锁失败: {}", e);
+            format!("数据库锁定失败: {}", e)
+        })?;
+        match conn.query_row(
+            "SELECT ocr_regions FROM pdf_pages WHERE pdf_id = ?1 AND page_number = ?2",
+            params![pdf_id, page_number],
+            |row| row.get::<_, Option<String>>(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(Vec::new()),
+            Err(e) => {
+                error!("查询页面坐标失败: pdf_id={}, page={}, {}", pdf_id, page_number, e);
+                return Err(format!("查询页面坐标失败: {}", e));
+            }
+        }
+    };
+
+    let Some(json) = regions_json else {
+        // 旧数据无坐标：不高亮（不报错）
+        debug!("页面无坐标数据（旧 OCR 结果）: pdf_id={}, page={}", pdf_id, page_number);
+        return Ok(Vec::new());
+    };
+
+    let regions: Vec<RegionBox> = match serde_json::from_str(&json) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("页面坐标 JSON 损坏: pdf_id={}, page={}, {}", pdf_id, page_number, e);
+            return Ok(Vec::new());
+        }
+    };
+
+    let rects = SearchService::match_page_regions(&regions, &query);
+    debug!(
+        "页面命中定位: pdf_id={}, page={}, 区域={}, 命中={}",
+        pdf_id,
+        page_number,
+        regions.len(),
+        rects.len()
+    );
+    Ok(rects)
 }
 
 /// 搜索PDF文件名
