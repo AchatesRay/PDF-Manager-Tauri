@@ -65,5 +65,8 @@ export const filteredPdfList = derived(
 // 是否显示下载对话框
 export const showDownloadDialog = writable(false);
 
-// 模型管理面板开关（打开入口在 PdfList 的「模型配置」按钮）
-export const showModelPanel = writable(false);
+// 统一设置弹窗：开关 + 当前页签（2026-09-28 统一设置卡片，替代原 showModelPanel）
+// 开关由 FolderTree 的 ⚙ 按钮驱动，弹窗挂在 App 根部，必须用 store 跨组件传递
+export const showSettings = writable(false);
+export type SettingsTab = 'general' | 'model' | 'about';
+export const settingsTab = writable<SettingsTab>('general');

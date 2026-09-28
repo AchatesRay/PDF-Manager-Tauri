@@ -182,9 +182,9 @@
 
 <style>
   .settings-panel {
-    background: var(--bg-tertiary, #f5f7f9);
-    border-bottom: 1px solid var(--border, #e5e7eb);
-    padding: 12px;
+    /* 2026-09-28 统一设置卡片：角色从「左栏内联面板」变为「通用页签内容」，
+       去掉背景块与底部分隔线，仅留内边距（业务逻辑零改动） */
+    padding: 14px 16px;
     font-size: 12px;
   }
 

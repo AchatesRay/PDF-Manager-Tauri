@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, showModelPanel, searchResults, filenameSearchResults, pageHighlight } from '../stores';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, searchResults, filenameSearchResults, pageHighlight } from '../stores';
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
@@ -384,17 +384,6 @@
       <!-- OCR 模型状态和重新检测按钮 -->
       <div class="model-status-area">
         <OcrModelSetup />
-        <button
-          class="refresh-btn"
-          on:click={() => showModelPanel.set(true)}
-          title="模型配置：查看/下载/启用/禁用 OCR 模型"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-          </svg>
-          模型配置
-        </button>
       </div>
       <button class="add-btn" on:click={handleAddPdf}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -541,44 +530,8 @@
     gap: 8px;
   }
 
-  .refresh-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 10px;
-    background: var(--bg-secondary, #ffffff);
-    border: 1px solid var(--border, #e5e7eb);
-    border-radius: 5px;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-primary, #1f2937);
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    border-color: var(--accent, #3b82f6);
-    color: var(--accent, #3b82f6);
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .refresh-btn svg {
-    width: 12px;
-    height: 12px;
-  }
-
-  .refresh-btn svg.spinning {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
+  /* .refresh-btn 样式已随「模型配置」按钮删除（2026-09-28 统一设置卡片）；
+     spin keyframes 保留在下方 .spinner 处 */
 
   .add-btn {
     display: flex;

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { message } from '@tauri-apps/plugin-dialog';
   import {
     getModelOverview,
@@ -8,8 +7,9 @@
   } from '../api';
   import { ocrModelStatus } from '../stores';
 
-  export let show: boolean = false;
-  export let onClose: () => void = () => {};
+  // 2026-09-28 统一设置卡片：面板降级为「模型」页签的内容组件，
+  // 遮罩/标题/✕ 由 SettingsDialog 统一提供；active = 所在页签激活时加载概览
+  export let active: boolean = false;
 
   const DOWNLOAD_SITE = 'https://github.com/GreatV/oar-ocr/releases/tag/v0.3.0';
   // 备份镜像（2026-09-27 实测：三者均可用文件直链；ghproxy.net 页面亦可）
@@ -28,13 +28,9 @@
   let error: string | null = null;
   let copiedText: string | null = null;
 
-  onMount(() => {
-    // 面板首次打开时加载（show 变化时由 reactive 语句兜底刷新）
-    if (show) loadOverview();
-  });
-
-  // 面板每次打开时加载概览（依赖仅 show，不会因 loadOverview 内部状态形成循环）
-  $: if (show) {
+  // 页签激活时加载概览（组件随页签切换销毁重建，每次进入「模型」页都会刷新，
+  // 等价于原「每次打开面板刷新」的行为）
+  $: if (active) {
     loadOverview();
   }
 
@@ -113,20 +109,15 @@
   $: readySuites = overview.filter(m => m.ready).length;
 </script>
 
-{#if show}
-  <div class="panel-overlay" on:click={onClose}>
-    <div class="panel" on:click|stopPropagation>
-      <div class="panel-header">
-        <h4>OCR 模型配置</h4>
-        <div class="header-acts">
-          <button class="mini-btn" on:click={handleManualRefresh} disabled={loading} title="重新扫描已下载的模型文件">
-            {loading ? '扫描中...' : '刷新'}
-          </button>
-          <button class="close-x" on:click={onClose} title="关闭">✕</button>
-        </div>
-      </div>
+<!-- 2026-09-28 统一设置卡片：无外层遮罩/标题/✕，仅保留「刷新」工具条 + 状态条 -->
+<div class="model-pane">
+  <div class="pane-toolbar">
+    <button class="mini-btn" on:click={handleManualRefresh} disabled={loading} title="重新扫描已下载的模型文件">
+      {loading ? '扫描中...' : '刷新'}
+    </button>
+  </div>
 
-      <div class="panel-status">
+  <div class="panel-status">
         {#if activeTag}
           <span class="active-tag">{activeTag}</span>
         {:else}
@@ -255,65 +246,19 @@
           {/each}
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+</div>
 
 <style>
-  .panel-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
+  /* 2026-09-28 统一设置卡片：原弹层壳样式（panel-overlay/panel/panel-header/close-x）
+     已随弹层职责移交 SettingsDialog 而删除，此处为页签内容容器样式 */
+  .model-pane {
+    padding: 14px 16px;
   }
 
-  .panel {
-    background: var(--bg-secondary, #ffffff);
-    border-radius: 8px;
-    padding: 16px;
-    max-width: 640px;
-    width: 92%;
-    max-height: 85vh;
-    overflow-y: auto;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-  }
-
-  .panel-header {
+  .pane-toolbar {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    justify-content: flex-end;
     margin-bottom: 10px;
-  }
-
-  .panel-header h4 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-primary, #1f2937);
-  }
-
-  .header-acts {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .close-x {
-    width: 26px;
-    height: 26px;
-    border: 1px solid var(--border, #e5e7eb);
-    background: none;
-    border-radius: 4px;
-    cursor: pointer;
-    color: var(--text-secondary, #6b7280);
-  }
-
-  .close-x:hover {
-    border-color: var(--error, #ef4444);
-    color: var(--error, #ef4444);
   }
 
   .panel-status {

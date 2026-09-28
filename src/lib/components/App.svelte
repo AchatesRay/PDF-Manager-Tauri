@@ -4,6 +4,7 @@
   import SearchBar from './SearchBar.svelte';
   import SearchResults from './SearchResults.svelte';
   import PdfViewer from './PdfViewer.svelte';
+  import SettingsDialog from './SettingsDialog.svelte';
   import { selectedPdfPath, selectedPdfPageCount } from '../stores';
 
   // 面板宽度状态
@@ -78,6 +79,9 @@
     <PdfViewer pdfPath={$selectedPdfPath} pageCount={$selectedPdfPageCount} />
   </div>
 </main>
+
+<!-- 统一设置弹窗（全局，开关由 showSettings store 驱动；2026-09-28 统一设置卡片） -->
+<SettingsDialog />
 
 <style>
   :global(*) {

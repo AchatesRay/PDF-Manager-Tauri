@@ -16,9 +16,7 @@
     ocrDownloadProgress,
     isDownloading,
     showDownloadDialog,
-    showModelPanel,
   } from '../stores';
-  import ModelManagerPanel from './ModelManagerPanel.svelte';
 
   let error: string | null = null;
   let downloadGuides: DownloadGuide[] = [];
@@ -132,8 +130,7 @@
   {statusText}
 </button>
 
-<!-- 模型管理面板（打开入口：header 的「模型配置」按钮） -->
-<ModelManagerPanel show={$showModelPanel} onClose={() => showModelPanel.set(false)} />
+<!-- 模型管理面板已改由 App 根部 SettingsDialog 的「模型」页签承载（2026-09-28 统一设置卡片） -->
 
 <!-- 错误提示 -->
 {#if error}
