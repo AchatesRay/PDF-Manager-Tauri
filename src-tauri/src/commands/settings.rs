@@ -108,6 +108,202 @@ fn copy_data_dir_core(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ===== 迁移健壮性辅助（两阶段写入 + 空间预检 + 完成标记）=====
+
+/// 迁移暂存目录前缀（位于目标目录内；成功搬移后删除空目录）
+const MIGRATION_STAGING_PREFIX: &str = ".pdfm-migrating-";
+/// 迁移完成标记：数据已搬入目标根，但设置可能尚未落盘
+const MIGRATION_DONE_MARKER: &str = ".pdfm-migration-complete";
+/// 空间余量系数（复制需要额外空间与碎片余量）
+const MIGRATION_SPACE_MARGIN: f64 = 1.1;
+
+fn dir_total_size(path: &Path) -> u64 {
+    walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+        .sum()
+}
+
+/// 源数据总大小（DB 三件套 + 五个迁移子目录）
+fn source_data_size(src: &Path) -> u64 {
+    let mut total = 0u64;
+    for name in MIGRATE_DB_FILES {
+        total += std::fs::metadata(src.join(name)).map(|m| m.len()).unwrap_or(0);
+    }
+    for sub in MIGRATE_SUBDIRS {
+        total += dir_total_size(&src.join(sub));
+    }
+    total
+}
+
+/// 目标路径所在磁盘的可用空间（字节）；无法判定时返回 None（不阻断迁移）
+fn available_space_at(path: &Path) -> Option<u64> {
+    let mut anchor = path.to_path_buf();
+    while !anchor.exists() {
+        match anchor.parent() {
+            Some(parent) => anchor = parent.to_path_buf(),
+            None => return None,
+        }
+    }
+    let anchor_lower = anchor.to_string_lossy().to_lowercase();
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut best: Option<(usize, u64)> = None;
+    for disk in disks.list() {
+        let mount = disk.mount_point();
+        let mount_lower = mount.to_string_lossy().to_lowercase();
+        if !mount_lower.is_empty() && anchor_lower.starts_with(&mount_lower) {
+            let len = mount_lower.len();
+            if best.map_or(true, |(best_len, _)| len > best_len) {
+                best = Some((len, disk.available_space()));
+            }
+        }
+    }
+    best.map(|(_, space)| space)
+}
+
+fn human_size(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.0} MB", b / MB)
+    } else {
+        format!("{:.0} KB", b / 1024.0)
+    }
+}
+
+/// 空间预检：目标盘可用空间必须覆盖「源数据 × 余量」。
+/// 判定不了磁盘时只告警、不阻断（不能因为拿不到信息就禁止用户迁移）。
+fn ensure_free_space(dst: &Path, needed: u64) -> Result<(), String> {
+    let Some(available) = available_space_at(dst) else {
+        warn!("无法判定目标磁盘可用空间，跳过空间预检: {:?}", dst);
+        return Ok(());
+    };
+    let required = (needed as f64 * MIGRATION_SPACE_MARGIN) as u64;
+    if available < required {
+        error!(
+            "目标磁盘空间不足，迁移中止: need={}, available={}, dst={:?}",
+            human_size(required), human_size(available), dst
+        );
+        return Err(format!(
+            "目标磁盘空间不足：需要约 {}（源数据 {}，含 10% 余量），当前可用 {}。请清理空间或换一个磁盘后重试；未改动任何数据。",
+            human_size(required), human_size(needed), human_size(available)
+        ));
+    }
+    debug!("空间预检通过: required={}, available={}", human_size(required), human_size(available));
+    Ok(())
+}
+
+fn staging_dir_for(dst: &Path) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    dst.join(format!("{}{}", MIGRATION_STAGING_PREFIX, stamp))
+}
+
+/// 把目标目录里上次遗留的暂存目录改名挪开（不删除，留痕可回查）
+fn park_stale_staging(dst: &Path) -> Result<(), String> {
+    let entries = match std::fs::read_dir(dst) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(MIGRATION_STAGING_PREFIX) || !entry.path().is_dir() {
+            continue;
+        }
+        let parked = dst.join(format!(".pdfm-abandoned-{}-{}", name, stamp));
+        std::fs::rename(entry.path(), &parked)
+            .map_err(|e| format!("清理上次未完成的迁移暂存目录失败: {}（{}）", e, entry.path().display()))?;
+        warn!("已挪开上次未完成的迁移暂存目录: {:?} -> {:?}", entry.path(), parked);
+    }
+    Ok(())
+}
+
+fn migration_marker_exists(dst: &Path) -> bool {
+    dst.join(MIGRATION_DONE_MARKER).exists()
+}
+
+fn write_migration_marker(dst: &Path, src: &Path) -> Result<(), String> {
+    std::fs::write(
+        dst.join(MIGRATION_DONE_MARKER),
+        format!("source={}\n", src.display()),
+    )
+    .map_err(|e| format!("写入迁移完成标记失败: {}", e))
+}
+
+fn remove_migration_marker(dst: &Path) {
+    let _ = std::fs::remove_file(dst.join(MIGRATION_DONE_MARKER));
+}
+
+/// 校验暂存副本：数据库完整性 + 关键表记录数必须与源一致
+fn verify_staged_db(src: &Path, staging: &Path) -> Result<(), String> {
+    let staged = rusqlite::Connection::open(staging.join("pdf-manager.db"))
+        .map_err(|e| format!("迁移失败（设置未改动）：打开暂存数据库失败: {}", e))?;
+    let integrity: String = staged
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .map_err(|e| format!("迁移失败（设置未改动）：数据库完整性校验失败: {}", e))?;
+    if integrity != "ok" {
+        return Err(format!(
+            "迁移失败（设置未改动）：数据库完整性校验未通过（{}）",
+            integrity
+        ));
+    }
+
+    if let Ok(source) = rusqlite::Connection::open(src.join("pdf-manager.db")) {
+        let count = |conn: &rusqlite::Connection, table: &str| -> Option<i64> {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0))
+                .ok()
+        };
+        for table in ["pdfs", "folders", "pdf_pages"] {
+            if let (Some(a), Some(b)) = (count(&source, table), count(&staged, table)) {
+                if a != b {
+                    return Err(format!(
+                        "迁移失败（设置未改动）：{} 记录数不一致（源 {} / 副本 {}）",
+                        table, a, b
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把暂存区的一项搬到目标根：优先同盘 `rename`（瞬时、不额外占空间）；
+/// 目标已有同名项时退化为覆盖复制，并丢弃**本次新建的**暂存副本（源数据不动）。
+fn promote_item(from: &Path, to: &Path) -> Result<(), String> {
+    if !from.exists() {
+        return Ok(());
+    }
+    match std::fs::rename(from, to) {
+        Ok(_) => Ok(()),
+        Err(rename_err) => {
+            if from.is_dir() {
+                warn!("暂存目录搬移改用合并复制: {:?}（{}）", to, rename_err);
+                copy_dir_recursive(from, to)?;
+                std::fs::remove_dir_all(from)
+                    .map_err(|e| format!("移除暂存副本 {:?} 失败: {}", from, e))?;
+                Ok(())
+            } else {
+                warn!("暂存文件搬移改用覆盖复制: {:?}（{}）", to, rename_err);
+                std::fs::copy(from, to)
+                    .map_err(|e| format!("搬移文件 {:?} -> {:?} 失败: {}", from, to, e))?;
+                let _ = std::fs::remove_file(from);
+                Ok(())
+            }
+        }
+    }
+}
+
 /// 修正目标 DB 副本中的绝对路径前缀（pdfs.storage_path / folders.storage_path）
 /// 并把 data_dir 设置写为目标目录。
 ///
@@ -347,15 +543,51 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
         return Ok(());
     }
 
-    // 目标已含应用数据 → 拒绝（防新旧数据混合/覆盖破坏）
-    if path_buf.join("pdf-manager.db").exists() {
+    // 目标已含应用数据 → 拒绝（防新旧数据混合/覆盖破坏）。
+    // 例外：带完成标记 = 上次已把数据搬完、只差保存设置；此时允许重跑，
+    // 否则用户会被自己留下的半成品永久挡住（见 devil's-advocate #2）。
+    let target_has_db = path_buf.join("pdf-manager.db").exists();
+    if target_has_db && !migration_marker_exists(&path_buf) {
         warn!("目标目录已包含应用数据，拒绝迁移: {:?}", path_buf);
         return Err("目标目录已包含应用数据（pdf-manager.db），请选择空目录".to_string());
+    }
+    if target_has_db {
+        let already_on_target = {
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+            get_setting(&conn, SETTING_DATA_DIR)
+                .map(|v| normalize_dir(Path::new(&v)) == dst_norm)
+                .unwrap_or(false)
+        };
+        if already_on_target {
+            info!("目标目录已是当前数据目录，清理遗留迁移标记");
+            remove_migration_marker(&path_buf);
+            park_stale_staging(&path_buf)?;
+            return Ok(());
+        }
+        warn!("检测到上次迁移已搬运完成但设置未保存，重新执行迁移: {:?}", path_buf);
     }
 
     info!("迁移数据目录: {:?} -> {:?}", source_dir, path_buf);
 
-    // ===== ① 持 Db 锁：WAL checkpoint + 复制 DB 三件套（防复制瞬间写入撕裂）=====
+    // ===== ⓪ 空间预检：复制而非移动，目标盘需要容纳约 2 份数据 =====
+    let needed = source_data_size(&source_dir);
+    ensure_free_space(&path_buf, needed)?;
+
+    // ===== ① 先写入暂存目录，全部校验通过后再搬进目标根 =====
+    // 这样中途失败时目标根保持干净（无半成品 db），重试不会被自己的残留挡住。
+    park_stale_staging(&path_buf)?;
+    let staging = staging_dir_for(&path_buf);
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("创建迁移暂存目录失败: {}", e))?;
+    let staging_note = |e: String| {
+        format!(
+            "迁移失败（设置未改动，源数据完好）: {}；暂存目录已保留可回查: {}",
+            e,
+            staging.display()
+        )
+    };
+
+    // 持 Db 锁：WAL checkpoint + 复制 DB 三件套（防复制瞬间写入撕裂）
     {
         let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
         // checkpoint 把 WAL 内容并入主库；TRUNCATE 清空 WAL，保证复制的 db 文件自洽
@@ -366,30 +598,41 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
         for name in MIGRATE_DB_FILES {
             let from = source_dir.join(name);
             if from.exists() {
-                if let Err(e) = std::fs::copy(&from, &path_buf.join(name)) {
+                if let Err(e) = std::fs::copy(&from, staging.join(name)) {
                     drop(conn);
                     error!("复制数据库文件失败: {:?}, {}", from, e);
-                    return Err(format!("迁移失败（未修改任何设置）: 复制 {} 失败: {}", name, e));
+                    return Err(staging_note(format!("复制 {} 失败: {}", name, e)));
                 }
             }
         }
     } // ← 复制 DB 期间持有锁，结束后释放
 
-    // ===== ② 锁外复制子目录（pdfs/thumbnails/index/logs/models）=====
+    // 锁外复制子目录（pdfs/thumbnails/index/logs/models）到暂存区
     for sub in MIGRATE_SUBDIRS {
-        match copy_dir_recursive(&source_dir.join(sub), &path_buf.join(sub)) {
-            Ok(n) => debug!("迁移子目录 {}: {} 个文件", sub, n),
+        match copy_dir_recursive(&source_dir.join(sub), &staging.join(sub)) {
+            Ok(n) => debug!("迁移子目录 {} 到暂存区: {} 个文件", sub, n),
             Err(e) => {
                 error!("迁移子目录 {} 失败: {}", sub, e);
-                return Err(format!("迁移失败（未修改任何设置）: {}", e));
+                return Err(staging_note(e));
             }
         }
     }
 
-    // ===== ③ 修正目标 DB 副本中的绝对路径 + 写入目标 data_dir =====
-    if let Err(e) = fix_db_paths(&path_buf.join("pdf-manager.db"), &source_dir, &path_buf) {
-        error!("修正目标数据库路径失败: {}", e);
-        return Err(format!("迁移失败（未修改任何设置）: {}", e));
+    // ===== ② 在暂存副本上修正绝对路径并校验（完整性 + 记录数）=====
+    if let Err(e) = fix_db_paths(&staging.join("pdf-manager.db"), &source_dir, &path_buf) {
+        error!("修正暂存数据库路径失败: {}", e);
+        return Err(staging_note(e));
+    }
+    verify_staged_db(&source_dir, &staging)?;
+
+    // ===== ③ 搬入目标根：先子目录，写完成标记，最后移数据库三件套 =====
+    // db 最后落地 = 目标根出现 db 时，其余数据必然已就位。
+    for sub in MIGRATE_SUBDIRS {
+        promote_item(&staging.join(sub), &path_buf.join(sub))?;
+    }
+    write_migration_marker(&path_buf, &source_dir)?;
+    for name in ["pdf-manager.db-wal", "pdf-manager.db-shm", "pdf-manager.db"] {
+        promote_item(&staging.join(name), &path_buf.join(name))?;
     }
 
     // ===== ④ 创建全部子目录（含 models —— 原实现漏了）=====
@@ -408,7 +651,10 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
             Ok(_) => info!("数据目录设置已保存: {}", path),
             Err(e) => {
                 error!("保存设置失败: {}", e);
-                return Err(format!("保存设置失败: {}", e));
+                return Err(format!(
+                    "数据已完整复制到目标目录，但保存设置失败: {}。请重启应用后重新设置同一目录（会自动识别已完成的迁移）",
+                    e
+                ));
             }
         }
     }
@@ -419,6 +665,10 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
         Some(&path),
         Some(&source_dir.to_string_lossy()),
     )?;
+
+    // 设置已落盘 → 撤掉完成标记，清掉空暂存目录
+    remove_migration_marker(&path_buf);
+    let _ = std::fs::remove_dir(&staging);
 
     info!("数据目录设置成功（已完成全量迁移）: {}", path);
     Ok(())
@@ -531,6 +781,18 @@ pub fn finish_pending_data_dir_migration(exe_dir: &Path) -> PathBuf {
     }
 
     info!("启动刷新迁移: {:?} -> {:?}", s, t);
+
+    // 空间预检：不足则不做"刷一半"的复制，直接回退到源目录（下次启动仍会重试）
+    if let Err(e) = ensure_free_space(&t, source_data_size(&s)) {
+        error!("启动刷新迁移跳过（空间不足）: {}", e);
+        let _ = write_guide_settings(&guide, Some(&source), None);
+        if let Ok(conn) = rusqlite::Connection::open(s.join("pdf-manager.db")) {
+            let _ = set_setting(&conn, SETTING_DATA_DIR, &source);
+        }
+        eprintln!("数据目录刷新迁移已跳过，继续使用原目录: {}", e);
+        return s;
+    }
+
     let size_of = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     mig_trace(exe_dir, &format!(
         "before copy: src_db={} dst_db={}",
@@ -1031,5 +1293,84 @@ mod tests {
         drop(dconn);
         assert_eq!(n, 1, "目标库数据不应被引导库覆盖");
         assert_eq!(mine, 1, "目标库自己的记录必须完好");
+    }
+
+    /// 暂存写入 → 校验 → 搬移 → 完成标记 全链路；残留暂存只改名不删除
+    #[test]
+    fn test_staged_migration_helpers() {
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+
+        let sconn = rusqlite::Connection::open(src.join("pdf-manager.db")).unwrap();
+        sconn.execute_batch(crate::db::SCHEMA).unwrap();
+        sconn
+            .execute(
+                "INSERT INTO pdfs (id, filename, storage_path, status) VALUES (1, 'a.pdf', ?1, 'done')",
+                [src.join("pdfs").join("a.pdf").to_string_lossy().to_string()],
+            )
+            .unwrap();
+        sconn
+            .execute(
+                "INSERT INTO pdf_pages (pdf_id, page_number, ocr_text, ocr_status) VALUES (1, 1, 'x', 'done')",
+                [],
+            )
+            .unwrap();
+        drop(sconn);
+        std::fs::create_dir_all(src.join("pdfs")).unwrap();
+        std::fs::write(src.join("pdfs").join("a.pdf"), b"pdf").unwrap();
+        std::fs::create_dir_all(src.join("models")).unwrap();
+        std::fs::write(src.join("models").join("m.onnx"), b"m").unwrap();
+        assert!(source_data_size(&src) > 0, "源数据大小应可统计");
+
+        // 目标根保持干净：所有内容先进暂存区
+        let staging = staging_dir_for(&dst);
+        std::fs::create_dir_all(&staging).unwrap();
+        for name in MIGRATE_DB_FILES {
+            if src.join(name).exists() {
+                std::fs::copy(src.join(name), staging.join(name)).unwrap();
+            }
+        }
+        for sub in MIGRATE_SUBDIRS {
+            copy_dir_recursive(&src.join(sub), &staging.join(sub)).unwrap();
+        }
+        fix_db_paths(&staging.join("pdf-manager.db"), &src, &dst).unwrap();
+        verify_staged_db(&src, &staging).unwrap();
+        assert!(!dst.join("pdf-manager.db").exists(), "搬移前目标根不应出现 db");
+
+        for sub in MIGRATE_SUBDIRS {
+            promote_item(&staging.join(sub), &dst.join(sub)).unwrap();
+        }
+        write_migration_marker(&dst, &src).unwrap();
+        assert!(migration_marker_exists(&dst));
+        for name in ["pdf-manager.db-wal", "pdf-manager.db-shm", "pdf-manager.db"] {
+            promote_item(&staging.join(name), &dst.join(name)).unwrap();
+        }
+        assert!(dst.join("pdf-manager.db").exists());
+        assert!(dst.join("pdfs").join("a.pdf").exists());
+        assert!(dst.join("models").join("m.onnx").exists());
+        let _ = std::fs::remove_dir(&staging);
+        remove_migration_marker(&dst);
+        assert!(!migration_marker_exists(&dst));
+
+        // 损坏/缺失的副本必须被校验拦住（防止不完整数据被当成成功）
+        let bad_staging = root.path().join("bad-staging");
+        std::fs::create_dir_all(&bad_staging).unwrap();
+        std::fs::write(bad_staging.join("pdf-manager.db"), b"garbage").unwrap();
+        assert!(verify_staged_db(&src, &bad_staging).is_err(), "损坏副本应校验失败");
+
+        // 上次遗留的暂存目录 → 改名挪开，不删除
+        let leftover = dst.join(format!("{}999", MIGRATION_STAGING_PREFIX));
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("partial.bin"), b"x").unwrap();
+        park_stale_staging(&dst).unwrap();
+        assert!(!leftover.exists(), "旧暂存目录应被挪走");
+        let abandoned = std::fs::read_dir(&dst)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with(".pdfm-abandoned-"));
+        assert!(abandoned, "残留暂存应改名保留（不删除）");
     }
 }

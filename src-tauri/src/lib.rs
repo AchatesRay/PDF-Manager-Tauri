@@ -88,7 +88,8 @@ pub fn run() {
             };
             app.manage(std::sync::Mutex::new(ocr_service));
 
-            // 应用持久化的「启用模型」设置（ocr_active_model；缺省=balanced，与历史行为一致）
+            // 应用持久化的「启用模型」设置（ocr_active_model；缺省=Mobile，
+            // 旧版本写下的 "balanced" 视为同一个模型：两者加载完全相同的文件）
             {
                 let active = app
                     .state::<std::sync::Mutex<rusqlite::Connection>>()
@@ -96,13 +97,15 @@ pub fn run() {
                     .ok()
                     .and_then(|conn| db::get_setting(&conn, db::SETTING_OCR_ACTIVE_MODEL));
                 let parsed: Option<services::model_manager::ModelType> = match active.as_deref() {
-                    None | Some("balanced") => Some(services::model_manager::ModelType::Balanced),
+                    None | Some("balanced") | Some("mobile") => {
+                        Some(services::model_manager::ModelType::Mobile)
+                    }
                     Some("disabled") => None,
                     Some(v) => match v.parse::<services::model_manager::ModelType>() {
                         Ok(t) => Some(t),
                         Err(e) => {
                             warn!("持久化模型设置无法解析: {}, {}", v, e);
-                            Some(services::model_manager::ModelType::Balanced)
+                            Some(services::model_manager::ModelType::Mobile)
                         }
                     },
                 };
@@ -218,6 +221,7 @@ pub fn run() {
             commands::search::search,
             commands::search::search_filename,
             commands::search::get_page_matches,
+            commands::search::get_page_ocr_info,
             commands::ocr::get_ocr_status,
             commands::ocr::get_ocr_download_guide,
             commands::ocr::get_model_overview,

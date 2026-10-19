@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { renderPdfPage } from '../api';
+  import { renderPdfPage, getPageOcrInfo, type PageOcrInfo } from '../api';
   import { selectedPdfId, jumpToPage, pageHighlight } from '../stores';
   import { onMount, tick } from 'svelte';
 
@@ -108,6 +108,9 @@
     const pdfId = $selectedPdfId!;
     const key = pageCacheKey(pdfId, page);
 
+    // 识别质量信息与页面渲染解耦：命中缓存也要重新取（换页后提示要跟着换）
+    void refreshPageOcrInfo(pdfId, page);
+
     // 命中缓存：直接展示，不重复调用后端渲染
     const cached = pageCache.get(key);
     if (cached) {
@@ -139,6 +142,42 @@
       isLoading = false;
     }
   }
+
+  /** 本页识别质量（低置信丢弃行数 / 是否存有坐标）；失败静默，不影响预览 */
+  let pageOcrInfo: PageOcrInfo | null = null;
+
+  async function refreshPageOcrInfo(pdfId: number, page: number) {
+    try {
+      const info = await getPageOcrInfo(pdfId, page);
+      // 期间用户可能已经翻页，丢弃过期响应
+      if (pdfId === $selectedPdfId && page === currentPage) {
+        pageOcrInfo = info;
+      }
+    } catch (e) {
+      console.warn('获取页面识别信息失败:', e);
+      if (pdfId === $selectedPdfId && page === currentPage) {
+        pageOcrInfo = null;
+      }
+    }
+  }
+
+  // 识别质量提示（可能漏字）——只统计本次升级后识别过的页
+  $: lowConfHint =
+    pageOcrInfo && (pageOcrInfo.low_conf ?? 0) > 0
+      ? `本页有 ${pageOcrInfo.low_conf} 行文字因识别质量过低未收录，搜索可能搜不到这些文字；可对该文件重新识别`
+      : null;
+
+  // 旧数据没有保存文字位置：命中发生在别的页时翻到这里会看不到任何高亮，必须说明原因
+  $: noCoordHint =
+    pageOcrInfo &&
+    pageOcrInfo.ocr_status === 'done' &&
+    !pageOcrInfo.has_regions &&
+    $pageHighlight &&
+    $pageHighlight.pdfId === $selectedPdfId &&
+    $pageHighlight.page === currentPage &&
+    $pageHighlight.rects.length === 0
+      ? '这个文件是较早识别的，没有保存文字位置，预览无法标出命中处；重新识别该文件后即可高亮'
+      : null;
 
   function prevPage() {
     if (currentPage > 1) {
@@ -241,6 +280,17 @@
       </div>
     </div>
 
+    {#if lowConfHint || noCoordHint}
+      <div class="ocr-hints">
+        {#if lowConfHint}
+          <p class="hint warn">{lowConfHint}</p>
+        {/if}
+        {#if noCoordHint}
+          <p class="hint info">{noCoordHint}</p>
+        {/if}
+      </div>
+    {/if}
+
     <div class="content" bind:this={contentElement}>
       {#if isLoading}
         <div class="loading">
@@ -332,6 +382,35 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .ocr-hints {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    background: #1f2937;
+    border-top: 1px solid #374151;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    padding-left: 8px;
+    border-left: 3px solid #6b7280;
+    color: #d1d5db;
+  }
+
+  .hint.warn {
+    border-left-color: #f59e0b;
+    color: #fcd34d;
+  }
+
+  .hint.info {
+    border-left-color: #3b82f6;
+    color: #bfdbfe;
   }
 
   .nav-btn {

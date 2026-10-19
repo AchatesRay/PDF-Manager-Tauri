@@ -380,6 +380,55 @@ impl SearchService {
         Ok(())
     }
 
+    /// 幂等批量写入：先按 `page_id` 删掉已有文档再写入。
+    ///
+    /// `index_pages` 是纯追加（同一 page_id 重复写入会产生重复命中），只适合
+    /// 「确定索引里还没有这些页」的场景。回填补齐需要在索引页数少于数据库应有
+    /// 页数时重跑，若走追加路径，已索引的页会出现重复结果，因此必须走本方法。
+    pub fn replace_pages(&mut self, entries: &[PageIndexEntry]) -> Result<(), SearchError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let page_id_field = self.schema.get_field("page_id").unwrap();
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = match self.index.writer(50_000_000) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("创建索引写入器失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        };
+
+        for entry in entries {
+            let query = tantivy::query::TermQuery::new(
+                tantivy::Term::from_field_u64(page_id_field, entry.page_id),
+                IndexRecordOption::Basic,
+            );
+            if let Err(e) = writer.delete_query(Box::new(query)) {
+                error!("删除旧索引文档失败: page_id={}, {}", entry.page_id, e);
+                return Err(SearchError::IndexError(e));
+            }
+            if let Err(e) = writer.add_document(self.build_document(entry)) {
+                error!("写入索引文档失败: page_id={}, {}", entry.page_id, e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        match writer.commit() {
+            Ok(_) => info!("索引幂等写入提交成功: count={}", entries.len()),
+            Err(e) => {
+                error!("提交索引失败: {}", e);
+                return Err(SearchError::IndexError(e));
+            }
+        }
+
+        if let Err(e) = self.reader.reload() {
+            warn!("刷新索引reader失败: {}", e);
+        }
+
+        Ok(())
+    }
+
     pub fn index_page(
         &mut self,
         page_id: u64,
@@ -1028,5 +1077,33 @@ mod tests {
         assert!(json.contains("\"x0\"") && json.contains("\"y1\""));
         let back: NormRect = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
+    }
+
+    /// replace_pages 幂等：同页重复回填不叠加文档数，且内容被覆盖为新值
+    #[test]
+    fn test_replace_pages_idempotent() {
+        let temp_dir = tempdir().unwrap();
+        let index_path = temp_dir.path().join("test_index");
+        let mut service = SearchService::open(&index_path).unwrap();
+
+        let entry = |content: &str| PageIndexEntry {
+            page_id: 7,
+            pdf_id: 1,
+            folder_id: None,
+            page_number: 1,
+            filename: "合同.pdf".to_string(),
+            content: content.to_string(),
+        };
+
+        service.replace_pages(&[entry("第一次识别的合同正文")]).unwrap();
+        assert_eq!(service.doc_count(), 1);
+
+        // 再次回填同一页：文档数不变（旧文档被删除，不是追加）
+        service.replace_pages(&[entry("第二次修正后的合同正文")]).unwrap();
+        assert_eq!(service.doc_count(), 1);
+
+        // 旧内容已不可检索，新内容可检索
+        assert!(service.search("第一次", None, 10).unwrap().is_empty());
+        assert!(!service.search("第二次", None, 10).unwrap().is_empty());
     }
 }

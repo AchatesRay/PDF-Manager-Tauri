@@ -82,26 +82,25 @@ pub fn get_ocr_status(
     })
 }
 
-/// 获取下载指导（可选指定模型类型，默认 balanced）
+/// 获取下载指导（可选指定模型类型，默认 mobile）
 #[tauri::command]
 pub fn get_ocr_download_guide(model_type: Option<String>) -> Vec<DownloadGuide> {
     let mt = parse_model_type(model_type);
     ModelManager::get_download_guide(mt)
 }
 
-/// 解析模型类型字符串（非法值/缺省回退 Balanced，保持历史行为）
+/// 解析模型类型字符串（非法值/缺省回退 Mobile；旧值 "balanced" 亦归入 Mobile）
 fn parse_model_type(s: Option<String>) -> ModelType {
     s.and_then(|v| v.parse::<ModelType>().ok())
-        .unwrap_or(ModelType::Balanced)
+        .unwrap_or(ModelType::Mobile)
 }
 
 /// 模型类型展示名
 fn model_type_label(t: ModelType) -> String {
     match t {
         ModelType::Lite => "PP-OCRv4 轻量版（~200MB，低内存）".to_string(),
-        ModelType::Mobile => "PP-OCRv5 Mobile（~300MB，与平衡版同文件）".to_string(),
+        ModelType::Mobile => "PP-OCRv5 Mobile（推荐，~300MB）".to_string(),
         ModelType::Server => "PP-OCRv5 Server（~1.5GB，高精度）".to_string(),
-        ModelType::Balanced => "PP-OCRv5 平衡版（~300MB，默认）".to_string(),
     }
 }
 
@@ -115,9 +114,9 @@ pub fn get_model_overview(
     let active = svc.active_model();
     let models_dir = mm.models_dir().to_string_lossy().to_string();
 
-    // 卡片只保留 Mobile / Balanced（用户要求删除 lite/server 卡片；
-    // ModelType 枚举与下载命令仍保留 lite/server 能力，仅 overview 不再产出这两类）
-    let overview = [ModelType::Mobile, ModelType::Balanced]
+    // 只保留 Mobile 一张卡片（历史上与之重复的 Balanced 已合并；
+    // lite/server 卡片按用户要求不展示，但枚举与下载命令能力保留）
+    let overview = [ModelType::Mobile]
         .iter()
         .map(|&t| {
             let status = mm.check_models(t);
@@ -147,7 +146,7 @@ pub fn get_model_overview(
 /// 启用/禁用当前识别模型。
 ///
 /// `model_type = None` → 禁用（OCR 不可用，直到启用一个模型）；
-/// `Some("lite"|"mobile"|"server"|"balanced")` → 启用该模型。
+/// `Some("lite"|"mobile"|"server")` → 启用该模型（旧值 "balanced" 视作 mobile）。
 /// 选择持久化到 settings（重启保留）。
 #[tauri::command]
 pub fn set_active_model(
@@ -232,7 +231,7 @@ pub fn refresh_ocr_status(
     })
 }
 
-/// 下载 OCR 模型（可选指定模型类型，默认 balanced）
+/// 下载 OCR 模型（可选指定模型类型，默认 mobile）
 #[tauri::command]
 pub async fn download_ocr_models(
     model_type: Option<String>,
@@ -600,7 +599,7 @@ pub fn start_ocr(
         }
 
         // 内存估算跟随实际启用的模型（防「模型口径分裂」）
-        ocr_svc.active_model().unwrap_or(ModelType::Balanced)
+        ocr_svc.active_model().unwrap_or(ModelType::Mobile)
     };
 
     // 估算所需内存（按当前启用模型）
@@ -1069,8 +1068,8 @@ fn process_page(
 
     debug!("PDF页面渲染成功: page={}, size={}x{}", page_num, image.width(), image.height());
 
-    // OCR 识别（文本 + 归一化区域坐标；文本生成路径不变）
-    let (text, regions) = {
+    // OCR 识别（文本 + 归一化区域坐标 + 低置信丢弃行数）
+    let outcome = {
         let mut ocr_svc = ocr_service.lock().map_err(|e| {
             error!("获取OCR服务锁失败: {}", e);
             format!("OCR服务锁定失败: {}", e)
@@ -1081,6 +1080,8 @@ fn process_page(
                 format!("OCR识别失败: {}", e)
             })?
     };
+    let (text, regions, low_conf_dropped) =
+        (outcome.text, outcome.regions, outcome.low_conf_dropped);
 
     info!("OCR识别成功: page={}, 文本长度={}, 区域数={}", page_num, text.len(), regions.len());
 
@@ -1105,9 +1106,10 @@ fn process_page(
     })?;
 
     conn.execute(
-        "INSERT OR REPLACE INTO pdf_pages (pdf_id, page_number, ocr_text, ocr_status, ocr_regions)
-         VALUES (?1, ?2, ?3, 'done', ?4)",
-        rusqlite::params![pdf_id, page_num, text, regions_json],
+        "INSERT OR REPLACE INTO pdf_pages
+             (pdf_id, page_number, ocr_text, ocr_status, ocr_regions, ocr_low_conf)
+         VALUES (?1, ?2, ?3, 'done', ?4, ?5)",
+        rusqlite::params![pdf_id, page_num, text, regions_json, low_conf_dropped as i64],
     )
     .map_err(|e| {
         error!("保存OCR结果失败: page={}, 错误: {}", page_num, e);

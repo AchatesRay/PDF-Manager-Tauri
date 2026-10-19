@@ -256,7 +256,7 @@ pub struct OcrService {
     model_manager: Arc<ModelManager>,
     ocr: Option<OAROCR>,
     preprocess_mode: PreprocessMode,
-    /// 当前启用的模型（None = 已禁用，OCR 不可用；默认 Balanced 与历史行为一致）
+    /// 当前启用的模型（None = 已禁用，OCR 不可用；默认 Mobile）
     active_model: Option<ModelType>,
 }
 
@@ -301,6 +301,27 @@ struct OcrRegion {
     conf: f32,
 }
 
+/// 一次整页识别的结果。
+///
+/// `low_conf_dropped` 记录本次因置信度 < `MIN_CONFIDENCE` 而未收录的行数：
+/// 这些文字既不进搜索结果、也不参与高亮，历史实现完全静默；上层据此在日志
+/// 与界面上提示「本页可能有文字未被收录」，而不是让用户以为 PDF 里没有这些字。
+#[derive(Debug, Clone)]
+pub struct OcrOutcome {
+    pub text: String,
+    pub regions: Vec<RegionBox>,
+    pub low_conf_dropped: usize,
+}
+
+/// 单条识别区域被丢弃的原因（用于统计，不参与文本生成）
+#[derive(Debug, Clone, Copy)]
+enum RegionDrop {
+    /// 置信度低于阈值
+    LowConfidence,
+    /// 没有可用包围盒（坐标无法归一化）
+    NoBoundingBox,
+}
+
 /// 识别区域的持久化形态（搜索预览高亮，2026-09-28）。
 ///
 /// 坐标为 **0~1 归一化**（÷ 处理图像宽高）：OCR 渲染尺寸（默认 1000）与
@@ -341,22 +362,24 @@ impl OcrRegion {
         origin_x: f32,
         origin_y: f32,
         scale: f32,
-    ) -> Option<Self> {
-        let (text, conf) = region.text_with_confidence()?;
+    ) -> Result<Self, RegionDrop> {
+        let (text, conf) = region
+            .text_with_confidence()
+            .ok_or(RegionDrop::NoBoundingBox)?;
         if conf < MIN_CONFIDENCE {
             debug!("过滤低置信度文本: {} (置信度: {:.2})", text, conf);
-            return None;
+            return Err(RegionDrop::LowConfidence);
         }
         let pts = &region.bounding_box.points;
         if pts.is_empty() {
-            return None;
+            return Err(RegionDrop::NoBoundingBox);
         }
         let min_x = pts.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
         let max_x = pts.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
         let min_y = pts.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
         let max_y = pts.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
 
-        Some(Self {
+        Ok(Self {
             x0: origin_x + min_x * scale,
             y0: origin_y + min_y * scale,
             x1: origin_x + max_x * scale,
@@ -410,17 +433,29 @@ fn merge_regions(mut regions: Vec<OcrRegion>) -> Vec<OcrRegion> {
 }
 
 /// 从一批 predict 结果收集整页坐标区域（origin = 分块在整页中的偏移）
-fn collect_regions(results: &[OAROCRResult], origin_x: f32, origin_y: f32, scale: f32) -> Vec<OcrRegion> {
-    results
-        .iter()
-        .flat_map(|r| r.text_regions.iter())
-        .filter_map(|region| OcrRegion::from_text_region(region, origin_x, origin_y, scale))
-        .collect()
+///
+/// 返回 (区域列表, 因置信度过低被丢弃的行数)
+fn collect_regions(
+    results: &[OAROCRResult],
+    origin_x: f32,
+    origin_y: f32,
+    scale: f32,
+) -> (Vec<OcrRegion>, usize) {
+    let mut kept = Vec::new();
+    let mut low_conf_dropped = 0usize;
+    for region in results.iter().flat_map(|r| r.text_regions.iter()) {
+        match OcrRegion::from_text_region(region, origin_x, origin_y, scale) {
+            Ok(r) => kept.push(r),
+            Err(RegionDrop::LowConfidence) => low_conf_dropped += 1,
+            Err(RegionDrop::NoBoundingBox) => {}
+        }
+    }
+    (kept, low_conf_dropped)
 }
 
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
-    /// 使用 PP-OCRv5 Mobile 模型（与 ModelType::Balanced 同文件）：速度快、内存约 300MB
+    /// 使用 PP-OCRv5 Mobile 模型：速度快、内存约 300MB
     pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
         info!("初始化 OCR 服务, data_dir={:?}", data_dir);
 
@@ -441,7 +476,7 @@ impl OcrService {
             model_manager,
             ocr: None,
             preprocess_mode: PreprocessMode::default(),
-            active_model: Some(ModelType::Balanced),
+            active_model: Some(ModelType::Mobile),
         })
     }
 
@@ -572,19 +607,20 @@ impl OcrService {
     /// 薄封装：文本结果与 `recognize_with_regions` 完全一致（搜索预览高亮
     /// 需要坐标时走 `recognize_with_regions`，本函数保持历史签名与输出不变）。
     pub fn recognize_with_limit(&mut self, image: &DynamicImage, max_dimension: u32) -> Result<String, OcrError> {
-        self.recognize_with_regions(image, max_dimension).map(|(text, _)| text)
+        self.recognize_with_regions(image, max_dimension).map(|o| o.text)
     }
 
-    /// 执行 OCR 识别并返回归一化区域坐标（文本 + `RegionBox` 列表）
+    /// 执行 OCR 识别并返回归一化区域坐标（文本 + `RegionBox` 列表 + 丢弃统计）
     ///
     /// - 文本生成路径与历史行为**完全一致**（分块：merge_regions 后 join；
     ///   小图：predict 原序 join；两者均接 `optimize_by_language`）。
     /// - 区域坐标 ÷ 处理图像宽高 归一化到 [0,1]，供搜索预览高亮定位。
+    /// - `low_conf_dropped` = 本次因置信度不足被丢弃的行数（历史实现静默丢弃）。
     pub fn recognize_with_regions(
         &mut self,
         image: &DynamicImage,
         max_dimension: u32,
-    ) -> Result<(String, Vec<RegionBox>), OcrError> {
+    ) -> Result<OcrOutcome, OcrError> {
         // 如果模型未加载，尝试加载
         if self.ocr.is_none() {
             self.init_ocr()?;
@@ -633,6 +669,7 @@ impl OcrService {
             match ocr.predict(vec![rgb_image]) {
                 Ok(results) => {
                     // 文本：保持历史行为（predict 原序、同置信度过滤、join "\n"）
+                    let mut low_conf_dropped = 0usize;
                     let raw_text = results
                         .first()
                         .map(|r| {
@@ -643,6 +680,7 @@ impl OcrService {
                                     if conf >= MIN_CONFIDENCE {
                                         Some(t)
                                     } else {
+                                        low_conf_dropped += 1;
                                         debug!("过滤低置信度文本: {} (置信度: {:.2})", t, conf);
                                         None
                                     }
@@ -653,12 +691,14 @@ impl OcrService {
                         .unwrap_or_default();
 
                     // 区域：与文本同序收集（单 predict 即整页，无重叠去重需求）
-                    let boxes: Vec<RegionBox> = results
-                        .iter()
-                        .flat_map(|r| r.text_regions.iter())
-                        .filter_map(|region| OcrRegion::from_text_region(region, 0.0, 0.0, 1.0))
-                        .map(|r| r.to_region_box(norm_w, norm_h))
-                        .collect();
+                    let mut boxes: Vec<RegionBox> = Vec::new();
+                    for region in results.iter().flat_map(|r| r.text_regions.iter()) {
+                        match OcrRegion::from_text_region(region, 0.0, 0.0, 1.0) {
+                            Ok(r) => boxes.push(r.to_region_box(norm_w, norm_h)),
+                            // 与文本路径同一条置信度规则，不重复计数（上面已按行统计）
+                            Err(RegionDrop::LowConfidence) | Err(RegionDrop::NoBoundingBox) => {}
+                        }
+                    }
 
                     // 应用后处理
                     let text = if !raw_text.is_empty() {
@@ -668,8 +708,14 @@ impl OcrService {
                         raw_text
                     };
 
+                    if low_conf_dropped > 0 {
+                        warn!(
+                            "OCR 有 {} 行因置信度低于 {:.2} 未收录（这些文字不会出现在搜索结果中）",
+                            low_conf_dropped, MIN_CONFIDENCE
+                        );
+                    }
                     info!("OCR 识别完成: {} 字符, {} 区域", text.len(), boxes.len());
-                    return Ok((text, boxes));
+                    return Ok(OcrOutcome { text, regions: boxes, low_conf_dropped });
                 }
                 Err(e) => {
                     let error_str = e.to_string();
@@ -706,7 +752,7 @@ impl OcrService {
     /// 坐标归一化除数 = **缩放后**整页尺寸 (sw, sh)（区域坐标即该坐标系），
     /// 归一化比例与缩放无关（等比缩放），可直接用于任意渲染尺寸的预览。
     fn recognize_with_tiling(&mut self, image: &DynamicImage, max_dimension: u32)
-        -> Result<(String, Vec<RegionBox>), OcrError>
+        -> Result<OcrOutcome, OcrError>
     {
         let ocr = self.ocr.as_ref().ok_or_else(|| {
             OcrError::OcrFailed("OCR 模型未初始化".to_string())
@@ -736,6 +782,8 @@ impl OcrService {
 
         let mut regions: Vec<OcrRegion> = Vec::new();
         let mut memory_retry_count = 0;
+        // 各分块里因置信度过低被丢弃的行数（跨分块累加）
+        let mut low_conf_dropped = 0usize;
 
         for (idx, &(x0, y0, x1, y1)) in tiles.iter().enumerate() {
             if x0 >= x1 || y0 >= y1 {
@@ -753,7 +801,10 @@ impl OcrService {
 
                 match ocr.predict(vec![rgb_tile]) {
                     Ok(results) => {
-                        regions.extend(collect_regions(&results, x0 as f32, y0 as f32, 1.0));
+                        let (mut kept, dropped) =
+                            collect_regions(&results, x0 as f32, y0 as f32, 1.0);
+                        regions.append(&mut kept);
+                        low_conf_dropped += dropped;
                         // 重置重试计数
                         memory_retry_count = 0;
                         break;
@@ -786,7 +837,10 @@ impl OcrService {
                             // 再次尝试
                             match ocr.predict(vec![rgb_tile]) {
                                 Ok(results) => {
-                                    regions.extend(collect_regions(&results, x0 as f32, y0 as f32, coord_scale));
+                                    let (mut kept, dropped) =
+                                        collect_regions(&results, x0 as f32, y0 as f32, coord_scale);
+                                    regions.append(&mut kept);
+                                    low_conf_dropped += dropped;
                                     memory_retry_count = 0;
                                     break;
                                 }
@@ -826,8 +880,14 @@ impl OcrService {
             raw_text
         };
 
+        if low_conf_dropped > 0 {
+            warn!(
+                "分块 OCR 有 {} 行因置信度低于 {:.2} 未收录（这些文字不会出现在搜索结果中）",
+                low_conf_dropped, MIN_CONFIDENCE
+            );
+        }
         info!("分块 OCR 完成: {} 字符 ({} 个区域)", text.len(), merged.len());
-        Ok((text, boxes))
+        Ok(OcrOutcome { text, regions: boxes, low_conf_dropped })
     }
 
     /// 获取模型管理器（用于下载等操作）
@@ -1066,7 +1126,10 @@ mod tests {
             Some("噪声".into()),
             Some(MIN_CONFIDENCE - 0.1),
         );
-        assert!(OcrRegion::from_text_region(&low, 0.0, 0.0, 1.0).is_none());
+        assert!(matches!(
+            OcrRegion::from_text_region(&low, 0.0, 0.0, 1.0),
+            Err(RegionDrop::LowConfidence)
+        ));
 
         // 无文本/无置信度丢弃
         let none = TextRegion::with_recognition(
@@ -1074,7 +1137,10 @@ mod tests {
             None,
             Some(0.9),
         );
-        assert!(OcrRegion::from_text_region(&none, 0.0, 0.0, 1.0).is_none());
+        assert!(matches!(
+            OcrRegion::from_text_region(&none, 0.0, 0.0, 1.0),
+            Err(RegionDrop::NoBoundingBox)
+        ));
     }
 
     // ===== T5：预处理 P0-7 回归 =====

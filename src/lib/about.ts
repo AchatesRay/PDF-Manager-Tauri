@@ -15,7 +15,7 @@ export const RELEASES: Record<string, string> = {
 // 功能简介要点
 export const APP_FEATURES: { title: string; desc: string }[] = [
   { title: '本地文档管理', desc: '文件夹树分类，PDF 导入、移动、重命名、批量管理' },
-  { title: '扫描 OCR 识别', desc: '中文识别任务队列、进度显示、多模型切换（Mobile/Balanced 等）' },
+  { title: '扫描 OCR 识别', desc: '中文识别任务队列、进度显示、多模型切换（Mobile/Server/Lite）' },
   { title: '中文全文搜索', desc: '正文全文搜索 + 文件名搜索，命中结果预览高亮定位' },
   { title: '文档阅读', desc: '内置分页预览，也可调用外部阅读器打开' },
 ];

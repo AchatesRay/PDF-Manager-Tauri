@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS pdf_pages (
     page_number INTEGER NOT NULL,
     ocr_text TEXT,
     ocr_status TEXT CHECK(ocr_status IN ('pending', 'done', 'error')) DEFAULT 'pending',
+    -- 本次识别中因置信度不足未收录的行数（0 = 没有丢弃；老数据为 NULL 视作未知）
+    ocr_low_conf INTEGER DEFAULT 0,
     thumbnail_path TEXT,
     FOREIGN KEY (pdf_id) REFERENCES pdfs(id) ON DELETE CASCADE
 );
@@ -65,4 +67,7 @@ pub const MIGRATIONS: &[&str] = &[
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_pdf_page ON pdf_pages(pdf_id, page_number)",
     // 搜索预览高亮（2026-09-28）：OCR 区域坐标 JSON（0~1 归一化），缺失时前端不高亮
     "ALTER TABLE pdf_pages ADD COLUMN ocr_regions TEXT",
+    // 低置信丢弃行数（2026-10-19）：让「识别时被静默丢弃的文字」可被界面提示。
+    // 老数据为 NULL：前端按「未知」处理，不误报「丢字」。
+    "ALTER TABLE pdf_pages ADD COLUMN ocr_low_conf INTEGER DEFAULT 0",
 ];

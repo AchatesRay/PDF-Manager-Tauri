@@ -115,6 +115,23 @@ export async function getPageMatches(
   return invoke('get_page_matches', { pdfId, pageNumber, query });
 }
 
+/** 某页的识别质量信息 */
+export interface PageOcrInfo {
+  /** null = 该页还没有识别记录 */
+  ocr_status: string | null;
+  /** null = 升级前的旧数据，没有记录（不代表没丢字） */
+  low_conf: number | null;
+  /** 是否保存了可高亮的坐标（旧数据为 false） */
+  has_regions: boolean;
+}
+
+export async function getPageOcrInfo(
+  pdfId: number,
+  pageNumber: number
+): Promise<PageOcrInfo> {
+  return invoke('get_page_ocr_info', { pdfId, pageNumber });
+}
+
 // OCR API
 export interface OcrStatus {
   available: boolean;

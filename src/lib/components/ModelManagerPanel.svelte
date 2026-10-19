@@ -19,7 +19,7 @@
     { prefix: 'https://gh-proxy.com/', pageOk: false },
     { prefix: 'https://ghfast.top/', pageOk: true },
   ];
-  // mobile / balanced 套件（同一套文件）的直链示例
+  // PP-OCRv5 Mobile 套件的直链示例
   const DIRECT_SAMPLE = 'https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx';
 
   let overview: ModelOverview[] = [];
@@ -166,7 +166,7 @@
         <ol class="info-steps">
           <li>
             <b>需成套下载</b>：每套 3 个文件（det 检测模型 + rec 识别模型 + 字典 .txt）必须全部下载，缺一不可；
-            Mobile 与 Balanced 是同一套文件（PP-OCRv5 Mobile），<b>下载一套即可通用</b>，无需重复下载。
+            本面板只提供一套 PP-OCRv5 Mobile 模型（原「平衡版」已并入此项），<b>下载这一套即可</b>。
           </li>
           <li>
             <b>文件名必须原样保留</b>，不要重命名，3 个文件分别为：

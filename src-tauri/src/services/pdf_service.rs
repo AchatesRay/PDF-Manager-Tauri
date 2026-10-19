@@ -2,6 +2,7 @@ use crate::models::PdfType;
 use image::DynamicImage;
 use pdfium_render::prelude::*;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -19,6 +20,53 @@ type RenderRequest = (
     u32,
     std::sync::mpsc::Sender<Result<DynamicImage, PdfError>>,
 );
+
+/// 同一会话内连续 panic 达到该次数即熔断（pdfium 线程本地状态可能已不可信）
+const RENDER_PANIC_LIMIT: u32 = 2;
+
+/// 熔断提示：直接展示给用户，含可执行动作
+const RENDER_STUCK_MSG: &str = "PDF 渲染组件已无响应，请重启应用后重试";
+
+/// 渲染线程实例：唯一持有 pdfium 绑定的线程 + 其健康状态
+struct RenderWorker {
+    tx: std::sync::mpsc::Sender<RenderRequest>,
+    handle: std::thread::JoinHandle<()>,
+    /// 本实例累计捕获的 panic 次数（线程内共享）
+    #[allow(dead_code)]
+    panics: std::sync::Arc<AtomicU32>,
+}
+
+/// 渲染线程槽位（进程级单例，懒初始化）
+fn render_worker_slot() -> &'static std::sync::Mutex<Option<RenderWorker>> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<Option<RenderWorker>>> =
+        std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 熔断开关：置位后所有渲染立即失败，直到重启（pdfium 卡死无进程内安全恢复手段）
+fn render_stuck() -> &'static AtomicBool {
+    static STUCK: AtomicBool = AtomicBool::new(false);
+    &STUCK
+}
+
+fn mark_render_stuck(reason: &str) {
+    if !render_stuck().swap(true, Ordering::SeqCst) {
+        error!("{} → 渲染组件熔断，后续请求立即失败（需重启应用恢复）", reason);
+    }
+}
+
+fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+#[cfg(test)]
+static TEST_FORCE_PANIC: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static RENDER_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Error, Debug)]
 pub enum PdfError {
@@ -227,8 +275,23 @@ impl PdfService {
     /// **永久死锁**（`test_render_across_threads_no_deadlock` 确定性复现；
     /// 串行命令模型下历史上只有命令线程绑定过，P0-9 工作线程化后立即踩中）。
     /// 单一绑定线程保证全进程只初始化一次；`recv_timeout` 兜底防止调用方无限悬挂。
+    /// 渲染请求入口：所有渲染都经全进程唯一线程执行（见上）。
+    ///
+    /// 健壮性约定（与 P0-10 的死锁约束兼容）：
+    /// - 线程内 panic 被 `catch_unwind` 捕获：本次请求报错，线程继续服务；
+    /// - 连续 panic 达阈值 → 熔断（pdfium 线程本地状态可能已不可信）；
+    /// - 首帧超时（pdfium 卡在某页内部）→ 熔断，后续请求**立即**失败，绝不重建线程：
+    ///   旧线程仍存活时，新线程的 `FPDF_InitLibrary` 会永久死锁（P0-10），
+    ///   那会把"一次卡死"升级成"死锁 + 卡死"；恢复入口只有重启应用；
+    /// - 仅当线程确已退出（通道断 / `is_finished`）时才重建，此时重建安全。
     pub fn render_page_with_limit(&self, pdf_path: &Path, page_num: u32, max_dimension: u32) -> Result<DynamicImage, PdfError> {
         debug!("渲染PDF页面: page={}, path={:?}, max_dimension={}", page_num, pdf_path, max_dimension);
+
+        // 熔断优先：不必再让用户等下一次超时
+        if render_stuck().load(Ordering::SeqCst) {
+            warn!("渲染组件处于熔断状态，拒绝新请求: page={}, path={:?}", page_num, pdf_path);
+            return Err(PdfError::RenderError(RENDER_STUCK_MSG.to_string()));
+        }
 
         if !pdf_path.exists() {
             error!("PDF文件不存在: {:?}", pdf_path);
@@ -236,43 +299,116 @@ impl PdfService {
         }
 
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        Self::render_worker_sender()
-            .send((pdf_path.to_path_buf(), page_num, max_dimension, reply_tx))
-            .map_err(|_| {
-                error!("渲染线程已退出: {:?}", pdf_path);
-                PdfError::RenderError("渲染线程已退出".to_string())
-            })?;
+        let mut delivered = false;
+        for attempt in 1..=2 {
+            let sender = Self::render_sender()?;
+            if sender
+                .send((pdf_path.to_path_buf(), page_num, max_dimension, reply_tx.clone()))
+                .is_ok()
+            {
+                delivered = true;
+                break;
+            }
+            warn!("渲染请求发送失败（线程已退出），重建后重试: attempt={}", attempt);
+            Self::discard_dead_worker();
+        }
+        if !delivered {
+            error!("渲染线程不可用（重建后仍无法送达）: {:?}", pdf_path);
+            return Err(PdfError::RenderError(
+                "PDF 渲染组件不可用，请重启应用后重试".to_string(),
+            ));
+        }
 
         match reply_rx.recv_timeout(std::time::Duration::from_secs(RENDER_TIMEOUT_SECS)) {
             Ok(result) => result,
-            Err(_) => {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 error!("渲染超时({}s): page={}, path={:?}", RENDER_TIMEOUT_SECS, page_num, pdf_path);
-                Err(PdfError::RenderError(format!("渲染超时({}秒)", RENDER_TIMEOUT_SECS)))
+                mark_render_stuck(&format!(
+                    "渲染超时({}s)，page={}, path={:?}",
+                    RENDER_TIMEOUT_SECS, page_num, pdf_path
+                ));
+                Err(PdfError::RenderError(RENDER_STUCK_MSG.to_string()))
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                error!("渲染线程在处理期间退出: page={}, path={:?}", page_num, pdf_path);
+                Self::discard_dead_worker();
+                Err(PdfError::RenderError(
+                    "渲染组件已重启，请重试该页".to_string(),
+                ))
             }
         }
     }
 
-    /// 全进程唯一的 pdfium 渲染线程（懒启动，进程级单例）
+    /// 取得可用的渲染线程发送端（必要时懒启动 / 重建已退出的线程）
+    fn render_sender() -> Result<std::sync::mpsc::Sender<RenderRequest>, PdfError> {
+        let mut slot = render_worker_slot()
+            .lock()
+            .map_err(|e| PdfError::RenderError(format!("渲染线程状态锁失败: {}", e)))?;
+
+        if let Some(worker) = slot.as_ref() {
+            if !worker.handle.is_finished() {
+                return Ok(worker.tx.clone());
+            }
+            warn!("pdfium 渲染线程已退出（初始化失败或未捕获 panic），重建");
+            *slot = None;
+        }
+
+        let worker = Self::spawn_render_worker();
+        let tx = worker.tx.clone();
+        *slot = Some(worker);
+        Ok(tx)
+    }
+
+    /// 丢弃已死亡的线程槽位（对端通道已关闭 ⇒ 线程正在收尾；不 join，避免挂住调用方）
+    fn discard_dead_worker() {
+        if let Ok(mut slot) = render_worker_slot().lock() {
+            if let Some(worker) = slot.take() {
+                if !worker.handle.is_finished() {
+                    warn!("渲染线程仍在退出过程中，已分离旧实例");
+                }
+            }
+        }
+    }
+
+    /// 启动唯一的 pdfium 渲染线程
     ///
-    /// 这是全进程**唯一**允许绑定 pdfium 的线程：`FPDF_InitLibrary` 生命周期内只调用一次。
-    fn render_worker_sender() -> &'static std::sync::mpsc::Sender<RenderRequest> {
-        static WORKER: std::sync::OnceLock<std::sync::mpsc::Sender<RenderRequest>> =
-            std::sync::OnceLock::new();
-        WORKER.get_or_init(|| {
-            let (tx, rx) = std::sync::mpsc::channel::<RenderRequest>();
-            std::thread::Builder::new()
-                .name("pdfium-render".to_string())
-                .spawn(move || {
-                    info!("pdfium 渲染线程启动（全进程唯一 FPDF_InitLibrary 绑定线程）");
-                    while let Ok((path, page_num, max_dimension, reply)) = rx.recv() {
-                        let result = Self::render_on_worker_thread(&path, page_num, max_dimension);
-                        let _ = reply.send(result);
-                    }
-                    warn!("pdfium 渲染线程退出：请求通道已关闭");
-                })
-                .expect("启动 pdfium 渲染线程失败");
-            tx
-        })
+    /// 每个请求都在 `catch_unwind` 内执行：单页异常不会杀死线程（否则此后所有渲染
+    /// 都会报"渲染线程已退出"直到重启）。
+    fn spawn_render_worker() -> RenderWorker {
+        let (tx, rx) = std::sync::mpsc::channel::<RenderRequest>();
+        let panics = std::sync::Arc::new(AtomicU32::new(0));
+        let panics_worker = panics.clone();
+        let handle = std::thread::Builder::new()
+            .name("pdfium-render".to_string())
+            .spawn(move || {
+                info!("pdfium 渲染线程启动（全进程唯一 FPDF_InitLibrary 绑定线程）");
+                while let Ok((path, page_num, max_dimension, reply)) = rx.recv() {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        Self::render_on_worker_thread(&path, page_num, max_dimension)
+                    }));
+                    let result = match outcome {
+                        Ok(result) => result,
+                        Err(payload) => {
+                            let count = panics_worker.fetch_add(1, Ordering::SeqCst) + 1;
+                            error!(
+                                "渲染线程捕获异常（本会话第 {} 次）: page={}, path={:?}, detail={}",
+                                count, page_num, path,
+                                panic_detail(payload.as_ref())
+                            );
+                            if count >= RENDER_PANIC_LIMIT {
+                                mark_render_stuck("渲染组件连续异常");
+                            }
+                            Err(PdfError::RenderError(
+                                "该页渲染失败（内部异常），应用仍可继续使用其他页面".to_string(),
+                            ))
+                        }
+                    };
+                    let _ = reply.send(result);
+                }
+                warn!("pdfium 渲染线程退出：请求通道已关闭");
+            })
+            .expect("启动 pdfium 渲染线程失败");
+        RenderWorker { tx, handle, panics }
     }
 
     /// 渲染线程内部实现（唯一允许绑定/使用 pdfium 的线程）
@@ -281,6 +417,13 @@ impl PdfService {
         page_num: u32,
         max_dimension: u32,
     ) -> Result<DynamicImage, PdfError> {
+        #[cfg(test)]
+        {
+            if TEST_FORCE_PANIC.swap(false, Ordering::SeqCst) {
+                panic!("测试注入：渲染线程 panic");
+            }
+        }
+
         if !pdf_path.exists() {
             error!("PDF文件不存在: {:?}", pdf_path);
             return Err(PdfError::RenderError(format!("文件不存在: {}", pdf_path.display())));
@@ -387,6 +530,60 @@ pub struct PdfMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 临时构造一个存在的最小 PDF 文件（用于让请求真正进入渲染线程）
+    fn dummy_pdf(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pdfm-render-{}-{}", tag, std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dummy.pdf");
+        std::fs::write(&path, b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n").unwrap();
+        path
+    }
+
+    /// 单页 panic 不应杀死渲染线程：本次报错，下一次请求正常送达
+    #[test]
+    fn test_render_worker_survives_panic() {
+        let _guard = RENDER_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        render_stuck().store(false, Ordering::SeqCst);
+
+        let pdf = dummy_pdf("panic");
+        TEST_FORCE_PANIC.store(true, Ordering::SeqCst);
+        let first = PdfService::new()
+            .unwrap()
+            .render_page_with_limit(&pdf, 1, 200);
+        let first_msg = first.err().expect("注入 panic 的请求应返回错误").to_string();
+        assert!(first_msg.contains("内部异常"), "unexpected: {}", first_msg);
+        assert!(!render_stuck().load(Ordering::SeqCst), "单次 panic 不应熔断");
+
+        // 线程仍存活 → 第二次请求不会返回"内部异常"或"渲染组件不可用"
+        let second = PdfService::new()
+            .unwrap()
+            .render_page_with_limit(&pdf, 1, 200)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(!second.contains("内部异常"), "线程未恢复: {}", second);
+        assert!(!second.contains("不可用"), "线程未恢复: {}", second);
+    }
+
+    /// 熔断后必须立即失败（不再等 120 秒）
+    #[test]
+    fn test_render_stuck_fails_fast() {
+        let _guard = RENDER_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pdf = dummy_pdf("stuck");
+
+        mark_render_stuck("测试注入熔断");
+        let started = std::time::Instant::now();
+        let err = PdfService::new()
+            .unwrap()
+            .render_page_with_limit(&pdf, 1, 200)
+            .expect_err("熔断状态下渲染应失败");
+        let elapsed = started.elapsed();
+
+        assert!(err.to_string().contains("重启应用"), "unexpected: {}", err);
+        assert!(elapsed < std::time::Duration::from_secs(1), "熔断未生效，耗时 {:?}", elapsed);
+        render_stuck().store(false, Ordering::SeqCst);
+    }
 
     #[test]
     fn test_pdf_service_creation() {

@@ -7,16 +7,30 @@ use std::sync::Mutex;
 use tauri::State;
 use tracing::{debug, error, info, warn};
 
-/// 索引为空时从数据库回填（T1 索引版本升级的安全网）。
+/// 索引页数少于数据库应有页数时从数据库回填（T1 索引版本升级的安全网）。
 ///
 /// 索引版本变更（如 v5→v6）会备份旧索引并重建空索引；若不回填，
 /// 老用户升级后搜索会静默变空，只能靠 force 重识别恢复。
-/// 门控：索引非空直接返回 0（正常运行期零开销）。
+///
+/// 门控改为「索引里的页数 ≥ 数据库里有文字的页数」才跳过：旧实现只看
+/// `doc_count() > 0`，一旦回填被中途打断（或新索引里只写进了少数几页），
+/// 剩余页面就永远补不回来，表现为「搜得到新文件、搜不到老文件」。
+/// 补齐走 `replace_pages`（按 page_id 先删后写），重跑不会产生重复结果。
 pub fn refill_index_from_db(
     conn: &rusqlite::Connection,
     search_service: &mut SearchService,
 ) -> Result<usize, String> {
-    if search_service.doc_count() > 0 {
+    let expected: u64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pdf_pages
+             WHERE ocr_text IS NOT NULL AND TRIM(ocr_text) <> ''",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| format!("统计待回填页数失败: {}", e))? as u64;
+
+    // 库里本来就没有可搜索的页，或索引已覆盖全部页：无需回填
+    if expected == 0 || search_service.doc_count() >= expected {
         return Ok(0);
     }
 
@@ -50,9 +64,14 @@ pub fn refill_index_from_db(
 
     let count = entries.len();
     search_service
-        .index_pages(&entries)
+        .replace_pages(&entries)
         .map_err(|e| format!("回填索引失败: {}", e))?;
-    info!("索引已从数据库回填: {} 页", count);
+    info!(
+        "索引已从数据库补齐: 写入 {} 页（回填前索引 {} 页 / 数据库应有 {} 页）",
+        count,
+        search_service.doc_count().saturating_sub(count as u64),
+        expected
+    );
     Ok(count)
 }
 
@@ -151,6 +170,60 @@ pub fn get_page_matches(
         rects.len()
     );
     Ok(rects)
+}
+
+/// 某页的识别质量信息（供查看器提示，不参与搜索）
+#[derive(serde::Serialize)]
+pub struct PageOcrInfo {
+    /// `null` = 该页没有识别记录（尚未 OCR）
+    pub ocr_status: Option<String>,
+    /// `null` = 老数据没有记录（升级前的识别结果），不等于「没有丢弃」
+    pub low_conf: Option<i64>,
+    /// 是否保存了可高亮的位置坐标（旧数据为 false）
+    pub has_regions: bool,
+}
+
+/// 查询某页的识别质量信息：低置信丢弃行数 + 是否存有坐标
+#[tauri::command]
+pub fn get_page_ocr_info(
+    pdf_id: i64,
+    page_number: i32,
+    db: State<'_, Db>,
+) -> Result<PageOcrInfo, String> {
+    let conn = db.lock().map_err(|e| {
+        error!("获取数据库锁失败: {}", e);
+        format!("数据库锁定失败: {}", e)
+    })?;
+
+    match conn.query_row(
+        "SELECT ocr_status, ocr_low_conf, ocr_regions
+         FROM pdf_pages WHERE pdf_id = ?1 AND page_number = ?2",
+        params![pdf_id, page_number],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    ) {
+        Ok((ocr_status, low_conf, regions)) => Ok(PageOcrInfo {
+            ocr_status,
+            low_conf,
+            has_regions: regions
+                .map(|json| json.trim() != "" && json.trim() != "[]")
+                .unwrap_or(false),
+        }),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(PageOcrInfo {
+            ocr_status: None,
+            low_conf: None,
+            has_regions: false,
+        }),
+        Err(e) => {
+            error!("查询页面识别信息失败: pdf_id={}, page={}, {}", pdf_id, page_number, e);
+            Err(format!("查询页面识别信息失败: {}", e))
+        }
+    }
 }
 
 /// 搜索PDF文件名

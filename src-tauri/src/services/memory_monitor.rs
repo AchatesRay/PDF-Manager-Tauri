@@ -6,16 +6,15 @@ use tracing::{debug, info};
 const MEMORY_SAFETY_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// OCR 模型预估内存占用（字节）
-/// 实际加载文件（Mobile 与 Balanced 相同）：pp-ocrv5_mobile_det/rec.onnx + ppocrv5_dict.txt
+/// 实际加载文件：pp-ocrv5_mobile_det/rec.onnx + ppocrv5_dict.txt
 /// - Lite (PP-OCRv4 Mobile): ~200MB
-/// - Mobile / Balanced (PP-OCRv5 Mobile): ~300MB
+/// - Mobile (PP-OCRv5 Mobile，默认): ~300MB
 /// - Server (PP-OCRv5 Server): ~1.5GB
 pub fn get_model_memory(model_type: &ModelType) -> u64 {
     match model_type {
         ModelType::Lite => 200 * 1024 * 1024,      // ~200MB
-        ModelType::Mobile => 300 * 1024 * 1024,    // ~300MB（与 Balanced 同文件）
+        ModelType::Mobile => 300 * 1024 * 1024,    // ~300MB
         ModelType::Server => 1500 * 1024 * 1024,   // ~1.5GB
-        ModelType::Balanced => 300 * 1024 * 1024,  // ~300MB（运行时默认）
     }
 }
 
@@ -177,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_estimate_task_memory() {
-        let mem = estimate_task_memory(10, 2000, &ModelType::Balanced);
+        let mem = estimate_task_memory(10, 2000, &ModelType::Mobile);
         // 应该至少包含模型内存 (300MB)
         assert!(mem >= 300 * 1024 * 1024);
     }
@@ -191,9 +190,7 @@ mod tests {
     #[test]
     fn test_get_model_memory() {
         assert_eq!(get_model_memory(&ModelType::Lite), 200 * 1024 * 1024);
-        // Mobile 与 Balanced 加载同一组 PP-OCRv5 Mobile 文件，内存估算一致
         assert_eq!(get_model_memory(&ModelType::Mobile), 300 * 1024 * 1024);
         assert_eq!(get_model_memory(&ModelType::Server), 1500 * 1024 * 1024);
-        assert_eq!(get_model_memory(&ModelType::Balanced), 300 * 1024 * 1024);
     }
 }

@@ -7,8 +7,9 @@ use tracing::{debug, error, info, warn};
 
 /// 模型类型
 ///
-/// 注意：`Mobile` 与 `Balanced` 加载**同一组** PP-OCRv5 Mobile 文件
-/// （det/rec + ppocrv5_dict.txt）；`Balanced` 为运行时默认与下载路径。
+/// 历史上 `Mobile` 与 `Balanced` 是同一组 PP-OCRv5 Mobile 文件的两个入口，
+/// 用户会误以为「平衡版」精度更高而反复下载；现已合并为单一 `Mobile`。
+/// 旧版本持久化的 `ocr_active_model = "balanced"` 在解析时按 `Mobile` 处理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelType {
     /// 移动版：PP-OCRv5 Mobile，快速、低内存（约 300MB）
@@ -17,13 +18,11 @@ pub enum ModelType {
     Server,
     /// PP-OCRv4 轻量版：成熟稳定、低内存（约 200MB）
     Lite,
-    /// 平衡版：与 Mobile 相同的 PP-OCRv5 Mobile 文件，运行时默认（约 300MB）
-    Balanced,
 }
 
 impl Default for ModelType {
     fn default() -> Self {
-        Self::Balanced
+        Self::Mobile
     }
 }
 
@@ -33,7 +32,6 @@ impl std::fmt::Display for ModelType {
             ModelType::Mobile => write!(f, "mobile"),
             ModelType::Server => write!(f, "server"),
             ModelType::Lite => write!(f, "lite"),
-            ModelType::Balanced => write!(f, "balanced"),
         }
     }
 }
@@ -46,7 +44,8 @@ impl std::str::FromStr for ModelType {
             "mobile" => Ok(ModelType::Mobile),
             "server" => Ok(ModelType::Server),
             "lite" => Ok(ModelType::Lite),
-            "balanced" => Ok(ModelType::Balanced),
+            // 兼容旧设置：合并前的 "balanced" 就是 Mobile
+            "balanced" => Ok(ModelType::Mobile),
             _ => Err(format!("未知的模型类型: {}", s)),
         }
     }
@@ -132,25 +131,6 @@ fn get_model_files(model_type: ModelType) -> Vec<ModelFile> {
                 name: String::from("pp-ocrv5_server_rec.onnx"),
                 url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_server_rec.onnx"),
                 size: 80_600_000, // ~80.6MB
-            },
-            ModelFile {
-                name: String::from("ppocrv5_dict.txt"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt"),
-                size: 5_682, // ~5KB
-            },
-        ],
-        // 平衡版：PP-OCRv5 Mobile 模型
-        // 内存占用约 150MB，速度快，适合大多数场景
-        ModelType::Balanced => vec![
-            ModelFile {
-                name: String::from("pp-ocrv5_mobile_det.onnx"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx"),
-                size: 4_600_000, // ~4.6MB
-            },
-            ModelFile {
-                name: String::from("pp-ocrv5_mobile_rec.onnx"),
-                url: String::from("https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx"),
-                size: 15_800_000, // ~15.8MB
             },
             ModelFile {
                 name: String::from("ppocrv5_dict.txt"),
