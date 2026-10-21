@@ -114,8 +114,7 @@ pub fn get_model_overview(
     let active = svc.active_model();
     let models_dir = mm.models_dir().to_string_lossy().to_string();
 
-    // 只保留 Mobile 一张卡片（历史上与之重复的 Balanced 已合并；
-    // lite/server 卡片按用户要求不展示，但枚举与下载命令能力保留）
+    // 界面只展示 Mobile；lite/server 不在界面展示，但枚举与下载命令能力保留
     let overview = [ModelType::Mobile]
         .iter()
         .map(|&t| {
