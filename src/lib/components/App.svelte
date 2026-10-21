@@ -80,7 +80,7 @@
   </div>
 </main>
 
-<!-- 统一设置弹窗（全局，开关由 showSettings store 驱动；2026-09-28 统一设置卡片） -->
+<!-- 统一设置弹窗（全局，开关由 showSettings store 驱动） -->
 <SettingsDialog />
 
 <style>

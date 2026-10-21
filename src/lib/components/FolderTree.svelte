@@ -428,8 +428,6 @@
     color: #16a34a;
   }
 
-  /* 设置面板样式已随组件拆分移至 SettingsPanel.svelte */
-
   .new-folder-item {
     display: flex;
     align-items: center;
