@@ -228,8 +228,6 @@
     </div>
   </div>
 
-  <!-- 设置弹窗改由 App 根部的 <SettingsDialog /> 承载（2026-09-28 统一设置卡片），此处不再内联渲染 -->
-
   <ul class="folder-list">
     <li
       class="folder-item"

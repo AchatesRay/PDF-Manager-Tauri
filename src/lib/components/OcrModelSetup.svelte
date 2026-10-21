@@ -130,8 +130,6 @@
   {statusText}
 </button>
 
-<!-- 模型管理面板已改由 App 根部 SettingsDialog 的「模型」页签承载（2026-09-28 统一设置卡片） -->
-
 <!-- 错误提示 -->
 {#if error}
   <div class="error-message">

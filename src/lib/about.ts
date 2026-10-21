@@ -9,7 +9,7 @@
 // 版本 → 发布日期映射（与 tauri.conf.json 的 version 同步）
 export const RELEASES: Record<string, string> = {
   '1.2.0': '2026-09-28',
-  '1.1.0': '2026-09-28',
+  '1.1.0': '2026-03-28',
 };
 
 // 功能简介要点

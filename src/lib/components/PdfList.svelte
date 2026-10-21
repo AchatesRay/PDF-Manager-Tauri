@@ -16,7 +16,7 @@
   let isBatchWorking = false;
 
   /**
-   * 删除成功后同步清理视图状态（2026-09-28 删除修复补充）：
+   * 删除成功后同步清理视图状态：
    * 后端已把 pdfs/pdf_pages(OCR内容)/索引/文件全删，但前端的搜索结果面板、
    * 文件名结果、预览高亮仍缓存着已删文档的命中 → 看起来「没删干净」。
    */
@@ -530,9 +530,6 @@
     gap: 8px;
   }
 
-  /* .refresh-btn 样式已随「模型配置」按钮删除（2026-09-28 统一设置卡片）；
-     spin keyframes 保留在下方 .spinner 处 */
-
   .add-btn {
     display: flex;
     align-items: center;
@@ -565,8 +562,6 @@
     flex: 1;
     overflow-y: auto;
   }
-
-  /* 条目样式已随组件拆分移至 PdfListItem.svelte */
 
   .loading-state, .empty-state {
     flex: 1;

@@ -7,8 +7,8 @@
   } from '../api';
   import { ocrModelStatus } from '../stores';
 
-  // 2026-09-28 统一设置卡片：面板降级为「模型」页签的内容组件，
-  // 遮罩/标题/✕ 由 SettingsDialog 统一提供；active = 所在页签激活时加载概览
+  // 本组件是「模型」页签的内容组件：遮罩/标题/✕ 由 SettingsDialog 统一提供；
+  // active = 所在页签激活时加载概览
   export let active: boolean = false;
 
   const DOWNLOAD_SITE = 'https://github.com/GreatV/oar-ocr/releases/tag/v0.3.0';
@@ -109,7 +109,7 @@
   $: readySuites = overview.filter(m => m.ready).length;
 </script>
 
-<!-- 2026-09-28 统一设置卡片：无外层遮罩/标题/✕，仅保留「刷新」工具条 + 状态条 -->
+<!-- 无外层遮罩/标题/✕，仅保留「刷新」工具条 + 状态条 -->
 <div class="model-pane">
   <div class="pane-toolbar">
     <button class="mini-btn" on:click={handleManualRefresh} disabled={loading} title="重新扫描已下载的模型文件">
@@ -249,8 +249,6 @@
 </div>
 
 <style>
-  /* 2026-09-28 统一设置卡片：原弹层壳样式（panel-overlay/panel/panel-header/close-x）
-     已随弹层职责移交 SettingsDialog 而删除，此处为页签内容容器样式 */
   .model-pane {
     padding: 14px 16px;
   }
