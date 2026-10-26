@@ -21,6 +21,7 @@
   let error: string | null = null;
   let downloadGuides: DownloadGuide[] = [];
   let isRefreshing = false;
+  let cancelling = false; // 用户主动取消下载（抑制随之而来的「下载已取消」错误）
 
   onMount(() => {
     checkStatus();
@@ -46,6 +47,10 @@
     // 监听下载错误
     listen<{ error: string }>('model-download-error', (event) => {
       isDownloading.set(false);
+      if (cancelling) {
+        cancelling = false;
+        return;
+      }
       error = event.payload.error;
     }).then(unlisten => unlistenError = unlisten);
 
@@ -84,6 +89,7 @@
 
   async function handleDownload() {
     error = null;
+    cancelling = false;
     isDownloading.set(true);
     ocrDownloadProgress.set(null);
 
@@ -91,11 +97,16 @@
       await downloadOcrModels();
     } catch (e) {
       isDownloading.set(false);
+      if (cancelling) {
+        cancelling = false;
+        return;
+      }
       error = String(e);
     }
   }
 
   function handleCancel() {
+    cancelling = true;
     cancelOcrDownload();
     isDownloading.set(false);
     ocrDownloadProgress.set(null);
@@ -130,7 +141,7 @@
   {statusText}
 </button>
 
-<!-- 错误提示 -->
+<!-- 错误提示（可手动关闭；重新下载时自动清空） -->
 {#if error}
   <div class="error-message">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -138,7 +149,10 @@
       <line x1="15" y1="9" x2="9" y2="15"/>
       <line x1="9" y1="9" x2="15" y2="15"/>
     </svg>
-    <span>{error}</span>
+    <span class="error-text">{error}</span>
+    <button class="error-close" on:click={() => (error = null)} title="关闭提示" aria-label="关闭提示">
+      ✕
+    </button>
   </div>
 {/if}
 
@@ -260,6 +274,30 @@
     width: 14px;
     height: 14px;
     flex-shrink: 0;
+  }
+
+  .error-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-all;
+  }
+
+  .error-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+    opacity: 0.75;
+  }
+
+  .error-close:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.12);
   }
 
   /* 下载对话框 */

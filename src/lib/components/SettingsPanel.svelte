@@ -136,6 +136,7 @@
   <div class="settings-item">
     <label>日志目录</label>
     <div class="settings-path">{settings?.log_dir || '加载中...'}</div>
+    <div class="settings-hint">日志与 OCR 模型固定存放在安装目录，选数据目录只搬 PDF 库，不会移动它们。</div>
   </div>
   <div class="settings-divider"></div>
   <div class="settings-title">PDF阅读器</div>

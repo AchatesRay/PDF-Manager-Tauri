@@ -456,10 +456,13 @@ fn collect_regions(
 impl OcrService {
     /// 创建 OCR 服务（延迟加载模型）
     /// 使用 PP-OCRv5 Mobile 模型：速度快、内存约 300MB
-    pub fn new(data_dir: &Path) -> Result<Self, OcrError> {
-        info!("初始化 OCR 服务, data_dir={:?}", data_dir);
+    ///
+    /// `models_dir` 直接传模型目录本身（固定为安装目录下的 `models/`），
+    /// 不再由数据目录推导 —— 选数据目录只搬 PDF 库，模型留在安装目录。
+    pub fn new(models_dir: &Path) -> Result<Self, OcrError> {
+        info!("初始化 OCR 服务, models_dir={:?}", models_dir);
 
-        let models_dir = data_dir.join("models");
+        let models_dir = models_dir.to_path_buf();
 
         // 确保模型目录存在
         if !models_dir.exists() {
@@ -1284,7 +1287,8 @@ mod tests {
         let image_path = std::env::var("PDF_MANAGER_TEST_IMAGE")
             .expect("请设置 PDF_MANAGER_TEST_IMAGE（待识别图片路径）");
 
-        let mut svc = OcrService::new(Path::new(&data_dir)).expect("OCR service init failed");
+        let mut svc = OcrService::new(&Path::new(&data_dir).join("models"))
+            .expect("OCR service init failed");
         svc.init_ocr().expect("模型加载失败");
         assert!(svc.is_available());
 

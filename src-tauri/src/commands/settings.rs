@@ -24,8 +24,10 @@ pub struct AppSettings {
 
 // ===== 数据目录迁移辅助 =====
 
-/// 需要随数据目录迁移的子目录（全量迁移，用户确认口径）
-const MIGRATE_SUBDIRS: [&str; 5] = ["pdfs", "thumbnails", "index", "logs", "models"];
+/// 需要随数据目录迁移的子目录（只含 PDF 相关资料）。
+/// 日志与模型固定放在安装目录（可执行文件目录）下，不随数据目录迁移：
+/// 选目录只搬「PDF 库」，程序运行环境的东西留在安装目录。
+const MIGRATE_SUBDIRS: [&str; 3] = ["pdfs", "thumbnails", "index"];
 /// 需要迁移的 DB 文件（WAL 三件套）
 const MIGRATE_DB_FILES: [&str; 3] = ["pdf-manager.db", "pdf-manager.db-wal", "pdf-manager.db-shm"];
 
@@ -108,6 +110,38 @@ fn copy_data_dir_core(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 升级兼容：把旧数据目录里的模型**一次性复制**到安装目录（`<exe>/models`）。
+///
+/// 背景：模型目录从「随数据目录」改为「固定安装目录」后，自定义数据目录的用户升级时
+/// 会看到模型「未安装」。这里在启动时把旧副本搬过去，避免重新下载约 300MB。
+/// 只复制不删除；目标已有任何文件（含下载中的半成品）则整体跳过，绝不覆盖。
+pub fn adopt_legacy_models(exe_dir: &Path, data_dir: &Path) -> usize {
+    let target = exe_dir.join("models");
+    let legacy = data_dir.join("models");
+    if normalize_dir(exe_dir) == normalize_dir(data_dir) || !legacy.is_dir() {
+        return 0;
+    }
+    if let Ok(mut it) = std::fs::read_dir(&target) {
+        if it.next().is_some() {
+            return 0; // 安装目录已有模型：不覆盖（可能是新下载或用户手动放入）
+        }
+    }
+    match copy_dir_recursive(&legacy, &target) {
+        Ok(0) => 0,
+        Ok(n) => {
+            info!(
+                "已把旧数据目录的模型复制到安装目录: {:?} -> {:?}（{} 个文件）",
+                legacy, target, n
+            );
+            n
+        }
+        Err(e) => {
+            warn!("复制旧模型到安装目录失败（可手动放入）: {}", e);
+            0
+        }
+    }
+}
+
 // ===== 迁移健壮性辅助（两阶段写入 + 空间预检 + 完成标记）=====
 
 /// 迁移暂存目录前缀（位于目标目录内；成功搬移后删除空目录）
@@ -126,7 +160,7 @@ fn dir_total_size(path: &Path) -> u64 {
         .sum()
 }
 
-/// 源数据总大小（DB 三件套 + 五个迁移子目录）
+/// 源数据总大小（DB 三件套 + 三个迁移子目录）
 fn source_data_size(src: &Path) -> u64 {
     let mut total = 0u64;
     for name in MIGRATE_DB_FILES {
@@ -453,7 +487,11 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
             default.to_string_lossy().to_string()
         });
 
-    let log_dir = PathBuf::from(&data_dir).join("logs").to_string_lossy().to_string();
+    // 日志固定写安装目录（可执行文件目录），与数据目录无关
+    let log_dir = default_data_dir(&app_handle)
+        .join("logs")
+        .to_string_lossy()
+        .to_string();
 
     let pdf_reader_path = get_setting(&conn, SETTING_PDF_READER);
 
@@ -471,7 +509,7 @@ pub fn get_settings(db: State<'_, Db>, app_handle: tauri::AppHandle) -> Result<A
     Ok(AppSettings { data_dir, log_dir, pdf_reader_path, ocr_max_image_dimension, ocr_preprocess_mode })
 }
 
-/// 设置数据目录（全量迁移：DB + pdfs + thumbnails + index + logs + models）
+/// 设置数据目录（迁移：DB + pdfs + thumbnails + index；logs/models 留在安装目录）
 ///
 /// 迁移策略（用户确认口径）：
 /// - 只复制不删除：源目录原样保留，天然备份；
@@ -607,7 +645,7 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
         }
     } // ← 复制 DB 期间持有锁，结束后释放
 
-    // 锁外复制子目录（pdfs/thumbnails/index/logs/models）到暂存区
+    // 锁外复制子目录（pdfs/thumbnails/index —— 仅 PDF 相关资料）到暂存区
     for sub in MIGRATE_SUBDIRS {
         match copy_dir_recursive(&source_dir.join(sub), &staging.join(sub)) {
             Ok(n) => debug!("迁移子目录 {} 到暂存区: {} 个文件", sub, n),
@@ -635,8 +673,8 @@ pub fn set_data_dir(db: State<'_, Db>, app_handle: tauri::AppHandle, path: Strin
         promote_item(&staging.join(name), &path_buf.join(name))?;
     }
 
-    // ===== ④ 创建全部子目录（含 models —— 原实现漏了）=====
-    let subdirs = ["pdfs", "thumbnails", "index", "logs", "models"];
+    // ===== ④ 创建 PDF 相关子目录（logs/models 固定在安装目录，不在此创建）=====
+    let subdirs = ["pdfs", "thumbnails", "index"];
     for subdir in &subdirs {
         let subdir_path = path_buf.join(subdir);
         if let Err(e) = std::fs::create_dir_all(&subdir_path) {
@@ -1066,7 +1104,8 @@ mod tests {
         assert_eq!(normalize_dir(Path::new("/tmp/x/")), PathBuf::from("/tmp/x"));
     }
 
-    /// 全量迁移：DB + 五个子目录齐备、绝对路径前缀已修正、data_dir 已指向新目录
+    /// 迁移：DB + 三个 PDF 相关子目录齐备、绝对路径前缀已修正、data_dir 已指向新目录；
+    /// 日志/模型目录不随迁移
     #[test]
     fn test_copy_data_dir_core_and_fix_paths() {
         let root = tempfile::tempdir().unwrap();
@@ -1096,7 +1135,7 @@ mod tests {
             .unwrap();
         assert_eq!(fp, dst.join("pdfs").to_string_lossy());
 
-        // 五个子目录均已迁移
+        // 三个 PDF 相关子目录均已迁移
         for sub in MIGRATE_SUBDIRS {
             assert!(dst.join(sub).join("f.bin").exists(), "子目录 {} 未迁移", sub);
         }
@@ -1126,6 +1165,9 @@ mod tests {
         drop(gconn);
 
         // 刷新前：目标目录在 set_data_dir 之后又新增了一个文件（模拟会话期新数据）
+        std::fs::create_dir_all(src.join("pdfs")).unwrap();
+        std::fs::write(src.join("pdfs").join("new.pdf"), b"p").unwrap();
+        // 模型/日志目录不再随迁移：即便源目录里有，也不应复制到目标
         std::fs::create_dir_all(src.join("models")).unwrap();
         std::fs::write(src.join("models").join("new_model.onnx"), b"m").unwrap();
 
@@ -1133,7 +1175,11 @@ mod tests {
         assert_eq!(normalize_dir(&effective), normalize_dir(&dst), "应返回目标目录");
 
         // 刷新复制生效：新文件已补迁
-        assert!(dst.join("models").join("new_model.onnx").exists());
+        assert!(dst.join("pdfs").join("new.pdf").exists());
+        assert!(
+            !dst.join("models").exists(),
+            "日志/模型不随数据目录迁移（固定安装目录）"
+        );
         // DB 路径已修正
         let conn = rusqlite::Connection::open(dst.join("pdf-manager.db")).unwrap();
         let sp: String = conn
@@ -1212,7 +1258,9 @@ mod tests {
         // 无 data_dir_migrate_from 标记（旧版切换不写标记）
         drop(conn);
 
-        // exe 库侧的 models/index 也应随迁
+        // exe 库侧的 pdfs/index 随迁；models 不随迁（固定安装目录）
+        std::fs::create_dir_all(exe_dir.join("pdfs")).unwrap();
+        std::fs::write(exe_dir.join("pdfs").join("m.pdf"), b"p").unwrap();
         std::fs::create_dir_all(exe_dir.join("models")).unwrap();
         std::fs::write(exe_dir.join("models").join("m.onnx"), b"m").unwrap();
 
@@ -1236,8 +1284,8 @@ mod tests {
         assert_eq!(sp, dst.join("pdfs").join("a.pdf").to_string_lossy());
         drop(dconn);
 
-        // models 已复制
-        assert!(dst.join("models").join("m.onnx").exists());
+        // models 不随迁（固定安装目录，避免把程序运行文件搬进数据目录）
+        assert!(!dst.join("models").exists(), "models 不应随数据目录迁移");
 
         // 第二次启动：目标库已有数据 → 不再触发自动修复（不会重复迁移）
         let exe_db_size_after = std::fs::metadata(&guide).unwrap().len();
@@ -1350,7 +1398,8 @@ mod tests {
         }
         assert!(dst.join("pdf-manager.db").exists());
         assert!(dst.join("pdfs").join("a.pdf").exists());
-        assert!(dst.join("models").join("m.onnx").exists());
+        // 模型目录不在迁移清单里（固定安装目录）
+        assert!(!dst.join("models").exists());
         let _ = std::fs::remove_dir(&staging);
         remove_migration_marker(&dst);
         assert!(!migration_marker_exists(&dst));
@@ -1372,5 +1421,30 @@ mod tests {
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with(".pdfm-abandoned-"));
         assert!(abandoned, "残留暂存应改名保留（不删除）");
+    }
+
+    /// 升级兼容：旧数据目录里的模型一次性复制到安装目录；目标已有文件则跳过
+    #[test]
+    fn test_adopt_legacy_models() {
+        let root = tempfile::tempdir().unwrap();
+        let exe_dir = root.path().join("app");
+        let data_dir = root.path().join("data");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(data_dir.join("models")).unwrap();
+        std::fs::write(data_dir.join("models").join("det.onnx"), b"d").unwrap();
+
+        assert_eq!(adopt_legacy_models(&exe_dir, &data_dir), 1);
+        assert!(exe_dir.join("models").join("det.onnx").exists());
+        // 旧副本保留（只复制不删除）
+        assert!(data_dir.join("models").join("det.onnx").exists());
+
+        // 目标已有文件 → 整体跳过，不覆盖
+        std::fs::write(exe_dir.join("models").join("keep.onnx"), b"k").unwrap();
+        std::fs::write(data_dir.join("models").join("rec.onnx"), b"r").unwrap();
+        assert_eq!(adopt_legacy_models(&exe_dir, &data_dir), 0);
+        assert!(!exe_dir.join("models").join("rec.onnx").exists());
+
+        // 数据目录就是安装目录 → 无需复制
+        assert_eq!(adopt_legacy_models(&data_dir, &data_dir), 0);
     }
 }

@@ -17,13 +17,13 @@ pub fn run() {
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-    // 数据目录迁移刷新：必须在日志初始化之前 —— ① 补迁 set_data_dir 与重启之间
-    // 产生的新数据（DB/索引/模型/日志）② 决定本次会话日志写入哪个目录。
+    // 数据目录迁移刷新：必须在日志初始化之前 —— 补迁 set_data_dir 与重启之间
+    // 产生的新数据（仅 DB/索引等 PDF 相关资料；日志/模型固定安装目录，不再迁移）。
     // 失败时内部回退引导设置到源目录，应用按旧数据完整启动（零丢失）。
     let effective_data_dir = commands::settings::finish_pending_data_dir_migration(&exe_dir);
 
-    // 初始化基本日志到文件和控制台（写 <数据目录>/logs，与 get_settings 上报口径一致）
-    init_early_logging(&effective_data_dir);
+    // 初始化基本日志到安装目录（写 <安装目录>/logs，与 get_settings 上报口径一致）
+    init_early_logging(&exe_dir);
 
     info!("启动应用程序");
     info!("可执行文件目录: {:?}", exe_dir);
@@ -72,9 +72,15 @@ pub fn run() {
             };
             app.manage(std::sync::Mutex::new(pdf_service));
 
-            // 初始化 OCR 服务
+            // 日志/模型固定放在安装目录（可执行文件目录），不随数据目录迁移
+            let install_dir = db::default_data_dir(app.handle());
+            // 升级兼容：旧版本把模型放在数据目录里 → 一次性复制到安装目录（不覆盖已有）
+            commands::settings::adopt_legacy_models(&install_dir, &data_dir);
+            let models_dir = install_dir.join("models");
+
+            // 初始化 OCR 服务（模型目录 = 安装目录/models）
             debug!("初始化OCR服务...");
-            let ocr_service = match services::ocr_service::OcrService::new(&data_dir) {
+            let ocr_service = match services::ocr_service::OcrService::new(&models_dir) {
                 Ok(s) => {
                     info!("OCR服务初始化成功");
                     s
@@ -82,7 +88,7 @@ pub fn run() {
                 Err(e) => {
                     warn!("OCR服务初始化失败: {} (OCR功能将不可用)", e);
                     // OCR 服务失败不是致命错误，继续启动
-                    services::ocr_service::OcrService::new(&data_dir)
+                    services::ocr_service::OcrService::new(&models_dir)
                         .expect("Failed to initialize OCR service")
                 }
             };
@@ -115,15 +121,15 @@ pub fn run() {
                 }
             }
 
-            // 确保数据目录存在
+            // 确保目录存在：PDF 相关随数据目录；日志/模型固定安装目录
             debug!("创建数据目录...");
             let dirs = [
                 ("数据目录", &data_dir),
                 ("PDF目录", &data_dir.join("pdfs")),
                 ("缩略图目录", &data_dir.join("thumbnails")),
                 ("索引目录", &data_dir.join("index")),
-                ("日志目录", &data_dir.join("logs")),
-                ("模型目录", &data_dir.join("models")),
+                ("日志目录", &install_dir.join("logs")),
+                ("模型目录", &models_dir),
             ];
 
             for (name, path) in &dirs {
@@ -202,8 +208,8 @@ pub fn run() {
                 });
             }
 
-            info!("应用初始化完成, 数据目录: {:?}", data_dir);
-            info!("日志文件位置: {:?}", data_dir.join("logs"));
+            info!("应用初始化完成, 数据目录: {:?}, 安装目录: {:?}", data_dir, install_dir);
+            info!("日志文件位置: {:?}", install_dir.join("logs"));
 
             Ok(())
         })
@@ -247,9 +253,8 @@ pub fn run() {
 
 /// 初始化早期日志（生成日志文件）
 ///
-/// `base_dir` = 生效数据目录（`finish_pending_data_dir_migration` 返回）：
-/// 日志写 `<data_dir>/logs`，与 `get_settings.log_dir` 上报一致；
-/// 默认用户 data_dir = exe 目录 → 行为与历史完全一致。
+/// `base_dir` = 安装目录（可执行文件目录）：日志固定写 `<安装目录>/logs`，
+/// 与 `get_settings.log_dir` 上报一致；选数据目录不会把日志搬走。
 fn init_early_logging(base_dir: &std::path::Path) {
     use tracing_subscriber::fmt::time::LocalTime;
     use time::macros::format_description;

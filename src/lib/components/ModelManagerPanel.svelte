@@ -1,11 +1,21 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
   import { message } from '@tauri-apps/plugin-dialog';
   import {
     getModelOverview,
     setActiveModel,
+    downloadOcrModels,
+    cancelOcrDownload,
+    refreshOcrStatus,
     type ModelOverview,
+    type DownloadProgress,
   } from '../api';
-  import { ocrModelStatus } from '../stores';
+  import {
+    ocrModelStatus,
+    ocrDownloadProgress,
+    isDownloading,
+  } from '../stores';
 
   // 本组件是「模型」页签的内容组件：遮罩/标题/✕ 由 SettingsDialog 统一提供；
   // active = 所在页签激活时加载概览
@@ -27,12 +37,52 @@
   let busyType: string | null = null; // 正在启用/禁用的模型类型
   let error: string | null = null;
   let copiedText: string | null = null;
+  let cancelling = false; // 用户主动取消下载（抑制随之而来的「下载已取消」错误）
 
   // 页签激活时加载概览（组件随页签切换销毁重建，每次进入「模型」页都会刷新，
   // 等价于原「每次打开面板刷新」的行为）
   $: if (active) {
     loadOverview();
   }
+
+  // 下载进度/完成/失败由后端事件推送（与 OcrModelSetup 共用同一套事件）
+  onMount(() => {
+    let unlistenProgress: (() => void) | null = null;
+    let unlistenComplete: (() => void) | null = null;
+    let unlistenError: (() => void) | null = null;
+
+    listen<DownloadProgress>('model-download-progress', (event) => {
+      ocrDownloadProgress.set(event.payload);
+    }).then((u) => (unlistenProgress = u));
+
+    listen<void>('model-download-complete', async () => {
+      isDownloading.set(false);
+      ocrDownloadProgress.set(null);
+      try {
+        ocrModelStatus.set(await refreshOcrStatus());
+      } catch (e) {
+        console.error('Refresh OCR status failed:', e);
+      }
+      await loadOverview();
+    }).then((u) => (unlistenComplete = u));
+
+    listen<{ error: string }>('model-download-error', (event) => {
+      isDownloading.set(false);
+      ocrDownloadProgress.set(null);
+      // 用户主动取消：后端也会报「下载已取消」，这不是故障，不弹错误
+      if (cancelling) {
+        cancelling = false;
+        return;
+      }
+      error = event.payload.error;
+    }).then((u) => (unlistenError = u));
+
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+      unlistenError?.();
+    };
+  });
 
   async function loadOverview() {
     loading = true;
@@ -49,6 +99,33 @@
   // 手动刷新：用户按文字指引手动放入模型文件后重新扫描
   async function handleManualRefresh() {
     await loadOverview();
+  }
+
+  // 应用内下载：与后端事件联动显示进度，失败时错误条可手动关闭
+  async function handleDownload() {
+    error = null;
+    cancelling = false;
+    isDownloading.set(true);
+    ocrDownloadProgress.set(null);
+    try {
+      await downloadOcrModels();
+    } catch (e) {
+      isDownloading.set(false);
+      ocrDownloadProgress.set(null);
+      error = String(e);
+    }
+  }
+
+  function handleCancel() {
+    cancelling = true;
+    cancelOcrDownload();
+    isDownloading.set(false);
+    ocrDownloadProgress.set(null);
+  }
+
+  function formatProgress(current: number, total: number): string {
+    if (total <= 0) return '0%';
+    return `${Math.round((current / total) * 100)}%`;
   }
 
   // 启用：设为当前识别模型
@@ -109,13 +186,46 @@
   $: readySuites = overview.filter(m => m.ready).length;
 </script>
 
-<!-- 无外层遮罩/标题/✕，仅保留「刷新」工具条 + 状态条 -->
+<!-- 无外层遮罩/标题/✕，仅保留「下载/刷新」工具条 + 状态条 -->
 <div class="model-pane">
   <div class="pane-toolbar">
+    {#if $isDownloading}
+      <button class="mini-btn" on:click={handleCancel} title="停止本次下载">取消下载</button>
+    {:else}
+      <button class="mini-btn primary" on:click={handleDownload} disabled={loading} title="在应用内下载 PP-OCRv5 Mobile 模型（约 300MB）">
+        下载模型
+      </button>
+    {/if}
     <button class="mini-btn" on:click={handleManualRefresh} disabled={loading} title="重新扫描已下载的模型文件">
       {loading ? '扫描中...' : '刷新'}
     </button>
   </div>
+
+  {#if $isDownloading}
+    <div class="download-progress">
+      {#if $ocrDownloadProgress}
+        <div class="progress-info">
+          <span class="progress-file" title={$ocrDownloadProgress.file}>{$ocrDownloadProgress.file}</span>
+          <span class="progress-percent">
+            {formatProgress($ocrDownloadProgress.current, $ocrDownloadProgress.total)}
+          </span>
+        </div>
+        <div class="progress-bar">
+          <div
+            class="progress-fill"
+            style="width: {($ocrDownloadProgress.current / ($ocrDownloadProgress.total || 1)) * 100}%"
+          ></div>
+        </div>
+        <div class="progress-bytes">
+          {formatSize($ocrDownloadProgress.current)} / {formatSize($ocrDownloadProgress.total)}
+        </div>
+      {:else}
+        <div class="progress-info">
+          <span class="progress-file">正在连接下载服务器...</span>
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="panel-status">
         {#if activeTag}
@@ -183,7 +293,12 @@
       </div>
 
       {#if error}
-        <div class="error-box">{error}</div>
+        <div class="error-box">
+          <span class="error-text">{error}</span>
+          <button class="error-close" on:click={() => (error = null)} title="关闭提示" aria-label="关闭提示">
+            ✕
+          </button>
+        </div>
       {/if}
 
       {#if loading && overview.length === 0}
@@ -256,7 +371,59 @@
   .pane-toolbar {
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
     margin-bottom: 10px;
+  }
+
+  .download-progress {
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    background: var(--bg-tertiary, #f3f4f6);
+    border: 1px solid var(--border-light, #f3f4f6);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+
+  .progress-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .progress-file {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary, #1f2937);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .progress-percent {
+    flex-shrink: 0;
+    color: var(--accent, #3b82f6);
+    font-weight: 600;
+  }
+
+  .progress-bar {
+    height: 6px;
+    background: var(--bg-secondary, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent, #3b82f6);
+    transition: width 0.2s ease;
+  }
+
+  .progress-bytes {
+    margin-top: 3px;
+    color: var(--text-muted, #9ca3af);
+    font-size: 10px;
   }
 
   .panel-status {
@@ -348,6 +515,9 @@
   }
 
   .error-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
     padding: 8px;
     background: var(--error-soft, #fef2f2);
     border: 1px solid var(--error, #ef4444);
@@ -356,6 +526,29 @@
     font-size: 11px;
     margin-bottom: 10px;
     word-break: break-all;
+  }
+
+  .error-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .error-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+    opacity: 0.75;
+  }
+
+  .error-close:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.12);
   }
 
   .loading {
@@ -509,6 +702,18 @@
   .mini-btn:hover:not(:disabled) {
     border-color: var(--accent, #3b82f6);
     color: var(--accent, #3b82f6);
+  }
+
+  .mini-btn.primary {
+    background: var(--accent, #3b82f6);
+    border-color: var(--accent, #3b82f6);
+    color: #ffffff;
+  }
+
+  .mini-btn.primary:hover:not(:disabled) {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
   }
 
   .mini-btn:disabled {

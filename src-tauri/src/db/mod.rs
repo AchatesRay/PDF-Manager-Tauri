@@ -246,7 +246,12 @@ pub fn get_index_dir(app_handle: &tauri::AppHandle) -> PathBuf {
     get_data_dir(app_handle).join("index")
 }
 
-/// 获取日志目录
+/// 获取日志目录：固定安装目录（可执行文件目录）下的 logs，不随数据目录迁移
 pub fn get_log_dir(app_handle: &tauri::AppHandle) -> PathBuf {
-    get_data_dir(app_handle).join("logs")
+    default_data_dir(app_handle).join("logs")
+}
+
+/// 获取模型目录：固定安装目录（可执行文件目录）下的 models，不随数据目录迁移
+pub fn get_models_dir(app_handle: &tauri::AppHandle) -> PathBuf {
+    default_data_dir(app_handle).join("models")
 }
