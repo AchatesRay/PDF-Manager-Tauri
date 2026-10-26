@@ -17,6 +17,7 @@
 - [ ] 待用户确认后，更新 `README.md`「数据存储」章节：`models/`、`logs/` 现固定于安装目录，不随数据目录迁移（README 已过时，尚未改动）。
 - [ ] GitHub Release 尚未发布新 tag/版本（当前最新 Release 仍是 v1.2.0）；如要发布需用户明确指示。
 - [ ] GitHub classic PAT 缺 `workflow` scope，改 `.github/workflows/*.yml` 的提交会被拒推（本次已回滚一处 CI 文案修正，改在本地打包脚本内生效）。
+- 推送通道备注：本机 github.com:443 时常不可达，`git push` 会 Connection reset / 连不上；实测 `ssh.github.com:443` 正常，用 `git push ssh://git@ssh.github.com:443/AchatesRay/PDF-Manager-Tauri.git main` 可推，推完执行 `git update-ref refs/remotes/origin/main <sha>` 同步本地引用。
 
 ## 接手指引
 
