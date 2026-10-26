@@ -39,6 +39,27 @@
 
   $: treeNodes = buildTree($folders);
 
+  // 选中项变化时自动展开其所有祖先（如导入文件夹后程序化选中新分类），
+  // 否则新分类位于折叠的父目录下时，树中看不到当前选中项。
+  $: if ($selectedFolderId !== null) {
+    const toExpand = new Set(expandedFolders);
+    let current = $folders.find(f => f.id === $selectedFolderId);
+    let changed = false;
+
+    while (current && current.parent_id != null) {
+      const parentId: number = current.parent_id;
+      if (!toExpand.has(parentId)) {
+        toExpand.add(parentId);
+        changed = true;
+      }
+      current = $folders.find(f => f.id === parentId);
+    }
+
+    if (changed) {
+      expandedFolders = toExpand;
+    }
+  }
+
   onMount(async () => {
     try {
       // 只加载 folders，pdfList 由 PdfList 负责加载；设置面板自管设置加载

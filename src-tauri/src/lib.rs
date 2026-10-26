@@ -219,6 +219,7 @@ pub fn run() {
             commands::folder::rename_folder,
             commands::folder::delete_folder,
             commands::pdf::add_pdf,
+            commands::import::import_pdf_folder,
             commands::pdf::get_pdf_list,
             commands::pdf::delete_pdf,
             commands::pdf::move_pdfs,

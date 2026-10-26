@@ -67,6 +67,39 @@ export async function addPdf(path: string, folderId?: number): Promise<PdfInfo> 
   return invoke('add_pdf', { path, folderId });
 }
 
+/** 导入本地已有 PDF 文件夹的结果 */
+export interface FolderImportFailure {
+  path: string;
+  reason: string;
+}
+
+export interface FolderImportReport {
+  folder_id: number;
+  folder_name: string;
+  total_pdfs: number;
+  imported: number;
+  skipped: string[];
+  failed: FolderImportFailure[];
+  created_folders: number;
+  reused_folder: boolean;
+}
+
+/** 导入文件夹进度事件 */
+export interface FolderImportProgress {
+  current: number;
+  total: number;
+  filename: string;
+  relative_dir: string;
+}
+
+/**
+ * 导入本地已有 PDF 文件夹。
+ * 顶级目录名使用所选文件夹的名称，子目录结构会一并镜像。
+ */
+export async function importPdfFolder(path: string, parentId?: number): Promise<FolderImportReport> {
+  return invoke('import_pdf_folder', { path, parentId });
+}
+
 export async function getPdfList(folderId?: number): Promise<PdfInfo[]> {
   return invoke('get_pdf_list', { folderId });
 }

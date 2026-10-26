@@ -4,24 +4,27 @@
 
 ## 当前状态（2026-10-26）
 
-两项需求已实现、验证、提交并推送（commit `32b8aa5`，main），CI 构建成功（run #16），本地便携版 zip 已生成，等待用户实测验收：
+新增「导入本地已有 PDF 文件夹」功能（本地改动，尚未提交）：
 
-1. **模型下载失败提示**：设置 → 模型 页的错误提示可手动关闭（带 ✕ 按钮）。
-2. **设置 → 模型 页直接下载**：新增「下载模型 / 取消下载 / 刷新」按钮与进度条，与首次启动引导页共用同一套后端下载逻辑。
-3. **目录分离**：日志（`logs/`）与 OCR 模型（`models/`）固定存放在安装目录；切换数据目录只迁移 `pdfs/`、`thumbnails/`、`index/` 与数据库，不再搬运日志和模型。
-4. **旧模型自动复制**：若旧数据目录里已有模型、而安装目录 `models/` 为空，启动时自动复制一份过去（旧文件保留，不删除）。
+- 后端 `src-tauri/src/commands/import.rs`：选择文件夹后按源目录名创建分类（`parent_id` 可指定父分类），递归扫描 PDF、镜像子目录结构、同名目录复用、重复文件跳过，复制入库；导入过程通过 `folder-import-progress` 事件推送进度。
+- 前端 `src/lib/components/PdfList.svelte`：PDF 列表头部新增「导入文件夹」按钮，默认导入到当前选中分类下（未选中时放根级），导入时显示 `当前/总数` 进度，结束后汇总成功/跳过/失败并定位到新分类。
+- 前端 `src/lib/components/FolderTree.svelte`：选中项变化时自动展开祖先目录，保证导入后选中新分类在树中可见。
+- 复用改造：`commands/pdf.rs` 抽出 `add_pdf_impl`，单文件添加与文件夹导入共用同一套查重/复制/元数据/入库逻辑。
+- 验证情况：`npm run build` 通过（仅存量 a11y 警告）；**本机未安装 Rust / MSVC Build Tools，`cargo check` 未执行**。
 
 ## 待办
 
-- [ ] 用户验收上述 1–4 项：用 `Output/模型下载与目录分离/pdf-manager-win-x64.zip` 解压实测。
-- [ ] 待用户确认后，更新 `README.md`「数据存储」章节：`models/`、`logs/` 现固定于安装目录，不随数据目录迁移（README 已过时，尚未改动）。
-- [ ] GitHub Release 尚未发布新 tag/版本（当前最新 Release 仍是 v1.2.0）；如要发布需用户明确指示。
-- [ ] GitHub classic PAT 缺 `workflow` scope，改 `.github/workflows/*.yml` 的提交会被拒推（本次已回滚一处 CI 文案修正，改在本地打包脚本内生效）。
-- 推送通道备注：本机 github.com:443 时常不可达，`git push` 会 Connection reset / 连不上；实测 `ssh.github.com:443` 正常，用 `git push ssh://git@ssh.github.com:443/AchatesRay/PDF-Manager-Tauri.git main` 可推，推完执行 `git update-ref refs/remotes/origin/main <sha>` 同步本地引用。
+- [ ] 在有 Rust + MSVC 的环境执行 `cargo check --tests`，并跑 `cargo test --lib -- import::tests`。
+- [ ] 用户实测：选择一个含多层子目录的 PDF 文件夹导入，确认目录名、目录结构、重复导入跳过行为。
+- [ ] 验证通过后提交并推送（本机无 cargo，仅前端可验证）。
+- [ ] 旧待办：用户验收「模型下载提示 / 目录分离 / 旧模型自动复制」四项。
+- [ ] README「数据存储」章节仍待更新：`models/`、`logs/` 固定于安装目录，不随数据目录迁移。
+- [ ] GitHub Release 尚未发布新 tag/版本（当前最新 Release 仍是 v1.2.0）。
+- [ ] GitHub classic PAT 缺 `workflow` scope，改 `.github/workflows/*.yml` 的提交会被拒推。
+- 推送通道备注：本机 github.com:443 时常不可达，可用 `git push ssh://git@ssh.github.com:443/AchatesRay/PDF-Manager-Tauri.git main`，推完执行 `git update-ref refs/remotes/origin/main <sha>` 同步本地引用。
 
 ## 接手指引
 
-- 改动集中在 `src-tauri/src/commands/settings.rs`、`src-tauri/src/lib.rs`、`src-tauri/src/db/mod.rs`、`src-tauri/src/services/ocr_service.rs`、`src/lib/components/{OcrModelSetup,ModelManagerPanel,SettingsPanel}.svelte`。
-- 打包脚本：`Output/模型下载与目录分离/Temp/package.ps1`（须 UTF-8 with BOM，经 `powershell -ExecutionPolicy Bypass -File` 运行；PS 5.1 默认 Restricted）。
-- 验证方式：前端 `npm run build`；后端 `cargo check --tests`；单测 `cargo test --lib -- settings::tests`（共 9 个用例，需把 TEMP/TMP 指到工作区内目录，系统临时目录在本机被拒写）；便携版冒烟：`cmd /c start "" <exe>` 后进程存在且安装目录出现 index/logs/models/pdfs/thumbnails 即正常（`Start-Process` 在沙箱内会挂起）。
-- 过程产物与备份：`Output/模型下载与目录分离/`（`backup/` 为改动前原文件）。
+- 本次改动集中在 `src-tauri/src/commands/{import,pdf,mod}.rs`、`src-tauri/src/lib.rs`、`src/lib/api/index.ts`、`src/lib/components/PdfList.svelte`。
+- 前端构建：`npm run build`；后端验证需先 `call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"` 再 `cargo check --tests`。
+- 导入功能设计要点：顶级目录名 = 源文件夹名；子目录按相对路径镜像；同名同父目录复用（不创建 `xxx (2)`）；已导入文件按 `original_path` / 同目录文件名查重跳过。

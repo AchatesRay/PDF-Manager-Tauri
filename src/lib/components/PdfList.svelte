@@ -1,6 +1,7 @@
 <script lang="ts">
   import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, searchResults, filenameSearchResults, pageHighlight } from '../stores';
-  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs } from '../api';
+  import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs, getFolders, importPdfFolder } from '../api';
+  import type { FolderImportProgress } from '../api';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, message } from '@tauri-apps/plugin-dialog';
@@ -14,6 +15,10 @@
   let selectedIds: number[] = [];
   let showMoveDialog = false;
   let isBatchWorking = false;
+
+  // ===== 导入本地文件夹状态 =====
+  let isImporting = false;
+  let importProgress: FolderImportProgress | null = null;
 
   /**
    * 删除成功后同步清理视图状态：
@@ -45,6 +50,7 @@
     // 监听 OCR 进度（事件驱动，无轮询）
     let unlistenProgress: (() => void) | null = null;
     let unlistenQueued: (() => void) | null = null;
+    let unlistenImport: (() => void) | null = null;
 
     // 每个 pdf 上一次已知状态，用于检测转换以触发列表/队列刷新
     const lastStatus = new Map<number, string>();
@@ -88,9 +94,15 @@
       refreshQueueStatus();
     }).then(unlisten => unlistenQueued = unlisten);
 
+    // 监听文件夹导入进度
+    listen<FolderImportProgress>('folder-import-progress', (event) => {
+      importProgress = event.payload;
+    }).then(unlisten => unlistenImport = unlisten);
+
     return () => {
       unlistenProgress?.();
       unlistenQueued?.();
+      unlistenImport?.();
     };
   });
 
@@ -173,6 +185,67 @@
         text += `\n失败 ${failed.length} 个：\n${failed.join('\n')}`;
       }
       await message(text, { title: '导入结果', kind: skipped.length > 0 || failed.length > 0 ? 'warning' : 'info' });
+    }
+  }
+
+  /**
+   * 导入本地已有 PDF 文件夹：
+   * 顶级目录以所选文件夹命名，递归导入并镜像子目录结构。
+   */
+  async function handleImportFolder() {
+    if (isImporting) return;
+
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: '选择包含 PDF 的文件夹',
+    });
+
+    if (!selected) {
+      return;
+    }
+
+    isImporting = true;
+    importProgress = null;
+
+    try {
+      // 导入到当前选中的分类下；未选中分类（全部文件）时放在根级
+      const targetFolderId = $selectedFolderId;
+      const targetFolderName = targetFolderId === null
+        ? null
+        : ($folders.find(f => f.id === targetFolderId)?.name ?? null);
+      const report = await importPdfFolder(selected as string, targetFolderId ?? undefined);
+
+      // 刷新文件夹树并定位到新导入的文件夹
+      folders.set(await getFolders());
+      selectedFolderId.set(report.folder_id);
+      await loadPdfs();
+
+      let text = targetFolderName
+        ? `已导入到「${targetFolderName}」下：新建分类「${report.folder_name}」，成功 ${report.imported} / ${report.total_pdfs} 个`
+        : `已导入文件夹「${report.folder_name}」：成功 ${report.imported} / ${report.total_pdfs} 个`;
+      if (report.skipped.length > 0) {
+        text += `，跳过 ${report.skipped.length} 个（已存在）`;
+      }
+      if (report.failed.length > 0) {
+        text += `，失败 ${report.failed.length} 个`;
+        const details = report.failed
+          .slice(0, 8)
+          .map(f => `${f.path}: ${f.reason}`)
+          .join('\n');
+        text += `\n\n${details}`;
+        if (report.failed.length > 8) text += `\n…`;
+      }
+
+      await message(text, {
+        title: '导入完成',
+        kind: report.failed.length > 0 ? 'warning' : 'info',
+      });
+    } catch (e) {
+      await message('导入失败: ' + e, { title: '导入文件夹', kind: 'error' });
+    } finally {
+      isImporting = false;
+      importProgress = null;
     }
   }
 
@@ -394,6 +467,19 @@
       </button>
       <button
         class="add-btn"
+        on:click={handleImportFolder}
+        disabled={isImporting}
+        title="导入本地已有 PDF 文件夹：作为当前选中分类的子文件夹，目录名使用所选文件夹名"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <line x1="12" y1="10" x2="12" y2="16"/>
+          <polyline points="9 13 12 16 15 13"/>
+        </svg>
+        {isImporting ? '导入中…' : '导入文件夹'}
+      </button>
+      <button
+        class="add-btn"
         class:active-toggle={selectionMode}
         on:click={toggleSelectionMode}
         disabled={filteredPdfs.length === 0}
@@ -407,6 +493,19 @@
       </button>
     </div>
   </div>
+
+  {#if isImporting}
+    <div class="import-banner">
+      <div class="spinner"></div>
+      <span class="import-text">
+        {#if importProgress}
+          正在导入 {importProgress.current}/{importProgress.total}：{importProgress.relative_dir ? importProgress.relative_dir + '/' : ''}{importProgress.filename}
+        {:else}
+          正在扫描文件夹并创建目录…
+        {/if}
+      </span>
+    </div>
+  {/if}
 
   <!-- 批量操作栏 -->
   {#if selectionMode}
@@ -499,6 +598,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 8px;
     padding: 8px 12px;
     flex-shrink: 0;
   }
@@ -521,6 +622,8 @@
   .header-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 8px;
   }
 
@@ -553,6 +656,38 @@
   .add-btn svg {
     width: 12px;
     height: 12px;
+  }
+
+  .add-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .import-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 6px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--accent-soft, #eff6ff);
+    border: 1px solid #bfdbfe;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  .import-banner .spinner {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+
+  .import-text {
+    font-size: 11px;
+    color: var(--text-secondary, #4b5563);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .list {

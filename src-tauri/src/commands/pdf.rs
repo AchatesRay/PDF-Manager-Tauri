@@ -78,14 +78,16 @@ fn count_filename_duplicates(conn: &rusqlite::Connection, filename: &str, folder
     ).unwrap_or(0)
 }
 
-/// 添加 PDF 文件
-#[tauri::command]
-pub fn add_pdf(
+/// 添加单个 PDF 的内部实现。
+///
+/// 单文件命令与「导入文件夹」批量导入共用同一套逻辑，
+/// 保证查重、复制、元数据解析与入库行为完全一致。
+pub(crate) fn add_pdf_impl(
     path: String,
     folder_id: Option<i64>,
-    db: State<'_, Db>,
-    pdf_service: State<'_, Mutex<PdfService>>,
-    app_handle: tauri::AppHandle,
+    db: &Db,
+    pdf_service: &Mutex<PdfService>,
+    app_handle: &tauri::AppHandle,
 ) -> Result<PdfInfo, String> {
     info!("开始添加PDF文件: path={}, folder_id={:?}", path, folder_id);
 
@@ -292,6 +294,18 @@ pub fn add_pdf(
         status: PdfStatus::Pending,
         progress: Some(0.0),
     })
+}
+
+/// 添加 PDF 文件
+#[tauri::command]
+pub fn add_pdf(
+    path: String,
+    folder_id: Option<i64>,
+    db: State<'_, Db>,
+    pdf_service: State<'_, Mutex<PdfService>>,
+    app_handle: tauri::AppHandle,
+) -> Result<PdfInfo, String> {
+    add_pdf_impl(path, folder_id, db.inner(), pdf_service.inner(), &app_handle)
 }
 
 /// 获取 PDF 列表

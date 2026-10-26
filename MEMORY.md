@@ -24,6 +24,7 @@
 - **jieba 整词精确匹配漏检中文子串（Q-1，2026-09-26 修复）**：索引 v6 = jieba 整词 + 中文单字 + 全文 bigram 滑窗；查询侧含中文 token 拆连续段、≥2 字用「全 bigram Must」子句。**索引版本升级必须走 `refill_index_from_db` 回填**（仅空索引触发），否则老用户升级后搜索静默变空。
 - **OCR 队列已持久化（T4，2026-09-26）**：`ocr_queue` 表随入队/完成/取消/删 PDF 同步；启动时 `restore_persisted_queue`（processing→pending 崩溃恢复、done/error/孤儿行清理），模型就绪即后台自动续跑；`TaskQueue` 仍纯内存，DB 访问只在 commands 层。
 - **`JSON.stringify(new Error(...))` = `{}`**：断言 Tauri invoke 抛错内容必须用 `e.message`（CDP exceptionDetails JSON 在 message 里），勿 stringify Error 对象（功能测试驱动器首两轮误报教训）。
+- **本机无 Rust/MSVC 工具链（2026-10-26 实测）**：`%USERPROFILE%\.cargo` 与 `vcvars64.bat` 均不存在，`cargo check` 无法执行；改 `src-tauri` 后只能做前端 `npm run build` 验证，需在有工具链的机器补编译。 @(2026-10-26)
 
 ## 本工作区结构事实
 
