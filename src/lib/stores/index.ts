@@ -15,6 +15,10 @@ export const searchRevision = writable(0);
 export const isLoading = writable(false);
 export const showSearchResults = writable(false);
 
+// 搜索结果 → PDF 文件列表的定位请求：置为 pdf id 后，列表滚动到该文件并短暂高亮
+// 消费方（PdfList）处理后立即置回 null。
+export const revealPdfId = writable<number | null>(null);
+
 // 搜索模式
 export type SearchMode = 'content' | 'filename';
 export const searchMode = writable<SearchMode>('content');

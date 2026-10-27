@@ -1,9 +1,76 @@
 <script lang="ts">
-  import { searchResults, selectedPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount, folders, searchQuery, pageHighlight, searchRevision } from '../stores';
+  import { searchResults, selectedPdfId, selectedFolderId, revealPdfId, showSearchResults, searchMode, filenameSearchResults, selectedPdfPath, jumpToPage, selectedPdfPageCount, folders, searchQuery, pageHighlight, searchRevision } from '../stores';
   import type { SearchResult, PdfInfo } from '../api';
   import { getPdfDetail, getPageMatches } from '../api';
+  import { onMount } from 'svelte';
+
+  interface PdfSearchGroup {
+    pdfId: number;
+    filename: string;
+    folderId: number | null;
+    pages: SearchResult[];
+    totalMatches: number;
+    firstFlatIndex: number;
+  }
 
   let currentMatchIndex = 0;
+
+  // ===== 文件名列宽（可拖动，localStorage 持久化） =====
+  const FILENAME_WIDTH_KEY = 'contentSearchFilenameWidth';
+  const FILENAME_MIN_WIDTH = 80;
+  const FILENAME_MAX_WIDTH = 420;
+  let filenameWidth = 150;
+  let resizing = false;
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+
+  function clampFilenameWidth(width: number): number {
+    return Math.max(FILENAME_MIN_WIDTH, Math.min(FILENAME_MAX_WIDTH, width));
+  }
+
+  function startResize(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizing = true;
+    resizeStartX = e.clientX;
+    resizeStartWidth = filenameWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function handleResizeMove(e: MouseEvent) {
+    if (!resizing) return;
+    filenameWidth = clampFilenameWidth(resizeStartWidth + (e.clientX - resizeStartX));
+  }
+
+  function stopResize() {
+    if (!resizing) return;
+    resizing = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    try {
+      localStorage.setItem(FILENAME_WIDTH_KEY, String(filenameWidth));
+    } catch (e) {
+      console.error('Failed to save filename width:', e);
+    }
+  }
+
+  onMount(() => {
+    try {
+      const saved = Number(localStorage.getItem(FILENAME_WIDTH_KEY));
+      if (Number.isFinite(saved) && saved > 0) {
+        filenameWidth = clampFilenameWidth(saved);
+      }
+    } catch (e) {
+      console.error('Failed to load filename width:', e);
+    }
+    window.addEventListener('mousemove', handleResizeMove);
+    window.addEventListener('mouseup', stopResize);
+    return () => {
+      window.removeEventListener('mousemove', handleResizeMove);
+      window.removeEventListener('mouseup', stopResize);
+    };
+  });
 
   $: totalMatchCount = $searchResults.reduce((sum, r) => sum + (r.match_count || 0), 0);
 
@@ -16,6 +83,30 @@
     }
     return arr;
   })();
+
+  // 原始结果按页返回，按 pdf_id 聚合成「一个 PDF 一行」；保留首次出现的扁平索引用于导航。
+  function groupSearchResults(results: SearchResult[]): PdfSearchGroup[] {
+    const groups = new Map<number, PdfSearchGroup>();
+    results.forEach((result, flatIndex) => {
+      let group = groups.get(result.pdf_id);
+      if (!group) {
+        group = {
+          pdfId: result.pdf_id,
+          filename: result.filename,
+          folderId: result.folder_id,
+          pages: [],
+          totalMatches: 0,
+          firstFlatIndex: flatIndex,
+        };
+        groups.set(result.pdf_id, group);
+      }
+      group.pages.push(result);
+      group.totalMatches += result.match_count || 0;
+    });
+    return [...groups.values()];
+  }
+
+  $: groupedResults = groupSearchResults($searchResults);
 
   function findMatchPosition(globalIndex: number): { resultIndex: number; inPageIndex: number } {
     for (let i = 0; i < $searchResults.length; i++) {
@@ -42,10 +133,10 @@
   let currentPdfId: number | null = null;
   let currentPageNumber: number | null = null;
 
-  async function navigateToMatch(globalIndex: number) {
+  async function navigateToMatch(globalIndex: number): Promise<boolean> {
     const { resultIndex, inPageIndex } = findMatchPosition(globalIndex);
     const result = $searchResults[resultIndex];
-    if (!result) return;
+    if (!result) return false;
 
     currentMatchIndex = globalIndex;
 
@@ -61,7 +152,7 @@
       } catch (e) {
         console.error('Failed to get PDF detail:', e);
         alert('该PDF文件可能已被删除，请重新搜索');
-        return;
+        return false;
       }
     }
 
@@ -80,11 +171,42 @@
       console.error('Failed to get page highlights:', e);
       pageHighlight.set(null);
     }
+
+    return true;
   }
 
-  async function handleResultClick(index: number) {
-    const globalIndex = cumulativeMatches[index];
-    await navigateToMatch(globalIndex);
+  // 判断 folderId 是否在 ancestorId 目录子树内（含自身）。
+  function folderContains(ancestorId: number, folderId: number | null): boolean {
+    if (folderId === null) return false;
+    let currentId: number | null = folderId;
+    const seen = new Set<number>();
+    while (currentId !== null && !seen.has(currentId)) {
+      if (currentId === ancestorId) return true;
+      seen.add(currentId);
+      const folder = $folders.find(f => f.id === currentId);
+      if (!folder) return false;
+      currentId = folder.parent_id;
+    }
+    return false;
+  }
+
+  // 通知中间 PDF 文件列表定位到目标文件；目标不在当前目录时先切换目录。
+  function revealInPdfList(pdfId: number, folderId: number | null) {
+    const currentFolder = $selectedFolderId;
+    const alreadyVisible = currentFolder === null || folderContains(currentFolder, folderId);
+    if (!alreadyVisible) {
+      selectedFolderId.set(folderId);
+    }
+    revealPdfId.set(pdfId);
+  }
+
+  async function handleResultClick(groupIndex: number) {
+    const group = groupedResults[groupIndex];
+    if (!group) return;
+    const navigated = await navigateToMatch(group.firstFlatIndex);
+    if (navigated) {
+      revealInPdfList(group.pdfId, group.folderId);
+    }
   }
 
   async function navigatePrev() {
@@ -108,6 +230,7 @@
       jumpToPage.set(null);
       // 文件名跳转不带内容命中：清残留高亮（防上一次内容搜索的框串页）
       pageHighlight.set(null);
+      revealInPdfList(pdf.id, pdf.folder_id);
     } catch (e) {
       console.error('Failed to get PDF detail:', e);
       alert('该PDF文件可能已被删除，请重新搜索');
@@ -133,6 +256,11 @@
   $: currentMatchPosition = findMatchPosition(currentMatchIndex);
   $: currentResultIndex = currentMatchPosition.resultIndex;
   $: currentInPageIndex = currentMatchPosition.inPageIndex;
+  let currentResult: SearchResult | undefined;
+  $: currentResult = $searchResults[currentResultIndex];
+  $: currentGroupIndex = currentResult
+    ? groupedResults.findIndex(group => group.pdfId === currentResult!.pdf_id)
+    : -1;
 
   let resultListElement: HTMLUListElement | null = null;
 
@@ -178,7 +306,7 @@
     }
   }
 
-  $: if (currentResultIndex >= 0 && resultListElement) {
+  $: if (currentGroupIndex >= 0 && resultListElement) {
     void currentInPageIndex;
     setTimeout(scrollToCurrent, 100);
   }
@@ -191,7 +319,7 @@
         <div class="header-row">
           <div class="header-info">
             <h4>内容搜索结果</h4>
-            <span class="match-count">{totalMatchCount} 处匹配</span>
+            <span class="match-count">{groupedResults.length} 个文件 · {totalMatchCount} 处匹配</span>
           </div>
           <div class="nav-buttons">
             <button class="nav-btn" on:click={navigatePrev} title="上一个">
@@ -208,17 +336,27 @@
           </div>
         </div>
         <ul class="result-list" bind:this={resultListElement}>
-          {#each $searchResults as result, index}
+          {#each groupedResults as group, groupIndex}
+            {@const isActive = group.pdfId === currentResult?.pdf_id}
+            {@const displayResult = isActive && currentResult ? currentResult : group.pages[0]}
+            {@const displayInPageIndex = isActive ? currentInPageIndex : 0}
             <li
-              class:active={index === currentResultIndex}
-              on:click={() => handleResultClick(index)}
+              class:active={isActive}
+              on:click={() => handleResultClick(groupIndex)}
             >
-              <span class="filename" title={result.filename}>{result.filename}</span>
-              <span class="page-badge">P{result.page_number}</span>
-              <span class="match-badge">{result.match_count}处</span>
+              <span class="filename" style="width: {filenameWidth}px" title={group.filename}>{group.filename}</span>
+              <div
+                class="col-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                title="拖动调整文件名列宽"
+                on:mousedown={startResize}
+                on:click|stopPropagation={() => {}}
+              ></div>
               <span class="snippet">
-                {@html renderSnippet(result.snippet, index === currentResultIndex, currentInPageIndex)}
+                {@html renderSnippet(displayResult.snippet, isActive, displayInPageIndex)}
               </span>
+              <span class="match-badge">{group.totalMatches}处</span>
             </li>
           {/each}
         </ul>
@@ -379,17 +517,33 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px;
+    min-width: 0;
     flex-shrink: 0;
   }
 
-  .page-badge {
-    font-size: 10px;
-    color: var(--accent, #3b82f6);
-    background: var(--accent-soft, #eff6ff);
-    padding: 1px 5px;
-    border-radius: 3px;
+  .col-resizer {
+    width: 7px;
+    align-self: stretch;
+    margin: -6px 0;
+    cursor: col-resize;
+    position: relative;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .col-resizer::before {
+    content: '';
+    width: 1px;
+    height: 14px;
+    background: var(--border, #e5e7eb);
+    border-radius: 1px;
+  }
+
+  .col-resizer:hover::before,
+  .col-resizer:active::before {
+    background: var(--accent, #3b82f6);
   }
 
   .match-badge {

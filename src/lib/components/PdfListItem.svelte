@@ -36,6 +36,7 @@
 
 <li
   class="pdf-item"
+  data-pdf-id={pdf.id}
   class:active={active}
   class:checked={checked}
   on:click={() => onSelect(pdf.id)}

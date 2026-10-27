@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, searchResults, filenameSearchResults, pageHighlight } from '../stores';
+  import { pdfList, selectedPdfId, selectedFolderId, isLoading, selectedPdfPath, selectedPdfPageCount, ocrProgress, folders, ocrModelStatus, ocrQueue, searchResults, filenameSearchResults, pageHighlight, revealPdfId } from '../stores';
   import { getPdfList, addPdf, deletePdf, getPdfDetail, startOcr, getOcrStatus, getOcrQueueStatus, cancelOcrTask, movePdfs, getFolders, importPdfFolder } from '../api';
   import type { FolderImportProgress } from '../api';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { open, message } from '@tauri-apps/plugin-dialog';
   import { safeConfirm } from '../dialog';
@@ -15,6 +15,36 @@
   let selectedIds: number[] = [];
   let showMoveDialog = false;
   let isBatchWorking = false;
+
+  // ===== 搜索结果定位 =====
+  let listElement: HTMLUListElement | null = null;
+  let revealFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $: if ($revealPdfId !== null) {
+    const targetId = $revealPdfId;
+    revealPdfId.set(null);
+    void scrollToPdf(targetId);
+  }
+
+  async function scrollToPdf(id: number) {
+    await tick();
+    if (!listElement) return;
+
+    let item = listElement.querySelector<HTMLElement>(`[data-pdf-id="${id}"]`);
+    if (!item) {
+      // 切目录后列表可能还需一帧才能渲染出目标文件
+      await tick();
+      item = listElement.querySelector<HTMLElement>(`[data-pdf-id="${id}"]`);
+    }
+    if (!item) return;
+
+    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    item.classList.add('reveal-flash');
+    if (revealFlashTimer) clearTimeout(revealFlashTimer);
+    revealFlashTimer = setTimeout(() => {
+      item?.classList.remove('reveal-flash');
+    }, 1400);
+  }
 
   // ===== 导入本地文件夹状态 =====
   let isImporting = false;
@@ -535,7 +565,7 @@
       <span>选择文件夹后点击"添加"导入文档</span>
     </div>
   {:else}
-    <ul class="list">
+    <ul class="list" bind:this={listElement}>
       {#each filteredPdfs as pdf}
         <PdfListItem
           {pdf}
@@ -696,6 +726,13 @@
     margin: 0;
     flex: 1;
     overflow-y: auto;
+  }
+
+  /* 搜索结果定位后的短暂描边提示（子组件根节点，需全局选择器） */
+  :global(.pdf-item.reveal-flash) {
+    outline: 2px solid var(--accent, #3b82f6);
+    outline-offset: -1px;
+    box-shadow: 0 0 0 3px var(--accent-soft, #eff6ff);
   }
 
   .loading-state, .empty-state {
